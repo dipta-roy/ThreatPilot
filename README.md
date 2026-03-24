@@ -38,9 +38,7 @@
 ### Prerequisites
 - **Python 3.11+**
 - **Local LLM** (Ollama recommended) or an **API Key** for external providers (Gemini, Claude, OpenAI).
-- **Tesseract OCR**: Required for automatic text extraction from diagrams. If not installed, ThreatPilot will safely fall back to naming discovered components generically (e.g., `"Box @ 120,40"`).
-  - **Windows Users**: Download and install the binaries from the [UB-Mannheim Tesseract Wiki](https://github.com/UB-Mannheim/tesseract/wiki). Ensure you add `tesseract.exe` to your system `PATH`.
-  - **Linux/macOS Users**: Install via your native package manager (e.g., `sudo apt install tesseract-ocr` or `brew install tesseract`).
+- **Recommended Models** Qwen2.5-VL or Qwen3-VL or Gemini-3-flash-preview
 
 ### Installation
 ```bash
