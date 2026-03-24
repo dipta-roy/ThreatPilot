@@ -45,7 +45,7 @@
 ### Installation
 ```bash
 # Clone the repository
-git clone https://github.com/YourUsername/ThreatPilot.git
+git clone https://github.com/dipta-roy/ThreatPilot.git
 cd ThreatPilot
 
 # Install dependencies
