@@ -1,0 +1,161 @@
+"""AI settings dialog for ThreatPilot.
+
+Provides a ``QDialog`` for configuring the AI provider:
+- Backend selection (Ollama/External API)
+- Endpoint URL and model name
+- Inference parameters (temperature, max tokens, timeout)
+"""
+
+from __future__ import annotations
+
+from PySide6.QtWidgets import (
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QDoubleSpinBox,
+    QFormLayout,
+    QLineEdit,
+    QPushButton,
+    QMessageBox,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
+
+from threatpilot.config.ai_config import AIConfig
+from threatpilot.ai.factory import create_ai_provider
+
+
+class AISettingsDialog(QDialog):
+    """Configuration dialog for AI provider settings.
+
+    Args:
+        config: The current ``AIConfig`` to modify.
+        parent: The parent widget.
+    """
+
+    def __init__(self, config: AIConfig, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("AI Settings")
+        self.setFixedWidth(400)
+        
+        # We work on a copy so we can cancel without mutation
+        self._config = config.model_copy()
+
+        self._setup_ui()
+        self._on_provider_changed(self._provider_type.currentText())
+        
+        # Restore the user's custom model name that may have been temporarily 
+        # overwritten by the default provider switching logic during setup.
+        if self._config.model_name:
+            self._model_name.setText(self._config.model_name)
+
+    def _setup_ui(self) -> None:
+        """Initialise form fields and button box."""
+        layout = QVBoxLayout(self)
+
+        self._form = QFormLayout()
+
+        # Provider Type
+        self._provider_type = QComboBox()
+        self._provider_type.addItems(["ollama", "external", "gemini", "claude"])
+        self._provider_type.setCurrentText(self._config.provider_type)
+        self._provider_type.currentTextChanged.connect(self._on_provider_changed)
+        self._form.addRow("Provider Type:", self._provider_type)
+
+        # Endpoint URL
+        self._endpoint_url = QLineEdit(self._config.endpoint_url)
+        self._form.addRow("Endpoint URL:", self._endpoint_url)
+
+        # Model Name
+        self._model_name = QLineEdit(self._config.model_name)
+        self._form.addRow("Model Name:", self._model_name)
+
+        # API Key
+        self._api_key = QLineEdit(self._config.api_key)
+        self._api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self._form.addRow("API Key:", self._api_key)
+
+        # Temperature
+        self._temperature = QDoubleSpinBox()
+        self._temperature.setRange(0.0, 2.0)
+        self._temperature.setSingleStep(0.1)
+        self._temperature.setValue(self._config.temperature)
+        self._form.addRow("Temperature:", self._temperature)
+
+        # Max Tokens
+        self._max_tokens = QSpinBox()
+        self._max_tokens.setRange(1, 128000)
+        self._max_tokens.setValue(self._config.max_tokens)
+        self._form.addRow("Max Tokens:", self._max_tokens)
+
+        # Timeout
+        self._timeout = QSpinBox()
+        self._timeout.setRange(1, 3600)
+        self._timeout.setValue(self._config.timeout)
+        self._form.addRow("Timeout (sec):", self._timeout)
+
+        layout.addLayout(self._form)
+
+        # Test Connection Button
+        self._btn_test = QPushButton("Test Connection")
+        self._btn_test.clicked.connect(self._on_test_connection)
+        layout.addWidget(self._btn_test)
+
+        # Buttons
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _on_test_connection(self) -> None:
+        """Instantiates the selected provider and checks for basic endpoint reachability."""
+        config = self.get_config()
+        try:
+            provider = create_ai_provider(config)
+            if provider.is_available():
+                QMessageBox.information(self, "Connection Test", f"Successfully connected to {config.provider_type} endpoint!")
+            else:
+                QMessageBox.warning(self, "Connection Test", f"Failed to connect to {config.provider_type}. Please check your network and settings.")
+        except Exception as exc:
+            QMessageBox.critical(self, "Connection Test Error", f"An error occurred while testing the connection:\n{exc}")
+
+    def _on_provider_changed(self, provider_type: str) -> None:
+        """Show or hide fields and update model defaults based on the selected backend."""
+        # 1. Row Visibility
+        show_endpoint = provider_type in ("ollama", "external")
+        self._set_row_visible(self._endpoint_url, show_endpoint)
+        
+        show_key = provider_type in ("external", "gemini", "claude")
+        self._set_row_visible(self._api_key, show_key)
+
+        # 2. Sensible Model Defaults
+        defaults = {
+            "gemini": "gemini-3-flash-preview",
+            "claude": "claude-3-haiku-20240307",
+            "ollama": "llama3"
+        }
+        if provider_type in defaults:
+            self._model_name.setText(defaults[provider_type])
+        elif provider_type == "external":
+            self._model_name.setText("gpt-4o")
+
+    def _set_row_visible(self, widget: QWidget, visible: bool) -> None:
+        """Helper to hide/show a field and its associated layout label."""
+        label = self._form.labelForField(widget)
+        if label:
+            label.setVisible(visible)
+        widget.setVisible(visible)
+
+    def get_config(self) -> AIConfig:
+        """Return the updated ``AIConfig`` object from form data."""
+        self._config.provider_type = self._provider_type.currentText()
+        self._config.endpoint_url = self._endpoint_url.text()
+        self._config.model_name = self._model_name.text()
+        self._config.api_key = self._api_key.text()
+        self._config.temperature = self._temperature.value()
+        self._config.max_tokens = self._max_tokens.value()
+        self._config.timeout = self._timeout.value()
+        return self._config
