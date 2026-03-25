@@ -2,21 +2,26 @@
 # Python 3.11+
 
 # UI framework
-PySide6>=6.5
+PySide6==6.5
 
 # Data validation
-pydantic>=2.0
+pydantic==2.0
 
 # Image handling
-Pillow>=10.0
-opencv-python>=4.10.0
+Pillow==10.0
+
+# Computer Vision (Critical for diagram detection)
+opencv-python==4.8.0          # or opencv-contrib-python-headless==4.8.0 for lighter build
 
 # AI communication
-httpx>=0.25
-cryptography>=41.0
-keyring>=24.2
-python-dotenv>=1.0
+httpx==0.25
+cryptography==41.0
+keyring==24.2
+python-dotenv==1.0
 
 # Export
-pandas>=2.0
-openpyxl>=3.1
+pandas==2.0
+openpyxl==3.1
+
+# Optional but recommended for reproducibility
+numpy==1.24.0
