@@ -101,8 +101,10 @@ class ProjectExplorer(QWidget):
         # --- Architecture Folder ---
         arch_root = QTreeWidgetItem(root, ["Architecture"])
         arch_root.setExpanded(True)
-        i0 = QTreeWidgetItem(arch_root, ["Component List"])
+        i0 = QTreeWidgetItem(arch_root, ["Entities and Nodes"])
         i0.setData(0, Qt.ItemDataRole.UserRole, "action_edit_components")
+        i0b = QTreeWidgetItem(arch_root, ["Data Flow"])
+        i0b.setData(0, Qt.ItemDataRole.UserRole, "action_edit_flows")
 
         # --- Analysis Folder ---
         analysis_root = QTreeWidgetItem(root, ["Analysis"])
@@ -114,9 +116,10 @@ class ProjectExplorer(QWidget):
 
         # --- Configuration Folder ---
         config_root = QTreeWidgetItem(root, ["Configuration"])
-        i3 = QTreeWidgetItem(config_root, ["AI Config"])
+        config_root.setExpanded(True)
+        i3 = QTreeWidgetItem(config_root, ["AI Settings"])
         i3.setData(0, Qt.ItemDataRole.UserRole, "action_ai_settings")
-        i4 = QTreeWidgetItem(config_root, ["Prompt Config"])
+        i4 = QTreeWidgetItem(config_root, ["Business Context"])
         i4.setData(0, Qt.ItemDataRole.UserRole, "action_prompt_config")
 
     # ------------------------------------------------------------------

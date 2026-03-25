@@ -24,4 +24,5 @@ class PromptConfig(BaseModel):
     security_posture: str = "standard"
     compliance_priority: str = ""
     industry_context: str = ""
+    business_context_policy: str = ""
     custom_prompt: str = ""

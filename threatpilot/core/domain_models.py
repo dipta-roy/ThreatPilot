@@ -17,6 +17,8 @@ class Component(BaseModel):
     component_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     name: str = "New Component"
     type: str = "Service"
+    element_classification: str = "Entity"
+    asset_classification: str = "Physical"
     description: str = ""
     is_high_value_asset: bool = False
     criticality_description: str = ""

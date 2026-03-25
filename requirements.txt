@@ -10,14 +10,11 @@ pydantic>=2.0
 # Image handling
 Pillow>=10.0
 
-# OCR (optional)
-pytesseract>=0.3.10
-
 # AI communication
 httpx>=0.25
-
-# Storage
-# sqlite3 is part of Python stdlib
+cryptography>=41.0
+keyring>=24.2
+python-dotenv>=1.0
 
 # Export
 pandas>=2.0

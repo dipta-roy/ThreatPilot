@@ -26,7 +26,9 @@ class DFDNode(BaseModel):
 
     id: str
     name: str
-    type: DFDNodeType
+    type: str
+    element_classification: str = ""
+    asset_classification: str = ""
     description: str = ""
     # Reference to original component if applicable
     component_id: Optional[str] = None
@@ -63,7 +65,9 @@ def convert_to_dfd(
         node = DFDNode(
             id=comp.component_id,
             name=comp.name,
-            type=DFDNodeType.PROCESS,
+            type=comp.type,
+            element_classification=comp.element_classification,
+            asset_classification=comp.asset_classification,
             description=comp.description,
             component_id=comp.component_id
         )

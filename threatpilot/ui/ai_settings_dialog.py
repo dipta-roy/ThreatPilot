@@ -34,13 +34,13 @@ class AISettingsDialog(QDialog):
         parent: The parent widget.
     """
 
-    def __init__(self, config: AIConfig, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("AI Settings")
         self.setFixedWidth(400)
         
         # We work on a copy so we can cancel without mutation
-        self._config = config.model_copy()
+        self._config = AIConfig.load()
 
         self._setup_ui()
         self._on_provider_changed(self._provider_type.currentText())
@@ -71,10 +71,18 @@ class AISettingsDialog(QDialog):
         self._model_name = QLineEdit(self._config.model_name)
         self._form.addRow("Model Name:", self._model_name)
 
-        # API Key
-        self._api_key = QLineEdit(self._config.api_key)
-        self._api_key.setEchoMode(QLineEdit.EchoMode.Password)
-        self._form.addRow("API Key:", self._api_key)
+        # API Keys
+        self._external_key = QLineEdit(self._config.external_api_key)
+        self._external_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self._form.addRow("OpenAI/External Key:", self._external_key)
+
+        self._gemini_key = QLineEdit(self._config.gemini_api_key)
+        self._gemini_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self._form.addRow("Gemini API Key:", self._gemini_key)
+
+        self._claude_key = QLineEdit(self._config.claude_api_key)
+        self._claude_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self._form.addRow("Claude API Key:", self._claude_key)
 
         # Temperature
         self._temperature = QDoubleSpinBox()
@@ -125,18 +133,19 @@ class AISettingsDialog(QDialog):
     def _on_provider_changed(self, provider_type: str) -> None:
         """Show or hide fields and update model defaults based on the selected backend."""
         # 1. Row Visibility
-        show_endpoint = provider_type in ("ollama", "external")
+        show_endpoint = provider_type in ("ollama", "external", "gemini")
         self._set_row_visible(self._endpoint_url, show_endpoint)
         
-        show_key = provider_type in ("external", "gemini", "claude")
-        self._set_row_visible(self._api_key, show_key)
+        # We show all keys always per request "configure api key for multiple ai providers as well simultaniously"
+        # but we highlighted them, so it's fine.
 
         # 2. Sensible Model Defaults
         defaults = {
-            "gemini": "gemini-3-flash-preview",
+            "gemini": "gemini-2.5-flash",
             "claude": "claude-3-haiku-20240307",
-            "ollama": "llama3"
+            "ollama": "qwen2.5vl:3b"
         }
+
         if provider_type in defaults:
             self._model_name.setText(defaults[provider_type])
         elif provider_type == "external":
@@ -154,7 +163,9 @@ class AISettingsDialog(QDialog):
         self._config.provider_type = self._provider_type.currentText()
         self._config.endpoint_url = self._endpoint_url.text()
         self._config.model_name = self._model_name.text()
-        self._config.api_key = self._api_key.text()
+        self._config.external_api_key = self._external_key.text()
+        self._config.gemini_api_key = self._gemini_key.text()
+        self._config.claude_api_key = self._claude_key.text()
         self._config.temperature = self._temperature.value()
         self._config.max_tokens = self._max_tokens.value()
         self._config.timeout = self._timeout.value()

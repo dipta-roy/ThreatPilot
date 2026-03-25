@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QFrame,
     QAbstractItemView,
-    QListWidget,
+    QPushButton,
     QDialogButtonBox,
 )
 from PySide6.QtCore import Qt, QSize
@@ -29,11 +29,12 @@ from threatpilot.core.threat_model import Threat, ThreatRegister
 class RiskMatrixDialog(QDialog):
     """Visual heat map for risk prioritization."""
 
-    def __init__(self, threats: List[Threat], parent=None) -> None:
+    def __init__(self, threats: List[Threat], component_names: List[str] = None, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Strategic Risk Matrix")
         self.resize(900, 650)
         self._threats = threats
+        self._component_names = component_names or []
         self._setup_ui()
         self._populate_matrix()
 
@@ -84,9 +85,18 @@ class RiskMatrixDialog(QDialog):
         self._cell_title.setStyleSheet("color: #f0f6fc; padding-top: 5px;")
         side_layout.addWidget(self._cell_title)
         
-        self._threat_list = QListWidget()
-        self._threat_list.setStyleSheet("background: transparent; border: none;")
-        side_layout.addWidget(self._threat_list)
+        self._threat_table = QTableWidget(0, 2)
+        self._threat_table.setHorizontalHeaderLabels(["Threat Title", "Action"])
+        self._threat_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self._threat_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        self._threat_table.setColumnWidth(1, 80)
+        self._threat_table.setStyleSheet("background: transparent; border: none; color: #f0f6fc;")
+        self._threat_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._threat_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._threat_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._threat_table.verticalHeader().setVisible(False)
+        self._threat_table.itemDoubleClicked.connect(self._on_threat_double_clicked)
+        side_layout.addWidget(self._threat_table)
         
         main_h.addWidget(self._side_panel, 2)
         
@@ -98,6 +108,17 @@ class RiskMatrixDialog(QDialog):
         layout.addWidget(btns)
 
         self._matrix.cellClicked.connect(self._on_cell_clicked)
+
+    def _on_threat_double_clicked(self, item: QTableWidgetItem) -> None:
+        """Handle double-click on a threat in the side panel list."""
+        row = item.row()
+        likelihood = 5 - self._matrix.currentRow()
+        impact = self._matrix.currentColumn() + 1
+        threats = self._data.get((self._matrix.currentRow(), self._matrix.currentColumn()), [])
+        
+        if 0 <= row < len(threats):
+            self._edit_threat(threats[row])
+
 
     def _get_impact_score(self, cvss: float) -> int:
         """Map 0-10 CVSS to 1-5 Impact scale."""
@@ -172,7 +193,33 @@ class RiskMatrixDialog(QDialog):
         threats = self._data.get((row, col), [])
         
         self._cell_title.setText(f"Likelihood: {likelihood} | Impact: {impact} ({len(threats)} Threats)")
-        self._threat_list.clear()
+        self._threat_table.setRowCount(0)
         
         for t in threats:
-            self._threat_list.addItem(f"[{t.category}] {t.title}")
+            row_idx = self._threat_table.rowCount()
+            self._threat_table.insertRow(row_idx)
+            
+            title_item = QTableWidgetItem(f"[{t.category.value[:3]}] {t.title}")
+            title_item.setToolTip(t.title)
+            self._threat_table.setItem(row_idx, 0, title_item)
+            
+            edit_btn = QPushButton("Edit")
+            edit_btn.setFixedSize(60, 24)
+            edit_btn.setStyleSheet("background-color: #238636; color: white; border-radius: 4px; font-weight: bold;")
+            edit_btn.clicked.connect(lambda checked=False, threat=t: self._edit_threat(threat))
+            self._threat_table.setCellWidget(row_idx, 1, edit_btn)
+
+    def _edit_threat(self, threat: Threat) -> None:
+        """Open the edit dialog for the selected threat."""
+        from threatpilot.ui.threat_edit_dialog import ThreatEditDialog
+        dialog = ThreatEditDialog(threat, component_names=self._component_names, parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            # Re-populate to reflect changes (e.g. if likelihood/impact changed)
+            self._populate_matrix()
+            # Find the new cell if likelihood/impact changed
+            impact = self._get_impact_score(threat.cvss_score)
+            new_row = 5 - threat.likelihood
+            new_col = impact - 1
+            self._on_cell_clicked(new_row, new_col)
+            # Select the cell visually
+            self._matrix.setCurrentCell(new_row, new_col)

@@ -69,6 +69,12 @@ class PromptSettingsDialog(QDialog):
         self._industry_context.setPlaceholderText("e.g. FinTech / Banking, Healthcare Provider")
         form.addRow("Industry Context:", self._industry_context)
 
+        # Business Context Policy
+        self._business_context = QTextEdit(self._config.business_context_policy)
+        self._business_context.setPlaceholderText("e.g. Data must never leave the VPC, All PII must be encrypted at rest...")
+        self._business_context.setMaximumHeight(100)
+        form.addRow("Business Context Policy:", self._business_context)
+
         layout.addLayout(form)
 
         # Custom Prompt (Free-text)
@@ -97,5 +103,6 @@ class PromptSettingsDialog(QDialog):
         self._config.security_posture = self._security_posture.text()
         self._config.compliance_priority = self._compliance_priority.text()
         self._config.industry_context = self._industry_context.text()
+        self._config.business_context_policy = self._business_context.toPlainText()
         self._config.custom_prompt = self._custom_prompt.toPlainText()
         return self._config

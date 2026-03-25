@@ -43,18 +43,32 @@ class PromptBuilder:
         if self.config.compliance_priority:
             prompt += f"Compliance Priority: {self.config.compliance_priority}\n"
 
+        if self.config.business_context_policy:
+            prompt += f"\nBusiness Context & Security Policy:\n{self.config.business_context_policy}\n"
+
         if self.config.custom_prompt:
             prompt += f"\nAdditional Instructions:\n{self.config.custom_prompt}\n"
+        
+        prompt += (
+            "\nCRITICAL: You must adjust your threat identification, risk descriptions, and CVSS scores "
+            "based on the specific values provided above for Industry, Risk Preference, Posture, and Policy. "
+            "If a policy forbids certain data flows, those flows should be flagged with high priority.\n"
+        )
 
         prompt += (
             "\nOutput Format Instructions:\n"
             "Return the analysis as a JSON list of threats. "
-            "IMPORTANT: If the same type of vulnerability (e.g., Spoofing) affects multiple components, "
-            "you MUST output a SEPARATE threat entry for EACH affected component. "
-            "Do NOT group multiple components into a single threat entry.\n\n"
+            "IMPORTANT: Analyze EVERY Data Flow (Edge) for communication-specific threats (e.g., Tampering, Information Disclosure) "
+            "based on its protocol, and EVERY DFD Node for architectural threats.\n\n"
+            "If a vulnerability affects multiple components or flows, "
+            "you MUST output a SEPARATE threat entry for EACH affected item. "
+            "Do NOT group multiple items into a single threat entry.\n\n"
             "Each threat must have fields: threat_id (uuid), category (STRIDE), title, "
-            "description, impact, likelihood (1-5), recommended_mitigation, "
-            "affected_components (exactly one name), cvss_score (float, 0.0-10.0), and cvss_vector (CVSS 3.1 standard vector string)."
+            "description, impact (a concise sentence describing the technical or business impact), "
+            "likelihood (1-5), recommended_mitigation, "
+            "vulnerabilities (description of technical weaknesses that allow this threat), "
+            "affected_components (exactly one name - either a component name or a data flow name), "
+            "cvss_score (float, 0.0-10.0), and cvss_vector (CVSS 3.1 standard vector string)."
         )
 
         return prompt
@@ -74,37 +88,53 @@ class PromptBuilder:
         # List Nodes
         prompt += "--- DFD NODES (Components) ---\n"
         for node in dfd.nodes:
-            prompt += f"- ID: {node.id} | Name: {node.name} | Type: {node.type}\n"
+            prompt += f"- Name: {node.name}\n"
+            prompt += f"  Type: {node.type} | Element: {node.element_classification} | Asset: {node.asset_classification}\n"
             if node.description:
                 prompt += f"  Desc: {node.description}\n"
 
-        # List Edges
+        # List Edges (skip unmapped flows with no valid endpoints)
         prompt += "\n--- DFD EDGES (Data Flows) ---\n"
+        valid_edge_count = 0
         for edge in dfd.edges:
-            prompt += f"- From: {edge.source_id} -> To: {edge.target_id}\n"
-            prompt += f"  Name: {edge.name} | Protocol: {edge.protocol}\n"
+            # Map IDs back to names for better context in STRIDE analysis
+            src_name = next((n.name for n in dfd.nodes if n.id == edge.source_id), edge.source_id)
+            dst_name = next((n.name for n in dfd.nodes if n.id == edge.target_id), edge.target_id)
+            
+            # Skip edges where both source and target are unmapped (empty strings)
+            if not src_name.strip() and not dst_name.strip():
+                continue
+            
+            valid_edge_count += 1
+            prompt += f"- Flow: {edge.name} ({src_name} -> {dst_name})\n"
+            prompt += f"  Protocol: {edge.protocol}\n"
 
-        prompt += "\nIdentify specific potential threats based on STRIDE categories."
+        if valid_edge_count == 0:
+            prompt += "(No data flows defined yet. Analyze each NODE for architectural threats regardless.)\n"
+
+        prompt += "\nIMPORTANT: Identify specific potential threats based on the classifications and flow directions provided above."
+        prompt += " Even if no data flows are listed, you MUST analyze EVERY node for architectural threats such as spoofing, tampering, repudiation, information disclosure, denial of service, and elevation of privilege."
         return prompt
 
     def build_vision_detection_prompt(self, system_name: str) -> str:
         """Construct the user prompt for visual architecture detection."""
         return (
             f"Analyze the attached architecture diagram for the system: '{system_name}'.\n\n"
-            "Your task is to identify and extract all key architectural components from the image.\n"
-            "For each component, provide:\n"
-            "1. Name of the component (extract from labels in the image).\n"
-            "2. Type (Service, Datastore, Asset, Dataflow, or Trustboundary).\n"
-            "3. Approximate bounding box coordinates in the format [x, y, width, height].\n\n"
-            "Also identify data flows (arrows) and trust boundaries if visible.\n"
-            "Represent all coordinates in a normalized range from 0 to 1000 relative to the image size.\n"
-            "Return ONLY a strictly valid JSON object. SILENTLY perform all verification and do not output any draft reasoning or conversational text.\n"
-            "The final response MUST start with '{' and end with '}'.\n"
+            "Extract all components and data flows as a high-density JSON object.\n"
+            "Keys for Components ('c'):\n"
+            "- 'n': Name (from image labels)\n"
+            "- 't': Type (Service, Datastore, Asset, Dataflow, or Trustboundary)\n"
+            "- 'ec': Element Classification (Entity, Process, DataStore, or DataFlow)\n"
+            "- 'ac': Asset Classification (Physical or Informational)\n\n"
+            "Keys for Flows ('f'):\n"
+            "- 'n': Flow Label\n"
+            "- 's': Source component name\n"
+            "- 'd': Destination component name\n"
+            "- 'p': Protocol (e.g., HTTPS)\n\n"
+            "Return ONLY a strictly valid JSON object. Do not output any thinking or conversational text.\n"
             "Target Format:\n"
             "{\n"
-            '  "components": [\n'
-            '    {"name": "Verified Label", "type": "Service", "bounding_box": [x, y, w, h]},\n'
-            "    ...\n"
-            "  ]\n"
+            '  "c": [{"n": "A", "t": "Service", "ec": "Process", "ac": "Physical"}],\n'
+            '  "f": [{"n": "F1", "s": "A", "d": "B", "p": "HTTPS"}]\n'
             "}"
         )

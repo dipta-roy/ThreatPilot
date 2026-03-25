@@ -121,7 +121,9 @@ class PropertiesPanel(QWidget):
         if isinstance(item, Component):
             self._header.setText("Component Properties")
             self._add_text_row("Name:", "name", item.name)
-            self._add_combo_row("Type:", "type", item.type, ["Elements", "Assets", "Datastore", "Dataflow", "Service", "Data", "Trustboundary"])
+            self._add_combo_row("Type:", "type", item.type, ["Service", "Datastore", "Asset", "Trustboundary"])
+            self._add_combo_row("Element Class:", "element_classification", item.element_classification, ["Entity", "Process", "DataStore", "DataFlow"])
+            self._add_combo_row("Asset Class:", "asset_classification", item.asset_classification, ["Physical", "Informational"])
             self._add_textarea_row("Description:", "description", item.description)
             self._add_checkbox_row("High Value Asset:", "is_high_value_asset", item.is_high_value_asset)
             self._add_textarea_row("Criticality Desc:", "criticality_description", item.criticality_description)
@@ -150,6 +152,7 @@ class PropertiesPanel(QWidget):
             self._add_combo_row("Category:", "category", item.category.value, [c.value for c in STRIDECategory])
             
             self._add_textarea_row("Description:", "description", item.description)
+            self._add_textarea_row("Vulnerabilities:", "vulnerabilities", item.vulnerabilities)
             self._add_textarea_row("Impact:", "impact", item.impact)
             self._add_textarea_row("Mitigation:", "mitigation", item.mitigation)
             

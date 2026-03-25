@@ -109,9 +109,9 @@ class ClaudeProvider(AIProviderInterface):
     ) -> tuple[str, dict]:
         """Send a request to Claude including a base64-encoded image."""
         import base64
-        model = self.config.model_name or "claude-3-haiku-20240307"
+        model = (self.config.model_name or "claude-3-haiku-20240307").strip()
         headers = {
-            "x-api-key": self.config.api_key,
+            "x-api-key": self.config.api_key.strip(),
             "anthropic-version": self._version,
             "content-type": "application/json"
         }

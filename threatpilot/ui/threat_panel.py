@@ -57,7 +57,7 @@ class ThreatPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         # Toolbar / Actions area
-        self._btn_run = QPushButton("Run Global AI Analysis")
+        self._btn_run = QPushButton("Analyze Threats")
         self._btn_run.setObjectName("btn_run_analysis")
         self._btn_run.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_run.clicked.connect(self.run_analysis_requested.emit)
@@ -96,6 +96,8 @@ class ThreatPanel(QWidget):
         self._tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._tree.setAlternatingRowColors(True)
         self._tree.setIndentation(15)
+        self._tree.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self._tree.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         
         # Selection handling
         self._tree.itemClicked.connect(self._on_item_clicked)
@@ -152,6 +154,7 @@ class ThreatPanel(QWidget):
                 matches_search = (
                     search_text in threat.title.lower() or
                     search_text in threat.description.lower() or
+                    search_text in threat.vulnerabilities.lower() or
                     search_text in threat.category.value.lower() or
                     search_text in threat.affected_components.lower() or
                     search_text in sev_label

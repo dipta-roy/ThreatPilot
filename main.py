@@ -7,7 +7,9 @@ Usage:
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from threatpilot.ui.main_window import MainWindow
@@ -19,6 +21,11 @@ def main() -> None:
     app.setApplicationName("ThreatPilot")
     app.setOrganizationName("ThreatPilot")
     app.setApplicationVersion("0.1.0")
+    
+    # Set global application icon
+    icon_path = Path(__file__).parent / "threatpilot" / "resources" / "app-icon.png"
+    if icon_path.exists():
+        app.setWindowIcon(QIcon(str(icon_path)))
 
     # Apply a dark, modern stylesheet
     app.setStyleSheet(_build_stylesheet())

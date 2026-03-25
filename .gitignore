@@ -1,0 +1,22 @@
+# ThreatPilot - Git Ignore Rules
+# Created by Dipta Roy
+
+# Environments
+.env
+config.env
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Sensitive Project Data
+# Exclude individual project folders which contain confidential threat models
+# (assuming projects are stored in sub-folders with project.json)
+**/project.json
+**/architecture.json
+**/threats.json
+**/diagrams/
+
+# System Files
+.DS_Store
+Thumbs.db

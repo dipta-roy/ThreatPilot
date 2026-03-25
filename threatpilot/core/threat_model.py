@@ -46,7 +46,10 @@ class Threat(BaseModel):
     mitigation: str = ""
     is_accepted_risk: bool = False
     acceptance_justification: str = ""
+    vulnerabilities: str = ""
     affected_components: str = ""
+    affected_element: str = ""
+    affected_asset: str = ""
     cvss_score: float = 0.0
     cvss_vector: str = ""
     source_dfd_node: Optional[str] = None

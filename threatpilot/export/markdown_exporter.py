@@ -69,16 +69,38 @@ def export_to_markdown(project: Project, output_path: str | Path) -> None:
             lines.append(f"### {category}")
             for t in items:
                 status = "✅ [ACCEPTED]" if t.is_accepted_risk else "❌ [ACTIVE]"
+                
+                # Derive severity from CVSS score
+                from threatpilot.risk.cvss_calculator import get_cvss_severity
+                severity = get_cvss_severity(t.cvss_score)
+                
+                # Extract component-level classifications
+                comp_details = []
+                if t.affected_components:
+                    names = [n.strip() for n in t.affected_components.split(",")]
+                    for name in names:
+                        for c in project.components:
+                            if c.name == name:
+                                comp_details.append(f"{c.name} ({c.element_classification} / {c.asset_classification})")
+                                break
+                
                 lines.append(f"#### {status} {t.title}")
+                lines.append(f"- **Risk Level:** {severity} (Score: {t.cvss_score})")
                 lines.append(f"- **Likelihood:** {t.likelihood}/5")
-                lines.append(f"- **CVSS Score:** {t.cvss_score}")
                 if t.cvss_vector:
                     lines.append(f"- **CVSS Vector:** `{t.cvss_vector}`")
-                if t.affected_components:
+                
+                if comp_details:
+                    lines.append(f"- **Affected Assets:** {', '.join(comp_details)}")
+                elif t.affected_components:
                     lines.append(f"- **Affected Components:** {t.affected_components}")
+                
                 lines.append(f"- **Description:** {t.description}")
+                if t.vulnerabilities:
+                    lines.append(f"- **Vulnerabilities:** {t.vulnerabilities}")
                 lines.append(f"- **Impact:** {t.impact}")
-                lines.append(f"- **Recommended Mitigation:** {t.mitigation}")
+                lines.append(f"- **Mitigation Strategy:** {t.mitigation}")
+                
                 if t.is_accepted_risk and t.acceptance_justification:
                     lines.append(f"- **Acceptance Rationale:** {t.acceptance_justification}")
                 lines.append("")

@@ -13,7 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QAction, QKeySequence, QFont, QPixmap, QImage
+from PySide6.QtGui import QAction, QKeySequence, QFont, QPixmap, QImage, QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QDockWidget,
@@ -54,7 +54,7 @@ from threatpilot.ai.response_parser import extract_json
 from threatpilot.core.dfd_converter import convert_to_dfd
 from threatpilot.core.dfd_converter import convert_to_dfd
 from threatpilot.core.domain_models import Component, Flow, TrustBoundary
-from threatpilot.ui.architecture_dialog import ArchitectureDialog
+from threatpilot.ui.architecture_dialog import EntitiesDialog, DataFlowDialog
 from threatpilot.ui.risk_matrix_dialog import RiskMatrixDialog
 from PySide6.QtWidgets import QDialog
 from PySide6.QtCore import QThread, Signal, QRectF, QPointF
@@ -103,7 +103,10 @@ class AnalysisWorker(QThread):
             self.response_ready.emit(raw_resp)
             if usage:
                 u = usage.get("usage", usage)
-                self.response_ready.emit(f"METADATA: Tokens [In: {u.get('prompt_tokens', u.get('promptTokenCount', 0))} | Out: {u.get('completion_tokens', u.get('candidatesTokenCount', 0))} | Total: {u.get('total_tokens', u.get('totalTokenCount', 0))}]")
+                finish_reason = usage.get("finish_reason", "UNKNOWN")
+                meta_log = f"METADATA: Tokens [In: {u.get('prompt_tokens', u.get('promptTokenCount', 0))} | Out: {u.get('completion_tokens', u.get('candidatesTokenCount', 0))} | Total: {u.get('total_tokens', u.get('totalTokenCount', 0))}]"
+                meta_log += f" | FinishReason: {finish_reason}"
+                self.response_ready.emit(meta_log)
                 
             self.finished.emit(register)
         except Exception as exc:
@@ -153,9 +156,12 @@ class AIVisionWorker(QThread):
             response_text, meta = loop.run_until_complete(run_vision())
             
             usage = meta.get("usage", {})
+            finish_reason = meta.get("finish_reason", "UNKNOWN")
+            
             self.response_ready.emit(response_text)
-            if usage:
-                self.response_ready.emit(f"METADATA: Tokens [In: {usage.get('promptTokenCount', 0)} | Out: {usage.get('candidatesTokenCount', 0)} | Total: {usage.get('total_token_count', usage.get('totalTokenCount', 0))}]")
+            log_meta = f"METADATA: Tokens [In: {usage.get('promptTokenCount', 0)} | Out: {usage.get('candidatesTokenCount', 0)} | Total: {usage.get('total_token_count', usage.get('totalTokenCount', 0))}]"
+            log_meta += f" | FinishReason: {finish_reason}"
+            self.response_ready.emit(log_meta)
             
             data = extract_json(response_text)
             if data:
@@ -254,6 +260,11 @@ class MainWindow(QMainWindow):
     def _setup_window(self) -> None:
         """Configure the top-level window properties."""
         self._update_title()
+        
+        icon_path = Path(__file__).parent.parent / "resources" / "app-icon.png"
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
+            
         self.resize(1400, 900)
         self.setMinimumSize(QSize(1000, 650))
         self.setDockNestingEnabled(True)
@@ -285,6 +296,12 @@ class MainWindow(QMainWindow):
         from threatpilot.ui.threat_panel import ThreatPanel
         self._full_threat_ledger = ThreatPanel(self)
         self._central_tabs.addTab(self._full_threat_ledger, "System Threat Register")
+
+        # Tab 3: Detailed Risk Assessment
+        from threatpilot.ui.risk_assessment_panel import RiskAssessmentPanel
+        self._risk_assessment_panel = RiskAssessmentPanel(self)
+        self._risk_assessment_panel.threat_edited.connect(self._on_save_project)
+        self._central_tabs.addTab(self._risk_assessment_panel, "Risk Assessment Matrix")
         
         self.setCentralWidget(self._central_tabs)
 
@@ -409,6 +426,9 @@ class MainWindow(QMainWindow):
         self._action_import_diagram.setShortcut(QKeySequence("Ctrl+I"))
         file_menu.addAction(self._action_import_diagram)
 
+        self._action_close_project = QAction("&Close Project", self)
+        file_menu.addAction(self._action_close_project)
+
         file_menu.addSeparator()
 
         self._action_exit = QAction("E&xit", self)
@@ -416,22 +436,12 @@ class MainWindow(QMainWindow):
         self._action_exit.triggered.connect(self.close)
         file_menu.addAction(self._action_exit)
 
-        # --- Architecture menu (formerly Edit) ---
-        arch_menu = menu_bar.addMenu("&Architecture")
-
-        self._action_detect_objects = QAction("&Entity Recognition (Capture)", self)
+        # Standalone Architecture Actions (No longer in menu but used by Toolbar/Shortcuts)
+        self._action_detect_objects = QAction("&Detect Entities", self)
         self._action_detect_objects.setShortcut(QKeySequence("Ctrl+D"))
-        arch_menu.addAction(self._action_detect_objects)
 
         self._action_edit_components = QAction("&Component Inventory (Edit)...", self)
         self._action_edit_components.setShortcut(QKeySequence("Ctrl+E"))
-        arch_menu.addAction(self._action_edit_components)
-
-        arch_menu.addSeparator()
-
-        self._action_delete = QAction("&Remove Selected Entity", self)
-        self._action_delete.setShortcut(QKeySequence.StandardKey.Delete)
-        arch_menu.addAction(self._action_delete)
 
         # --- Intelligence menu (formerly AI) ---
         intel_menu = menu_bar.addMenu("&Intelligence")
@@ -490,16 +500,8 @@ class MainWindow(QMainWindow):
         self._action_about = QAction("&About ThreatPilot...", self)
         help_menu.addAction(self._action_about)
 
-        # Connect actions
-        self._action_about.triggered.connect(self._on_about)
-        self._action_detect_objects.triggered.connect(self._on_detect_objects)
-        self._action_edit_components.triggered.connect(self._on_edit_components)
-        self._action_run_analysis.triggered.connect(self._on_run_analysis)
-        self._action_ai_settings.triggered.connect(self._on_ai_settings)
-        self._action_prompt_config.triggered.connect(self._on_prompt_config)
-        self._action_export_excel.triggered.connect(self._on_export_excel)
-        self._action_export_markdown.triggered.connect(self._on_export_markdown)
-        self._action_export_diagram.triggered.connect(self._on_export_diagram)
+        # Menu actions are connected below in _connect_actions for centralization.
+
 
     # ------------------------------------------------------------------
     # Toolbar
@@ -513,32 +515,19 @@ class MainWindow(QMainWindow):
         toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.addToolBar(toolbar)
 
-        # 1. Project Management
-        toolbar.addAction(self._action_new_project)
-        toolbar.addAction(self._action_open_project)
-        
-        toolbar.addSeparator()
-
-        # 2. Capture & Detection (The "Build" Phase)
+        # 1. Capture & Detection (The "Build" Phase)
         toolbar.addAction(self._action_import_diagram)
         
-        det_act = toolbar.addAction("Extract Security Entities")
-        det_act.triggered.connect(self._on_detect_objects)
-        
-        edit_act = toolbar.addAction("Architecture Inventory")
-        edit_act.triggered.connect(self._on_edit_components)
+        toolbar.addAction(self._action_detect_objects)
         
         toolbar.addSeparator()
 
-        # 3. Security Analysis (The "Analyze" Phase)
-        run_act = toolbar.addAction("Analyze Architecture")
+        # 2. Security Analysis (The "Analyze" Phase)
+        run_act = toolbar.addAction("Analyze Threats")
         run_act.setObjectName("btn_run_analysis")
         run_act.triggered.connect(self._on_run_analysis)
         
         toolbar.addSeparator()
-
-        # 4. Global Intelligence settings
-        toolbar.addAction(self._action_ai_settings)
 
     # ------------------------------------------------------------------
     # Status bar
@@ -558,6 +547,7 @@ class MainWindow(QMainWindow):
         """Connect menu / toolbar actions to their handler slots."""
         self._action_new_project.triggered.connect(self._on_new_project)
         self._action_open_project.triggered.connect(self._on_open_project)
+        self._action_close_project.triggered.connect(self._on_close_project)
         self._action_save_project.triggered.connect(self._on_save_project)
         self._action_import_diagram.triggered.connect(self._on_import_diagram)
         self._action_fit_diagram.triggered.connect(self._on_fit_diagram)
@@ -567,6 +557,9 @@ class MainWindow(QMainWindow):
         self._action_export_excel.triggered.connect(self._on_export_excel)
         self._action_export_markdown.triggered.connect(self._on_export_markdown)
         self._action_export_diagram.triggered.connect(self._on_export_diagram)
+        self._action_about.triggered.connect(self._on_about)
+        self._action_detect_objects.triggered.connect(self._on_detect_objects)
+        self._action_edit_components.triggered.connect(self._on_edit_components)
 
     # ------------------------------------------------------------------
     # Slots – File actions
@@ -591,6 +584,7 @@ class MainWindow(QMainWindow):
             self._project_explorer.set_project(self._project)
             self._threat_panel.set_register(self._project.threat_register)
             self._full_threat_ledger.set_register(self._project.threat_register)
+            self._risk_assessment_panel.set_project(self._project)
             self._current_diagram = None
             self._canvas.clear_diagram()
             self._update_title()
@@ -605,6 +599,27 @@ class MainWindow(QMainWindow):
                 
         except OSError as exc:
             QMessageBox.critical(self, "Error", f"Could not create project:\n{exc}")
+
+    def _on_close_project(self) -> None:
+        """Clear the current project and reset the UI."""
+        if not self._project:
+            return
+            
+        self._project = None
+        self._project_explorer.set_project(None)
+        self._threat_panel.set_register(None)
+        self._full_threat_ledger.set_register(None)
+        self._risk_assessment_panel.set_project(None)
+        self._current_diagram = None
+        self._canvas.clear_diagram()
+        self._update_title()
+        
+        # Clear recent info
+        recent_file = Path("f:/ThreatPilot/.threatpilot_recent")
+        if recent_file.exists():
+            recent_file.unlink()
+            
+        self.statusBar().showMessage("Project closed.")
 
     def _on_open_project(self) -> None:
         """Open an existing project directory."""
@@ -625,6 +640,7 @@ class MainWindow(QMainWindow):
         self._project_explorer.set_project(self._project)
         self._threat_panel.set_register(self._project.threat_register)
         self._full_threat_ledger.set_register(self._project.threat_register)
+        self._risk_assessment_panel.set_project(self._project)
         self._current_diagram = None
         self._canvas.clear_diagram()
         self._update_title()
@@ -650,6 +666,7 @@ class MainWindow(QMainWindow):
 
         try:
             save_project(self._project)
+            self._risk_assessment_panel.refresh()
             self.statusBar().showMessage("Project saved.")
         except (ValueError, OSError) as exc:
             QMessageBox.critical(self, "Error", f"Could not save project:\n{exc}")
@@ -730,26 +747,23 @@ class MainWindow(QMainWindow):
 
     def _on_ai_settings(self) -> None:
         """Edit the project's AI provider configuration."""
-        if not self._project:
-            QMessageBox.information(self, "AI Settings", "Create or open a project first.")
-            return
-        dialog = AISettingsDialog(self._project.ai_config, self)
+        dialog = AISettingsDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            self._project.ai_config = dialog.get_config()
-            save_project(self._project)
+            config = dialog.get_config()
+            config.save()
             self.statusBar().showMessage("AI settings updated.")
 
     def _on_prompt_config(self) -> None:
         """Edit the prompt generation parameters."""
         if not self._project:
-            QMessageBox.information(self, "Prompt Config", "Create or open a project first.")
+            QMessageBox.information(self, "Business Context", "Create or open a project first.")
             return
 
         dialog = PromptSettingsDialog(self._project.prompt_config, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._project.prompt_config = dialog.get_config()
             save_project(self._project)
-            self.statusBar().showMessage("Prompt configuration updated.")
+            self.statusBar().showMessage("Business Context updated.")
 
     def _on_explorer_tool_activated(self, action: str) -> None:
         """Handle selection of non-diagram tools in the project explorer."""
@@ -762,6 +776,8 @@ class MainWindow(QMainWindow):
             self._on_prompt_config()
         elif action == "action_edit_components":
             self._on_edit_components()
+        elif action == "action_edit_flows":
+            self._on_edit_flows()
         elif action == "action_view_threats":
             self._central_tabs.setCurrentIndex(1)  # Focus the central threat register
             self._full_threat_ledger.clear_filter()
@@ -769,7 +785,9 @@ class MainWindow(QMainWindow):
             self._threat_panel_dock.raise_()
         elif action == "action_view_risk_matrix" and self._project:
             from threatpilot.ui.risk_matrix_dialog import RiskMatrixDialog
-            dialog = RiskMatrixDialog(self._project.threat_register.threats, self)
+            component_names = [c.name for c in self._project.components]
+            component_names.extend([f.name for f in self._project.flows])
+            dialog = RiskMatrixDialog(self._project.threat_register.threats, component_names=component_names, parent=self)
             dialog.exec()
 
     def _on_run_analysis(self) -> None:
@@ -785,13 +803,15 @@ class MainWindow(QMainWindow):
 
         # 2. Create AI Provider via Factory
         try:
-            provider = create_ai_provider(self._project.ai_config)
+            from threatpilot.config.ai_config import AIConfig
+            config = AIConfig.load()
+            provider = create_ai_provider(config)
         except Exception as exc:
             QMessageBox.critical(self, "AI Error", f"Could not create AI provider:\n{exc}")
             return
 
         # 3. Launch Background Worker
-        self.statusBar().showMessage(f"Running AI Analysis via {self._project.ai_config.provider_type}...")
+        self.statusBar().showMessage(f"Running threat analysis via {config.provider_type}...")
         self._threat_panel._btn_run.setEnabled(False) # Visual feedback
 
         self._worker = AnalysisWorker(
@@ -802,10 +822,21 @@ class MainWindow(QMainWindow):
         )
         self._worker.finished.connect(self._on_analysis_finished)
         self._worker.failed.connect(self._on_analysis_failed)
-        self._worker.prompt_ready.connect(lambda p: self._properties_panel.append_log(p, "PROMPT"))
-        self._worker.response_ready.connect(lambda r: self._properties_panel.append_log(r, "RESPONSE"))
+        def sanitize_log(text: str) -> str:
+            """Mask sensitive API keys or secrets in logs."""
+            if not text: return ""
+            # Simple mask for the actual API key if it's found in the text
+            from threatpilot.config.ai_config import AIConfig
+            config = AIConfig.load()
+            if config.api_key and len(config.api_key) > 8:
+                text = text.replace(config.api_key, "YOUR-API-KEY-IS-HIDDEN")
+            return text
+
+        self._worker.prompt_ready.connect(lambda p: self._properties_panel.append_log(sanitize_log(p), "PROMPT"))
+        self._worker.response_ready.connect(lambda r: self._properties_panel.append_log(sanitize_log(r), "RESPONSE"))
         
-        self._properties_panel._tabs.setCurrentIndex(1) # Switch to Logs
+        # Add a one-time security warning to the log window
+        self._properties_panel.append_log("SECURITY WARNING: Logs may contain architectural details. Masking is active for identified API keys.", "SYSTEM")
         self._worker.start()
 
     def _on_analysis_finished(self, new_register) -> None:
@@ -819,6 +850,8 @@ class MainWindow(QMainWindow):
             
         self._threat_panel.refresh()
         self._full_threat_ledger.refresh()
+        self._risk_assessment_panel.refresh()
+        
         save_project(self._project)
         QMessageBox.information(self, "Analysis", f"Analysis complete! {len(new_register.threats)} new threats identified.")
 
@@ -829,17 +862,23 @@ class MainWindow(QMainWindow):
         self._show_concise_error("Analysis Error", "The AI analysis failed:", error_msg)
 
     def _show_concise_error(self, title: str, prefix: str, error_msg: str) -> None:
-        """Sanitize and display a concise version of technical AI/API errors."""
-        # Clean up technical noise (SDK headers, JSON details, stack traces)
-        clean_msg = str(error_msg).split("\n")[0]
+        """Sanitize and display a concise version of technical AI/API errors, writing full details to log."""
+        from threatpilot.config.ai_config import AIConfig
+        from datetime import datetime
         
-        # Strip common redundant prefix patterns
-        clean_msg = clean_msg.replace("google.api_core.exceptions.", "")
-        
-        if len(clean_msg) > 220:
-            clean_msg = clean_msg[:217] + "..."
+        config = AIConfig.load()
+        safe_error_msg = str(error_msg)
+        if config.api_key and len(config.api_key) > 8:
+            safe_error_msg = safe_error_msg.replace(config.api_key, "YOUR-API-KEY-IS-HIDDEN")
             
-        QMessageBox.critical(self, title, f"{prefix}\n\n{clean_msg}")
+        try:
+            with open("threatpilot_error.log", "a", encoding="utf-8") as f:
+                f.write(f"\n[{datetime.now()}] {title} - {prefix}\n{safe_error_msg}\n")
+        except Exception:
+            pass
+            
+        generic_msg = "An error occurred during AI analysis. For security reasons, the full details have been masked.\nPlease check the threatpilot_error.log file in your working directory for the complete error trace."
+        QMessageBox.critical(self, title, f"{prefix}\n\n{generic_msg}")
 
 
     # ------------------------------------------------------------------
@@ -917,7 +956,7 @@ class MainWindow(QMainWindow):
             file_path += ".xlsx"
 
         try:
-            export_to_excel(self._project.threat_register, file_path)
+            export_to_excel(self._project, file_path)
             self.statusBar().showMessage(f"Exported to {file_path}")
             QMessageBox.information(self, "Export Success", f"File saved to {file_path}")
         except Exception as exc:
@@ -936,10 +975,12 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Running computer vision detection...")
         
         # Determine if we can use AI Vision (Gemini / Claude)
-        prov_type = self._project.ai_config.provider_type.lower()
-        if prov_type in ["gemini", "claude"] and self._project.ai_config.api_key:
+        from threatpilot.config.ai_config import AIConfig
+        config = AIConfig.load()
+        prov_type = config.provider_type.lower()
+        if prov_type in ["gemini", "claude"] and config.api_key:
             self.statusBar().showMessage(f"Using AI Vision ({prov_type.capitalize()}) to detect components...")
-            provider = create_ai_provider(self._project.ai_config)
+            provider = create_ai_provider(config)
             self._worker_ai_vision = AIVisionWorker(
                 provider, str(image_path), self._project.project_name, self._project.prompt_config
             )
@@ -962,11 +1003,9 @@ class MainWindow(QMainWindow):
         self._project.flows.clear()
         self._project.boundaries.clear()
 
-        # Handle if AI returned a direct list instead of a dict with a 'components' key
-        if isinstance(data, list):
-            comp_list = data
-        else:
-            comp_list = data.get("components", []) or data.get("elements", [])
+        # Short key mappings support
+        comp_list = data.get("c", data.get("components", []))
+        flow_list = data.get("f", data.get("flows", []))
         
         # Get actual image dimensions to scale from 0-1000 normalized range
         img_w, img_h = 1920, 1080 # Default
@@ -977,41 +1016,92 @@ class MainWindow(QMainWindow):
                  img_w, img_h = pix.width(), pix.height()
 
         for dc in comp_list:
-            bbox = dc.get("bounding_box", [0, 0, 100, 100])
-            # Scale coordinates from 0-1000 back to pixels
-            final_x = (bbox[0] / 1000.0) * img_w
-            final_y = (bbox[1] / 1000.0) * img_h
-            final_w = (bbox[2] / 1000.0) * img_w
-            final_h = (bbox[3] / 1000.0) * img_h
+            # Default to 0,0 if bounding box is excluded from prompt
+            bbox = dc.get("b", dc.get("bounding_box", [0, 0, 100, 100]))
+            if not isinstance(bbox, list) or len(bbox) < 4:
+                bbox = [0, 0, 100, 100]
 
-            obj_type = str(dc.get("type", "Service")).lower()
-            name = dc.get("name", "Unknown AI Item")
+            final_x = (float(bbox[0]) / 1000.0) * img_w
+            final_y = (float(bbox[1]) / 1000.0) * img_h
+            final_w = (float(bbox[2]) / 1000.0) * img_w
+            final_h = (float(bbox[3]) / 1000.0) * img_h
 
-            if "flow" in obj_type:
-                f = Flow(
-                    name=name,
-                    start_x=final_x, start_y=final_y,
-                    end_x=final_x + final_w, end_y=final_y + final_h # Approximated vector
-                )
-                self._project.flows.append(f)
-            elif "boundary" in obj_type or "trust" in obj_type:
+            comp_type = dc.get("t", dc.get("type", "Service"))
+            low_type = str(comp_type).lower()
+            name = dc.get("n", dc.get("name", "Unknown AI Item"))
+
+            if "boundary" in low_type or "trust" in low_type:
                  b = TrustBoundary(
                      name=name,
                      x=final_x, y=final_y, width=final_w, height=final_h
                  )
                  self._project.boundaries.append(b)
             else:
+                # Short keys for classifications
+                element_cls = dc.get("ec", dc.get("element_classification"))
+                if not element_cls:
+                     element_cls = "Process" if "service" in low_type else "DataStore" if "store" in low_type else "Entity"
+                
+                asset_cls = dc.get("ac", dc.get("asset_classification"))
+                if not asset_cls:
+                     asset_cls = "Informational" if "store" in low_type or "data" in low_type else "Physical"
+
                 c = Component(
                     name=name,
-                    type=dc.get("type", "Service"),
+                    type=comp_type,
+                    element_classification=element_cls,
+                    asset_classification=asset_cls,
                     x=final_x, y=final_y, width=final_w, height=final_h
                 )
                 self._project.components.append(c)
 
+        # Process Flows
+        for df in flow_list:
+            bbox = df.get("b", df.get("bounding_box", [0, 0, 10, 10]))
+            if not isinstance(bbox, list) or len(bbox) < 4:
+                bbox = [0, 0, 10, 10]
+
+            final_x = (float(bbox[0]) / 1000.0) * img_w
+            final_y = (float(bbox[1]) / 1000.0) * img_h
+            
+            src_name = df.get("s", df.get("source", "")).strip()
+            dst_name = df.get("d", df.get("target", "")).strip()
+            
+            # Lookup IDs by name – fuzzy matching (normalized, case-insensitive)
+            def _find_comp_id(search_name: str) -> str:
+                if not search_name:
+                    return ""
+                normalized = search_name.strip().lower()
+                # Pass 1: Exact match (case-insensitive)
+                for comp in self._project.components:
+                    if comp.name.strip().lower() == normalized:
+                        return comp.component_id
+                # Pass 2: Substring containment (handles partial AI labels)
+                for comp in self._project.components:
+                    comp_norm = comp.name.strip().lower()
+                    if normalized in comp_norm or comp_norm in normalized:
+                        return comp.component_id
+                return ""
+            
+            src_id = _find_comp_id(src_name)
+            dst_id = _find_comp_id(dst_name)
+
+            f = Flow(
+                name=df.get("n", df.get("name", "Data Flow")),
+                protocol=df.get("p", df.get("protocol", "HTTPS")),
+                source_id=src_id,
+                target_id=dst_id,
+                start_x=final_x,
+                start_y=final_y,
+                end_x=final_x + (float(bbox[2])/1000.0)*img_w,
+                end_y=final_y + (float(bbox[3])/1000.0)*img_h
+            )
+            self._project.flows.append(f)
+
         self._refresh_canvas_overlays()
         save_project(self._project)
         self.statusBar().showMessage(f"AI Detection complete: {len(self._project.components)} components found.")
-        QMessageBox.information(self, "AI Vision", f"AI Vision successfully detected {len(self._project.components)} components.")
+        QMessageBox.information(self, "AI Vision", f"AI Vision successfully detected {len(self._project.components)} components and {len(self._project.flows)} flows.")
 
 
 
@@ -1040,14 +1130,26 @@ class MainWindow(QMainWindow):
                 self._canvas.add_flow_arrow(start, end, label=f.name, data=f)
 
     def _on_edit_components(self) -> None:
-        """Open the table dialog to manually edit or drop detected components."""
+        """Open the dialog to manage architectural entities and nodes."""
         if not self._project:
             return
             
-        dialog = ArchitectureDialog(self._project, self)
+        dialog = EntitiesDialog(self._project, self)
         dialog.exec()
         
-        # Reload visual overlays to reflect renamed/deleted tables
+        # Reload visual overlays to reflect renamed/deleted entities
+        self._refresh_canvas_overlays()
+        save_project(self._project)
+
+    def _on_edit_flows(self) -> None:
+        """Open the dialog to manage data flow connections."""
+        if not self._project:
+            return
+            
+        dialog = DataFlowDialog(self._project, self)
+        dialog.exec()
+        
+        # Reload visual overlays to reflect flow changes
         self._refresh_canvas_overlays()
         save_project(self._project)
 
@@ -1100,15 +1202,8 @@ class MainWindow(QMainWindow):
 
     def _on_about(self) -> None:
         """Show the About dialog with project metadata."""
-        QMessageBox.about(
-            self, 
-            "About ThreatPilot",
-            "<h3>ThreatPilot</h3>"
-            "<p><b>Version:</b> 0.1 Beta</p>"
-            "<p><b>Author:</b> Dipta Roy</p>"
-            "<p>ThreatPilot is an AI-powered Threat Modeling platform that uses computer vision "
-            "and Large Language Models to automatically identify security risks from architectural diagrams.</p>"
-            "<p>&copy; 2026 Dipta Roy. All rights reserved.</p>"
-        )
+        from threatpilot.ui.about_dialog import AboutDialog
+        dialog = AboutDialog(self)
+        dialog.exec()
 
 

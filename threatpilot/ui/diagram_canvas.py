@@ -128,6 +128,13 @@ class DiagramCanvas(QGraphicsView):
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setBackgroundBrush(QBrush(QColor("#11111b")))
 
+    def showEvent(self, event) -> None:
+        """Ensure the diagram is fitted to screen once the window is shown."""
+        super().showEvent(event)
+        # Delay slightly to ensure layout is truly stable
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(100, self.fit_to_screen)
+
     # ------------------------------------------------------------------
     # Zoom
     # ------------------------------------------------------------------

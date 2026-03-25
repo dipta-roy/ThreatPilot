@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
-from threatpilot.config.ai_config import AIConfig
 from threatpilot.config.prompt_config import PromptConfig
 from threatpilot.core.diagram_model import Diagram
 from threatpilot.core.threat_model import ThreatRegister
@@ -47,7 +46,6 @@ class Project(BaseModel):
     project_name: str = ""
     created_at: str = ""
     updated_at: str = ""
-    ai_config: AIConfig = Field(default_factory=AIConfig)
     prompt_config: PromptConfig = Field(default_factory=PromptConfig)
     diagrams: list[Diagram] = Field(default_factory=list)
     components: list[Component] = Field(default_factory=list)
@@ -69,7 +67,9 @@ class Project(BaseModel):
         Returns:
             A dictionary containing all project metadata.
         """
-        return self.model_dump(exclude={"project_path"})
+        data = self.model_dump(exclude={"project_path"})
+            
+        return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], project_path: str = "") -> Project:
@@ -82,6 +82,9 @@ class Project(BaseModel):
         Returns:
             A fully populated ``Project`` instance.
         """
+        if "ai_config" in data:
+            del data["ai_config"]
+            
         return cls(**data, project_path=project_path)
 
 
@@ -142,7 +145,6 @@ def create_project(project_name: str, parent_dir: str | Path | None = None) -> P
         project_name=project_name,
         created_at=now,
         updated_at=now,
-        ai_config=AIConfig(),
         prompt_config=PromptConfig(),
         project_path=str(project_dir),
     )

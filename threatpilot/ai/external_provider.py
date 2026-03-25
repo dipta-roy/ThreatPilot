@@ -57,10 +57,13 @@ class ExternalProvider(AIProviderInterface):
         if self.config.api_key:
             headers["Authorization"] = f"Bearer {self.config.api_key}"
 
+        # Clean URL
+        url = self.config.endpoint_url.strip().replace("\n", "").replace("\r", "")
+
         try:
             async with httpx.AsyncClient(timeout=self.config.timeout) as client:
                 response = await client.post(
-                    self.config.endpoint_url,
+                    url,
                     json=payload,
                     headers=headers
                 )
