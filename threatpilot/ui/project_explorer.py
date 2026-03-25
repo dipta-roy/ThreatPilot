@@ -25,6 +25,10 @@ from PySide6.QtWidgets import (
 )
 
 from threatpilot.core.diagram_model import Diagram
+from threatpilot.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
 from threatpilot.core.project_manager import Project
 
 
@@ -196,7 +200,7 @@ class ProjectExplorer(QWidget):
                     try:
                         full_path.unlink()
                     except Exception as e:
-                        print(f"Failed to delete file: {e}")
+                        logger.error(f"Failed to delete file: {e}")
 
                 self._project.diagrams.remove(diag)
                 item.parent().removeChild(item)

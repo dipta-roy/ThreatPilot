@@ -53,6 +53,7 @@ class ThreatPanel(QWidget):
 
     def _setup_ui(self) -> None:
         """Initialise tree widget and control buttons."""
+        self.setObjectName("threat_panel")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
@@ -107,6 +108,11 @@ class ThreatPanel(QWidget):
         self.setEnabled(False)
 
     # ------------------------------------------------------------------
+    def set_theme(self, is_dark: bool) -> None:
+        """Update the panel's internal state for theme changes."""
+        self._is_dark_theme = is_dark
+        self.refresh()
+
     # Public API
     # ------------------------------------------------------------------
 
@@ -171,15 +177,26 @@ class ThreatPanel(QWidget):
                     threat.title
                 ])
                 
-                # Color code severity
-                if sev_label == "CRITICAL":
-                    threat_item.setForeground(1, QColor("#ff4444"))
-                elif sev_label == "HIGH":
-                    threat_item.setForeground(1, QColor("#ff8800"))
-                elif sev_label == "MEDIUM":
-                    threat_item.setForeground(1, QColor("#ffbb33"))
-                elif sev_label == "LOW":
-                    threat_item.setForeground(1, QColor("#00c851"))
+                # Color code severity with theme-aware curated palettes
+                is_dark = getattr(self, "_is_dark_theme", True)
+                if is_dark:
+                    if sev_label == "CRITICAL":
+                        threat_item.setForeground(1, QColor("#ff6b6b"))
+                    elif sev_label == "HIGH":
+                        threat_item.setForeground(1, QColor("#ff9f43"))
+                    elif sev_label == "MEDIUM":
+                        threat_item.setForeground(1, QColor("#feca57"))
+                    elif sev_label == "LOW":
+                        threat_item.setForeground(1, QColor("#1dd1a1"))
+                else:
+                    if sev_label == "CRITICAL":
+                        threat_item.setForeground(1, QColor("#cf222e"))
+                    elif sev_label == "HIGH":
+                        threat_item.setForeground(1, QColor("#af4e00"))
+                    elif sev_label == "MEDIUM":
+                        threat_item.setForeground(1, QColor("#9a6700"))
+                    elif sev_label == "LOW":
+                        threat_item.setForeground(1, QColor("#0969da"))
                 # Store reference in user data
                 threat_item.setData(0, Qt.ItemDataRole.UserRole, threat)
 

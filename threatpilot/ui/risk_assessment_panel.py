@@ -37,6 +37,7 @@ class RiskAssessmentPanel(QWidget):
         self._setup_ui()
 
     def _setup_ui(self) -> None:
+        self.setObjectName("assessment_container")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
         
@@ -44,7 +45,7 @@ class RiskAssessmentPanel(QWidget):
         header_font = QFont("Segoe UI", 11, QFont.Weight.Bold)
         label = QLabel("Comprehensive Risk & Vulnerability Assessment Matrix")
         label.setFont(header_font)
-        label.setStyleSheet("color: #58a6ff; margin-bottom: 5px;")
+        label.setObjectName("assessment_title")
         header_layout.addWidget(label)
         
         header_layout.addStretch()
@@ -117,16 +118,23 @@ class RiskAssessmentPanel(QWidget):
         self._project = project
         self.refresh()
 
+    def set_theme(self, is_dark: bool) -> None:
+        """Update the panel's internal state for theme changes."""
+        self._is_dark_theme = is_dark
+        self.refresh()
+
     def refresh(self) -> None:
         """Clear and rebuild the table with the latest joined data."""
         self._table.setRowCount(0)
         if not self._project or not self._project.threat_register:
             return
 
+        is_dark = getattr(self, "_is_dark_theme", True)
         threats = self._project.threat_register.threats
         self._table.setRowCount(len(threats))
 
         for row, t in enumerate(threats):
+            # ... (rest of column mapping) ...
             # 1. Risk ID (Serial Number)
             id_item = QTableWidgetItem(str(row + 1))
             id_item.setToolTip("Double click to edit")
@@ -156,25 +164,40 @@ class RiskAssessmentPanel(QWidget):
             # 9. Likelihood
             self._table.setItem(row, 8, QTableWidgetItem(f"{t.likelihood}/5"))
             
-            # 10. Severity (With Cell Background Coloring)
+            # 10. Severity (With Premium Cell Background Coloring)
             severity = get_cvss_severity(t.cvss_score)
             sev_item = QTableWidgetItem(f"{severity} ({t.cvss_score})")
             self._table.setItem(row, 9, sev_item)
             
-            # Apply specific cell backgrounds
             s_upper = severity.upper()
-            if s_upper == "CRITICAL":
-                sev_item.setBackground(QColor("#7b1e1e"))  # Dark reddish brown
-                sev_item.setForeground(QColor("white"))
-            elif s_upper == "HIGH":
-                sev_item.setBackground(QColor("#cc0000"))  # Red
-                sev_item.setForeground(QColor("white"))
-            elif s_upper == "MEDIUM":
-                sev_item.setBackground(QColor("#ffbb33"))  # Amber
-                sev_item.setForeground(QColor("black"))
-            elif s_upper == "LOW":
-                sev_item.setBackground(QColor("#33b5e5"))  # Light Blue
-                sev_item.setForeground(QColor("black"))
+            if is_dark:
+                # Dark Mode Palette (Strong background, white text)
+                if s_upper == "CRITICAL":
+                    sev_item.setBackground(QColor("#7b1e1e"))
+                    sev_item.setForeground(QColor("white"))
+                elif s_upper == "HIGH":
+                    sev_item.setBackground(QColor("#cc0000"))
+                    sev_item.setForeground(QColor("white"))
+                elif s_upper == "MEDIUM":
+                    sev_item.setBackground(QColor("#e3b341"))
+                    sev_item.setForeground(QColor("black"))
+                elif s_upper == "LOW":
+                    sev_item.setBackground(QColor("#1f6feb"))
+                    sev_item.setForeground(QColor("white"))
+            else:
+                # Light Mode Premium Palette (Subtle backgrounds, dark text)
+                if s_upper == "CRITICAL":
+                    sev_item.setBackground(QColor("#ffebe9"))
+                    sev_item.setForeground(QColor("#cf222e"))
+                elif s_upper == "HIGH":
+                    sev_item.setBackground(QColor("#fff1e5"))
+                    sev_item.setForeground(QColor("#af4e00"))
+                elif s_upper == "MEDIUM":
+                    sev_item.setBackground(QColor("#fff8c5"))
+                    sev_item.setForeground(QColor("#9a6700"))
+                elif s_upper == "LOW":
+                    sev_item.setBackground(QColor("#ddf4ff"))
+                    sev_item.setForeground(QColor("#0969da"))
 
             # 11. Mitigation Strategy
             self._table.setItem(row, 10, QTableWidgetItem(t.mitigation))
@@ -182,7 +205,7 @@ class RiskAssessmentPanel(QWidget):
             # 12. Actions (Edit Button)
             edit_btn = QPushButton("Edit")
             edit_btn.setFixedSize(90, 32)
-            edit_btn.setStyleSheet("background-color: #238636; color: white; border-radius: 4px; font-weight: bold;")
+            edit_btn.setObjectName("btn_edit_threat")
             edit_btn.clicked.connect(lambda checked=False, threat=t: self._edit_threat(threat))
             self._table.setCellWidget(row, 11, edit_btn)
             

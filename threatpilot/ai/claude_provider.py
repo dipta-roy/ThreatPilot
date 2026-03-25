@@ -94,7 +94,10 @@ class ClaudeProvider(AIProviderInterface):
                 try:
                     error_data = response.json()
                     error_detail = f" - {error_data.get('error', {}).get('message', '')}"
-                except: pass
+                except (json.JSONDecodeError, UnboundLocalError):
+                    pass
+                except Exception:
+                    pass
                 raise IOError(f"HTTP request to Claude failed: {exc}{error_detail}")
             except (KeyError, IndexError, ValueError) as exc:
                 raise RuntimeError(f"Failed to parse Claude API response: {exc}")

@@ -9,7 +9,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from PySide6.QtCore import QRectF
+from PySide6.QtCore import Qt, QRectF
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import QGraphicsPixmapItem, QGraphicsScene, QGraphicsView
 
@@ -64,16 +64,29 @@ def import_diagram_file(
     diagrams_dir.mkdir(parents=True, exist_ok=True)
     dest = diagrams_dir / dest_name
 
-    shutil.copy2(str(src), str(dest))
+    # Read image dimensions and optionally resize if very large
+    img = QImage(str(src))
+    if not img.isNull():
+        MAX_SIZE = 4096
+        if img.width() > MAX_SIZE or img.height() > MAX_SIZE:
+            img = img.scaled(
+                MAX_SIZE,
+                MAX_SIZE,
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            )
+            img.save(str(dest))
+        else:
+            shutil.copy2(str(src), str(dest))
+            
+        diagram.width = img.width()
+        diagram.height = img.height()
+    else:
+        # Fallback if QImage fails to read before copying (unlikely)
+        shutil.copy2(str(src), str(dest))
 
     # Store relative path (relative to project root)
     diagram.file_path = f"diagrams/{dest_name}"
-
-    # Read image dimensions
-    img = QImage(str(dest))
-    if not img.isNull():
-        diagram.width = img.width()
-        diagram.height = img.height()
 
     return diagram
 

@@ -86,4 +86,6 @@ ThreatPilot prioritizes the security of your credentials:
 ## Design Philosophy
 ThreatPilot is built on a **Modular Domain-Driven Architecture**. Each core package—`ai`, `detection`, `risk`, `core`, and `ui`—is isolated, making it easy to add new AI backends, detection algorithms, or export formats without side effects.
 
+For a deep dive into the system's internal structure, layers, and data flows, please see the [Architecture Overview](./architecture.md).
+
 ---

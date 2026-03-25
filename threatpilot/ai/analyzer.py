@@ -144,12 +144,16 @@ class ThreatAnalyzer:
 
                 # Safer numeric conversion
                 def _to_int(val, default=3):
-                    try: return int(float(str(val)))
-                    except: return default
+                    try:
+                        return int(float(str(val)))
+                    except (ValueError, TypeError):
+                        return default
                 
                 def _to_float(val, default=0.0):
-                    try: return float(str(val))
-                    except: return default
+                    try:
+                        return float(str(val))
+                    except (ValueError, TypeError):
+                        return default
 
                 threat = Threat(
                     category=category,

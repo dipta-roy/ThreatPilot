@@ -109,5 +109,7 @@ class ExternalProvider(AIProviderInterface):
             
             socket.create_connection((parsed.hostname, parsed.port or 80), timeout=2)
             return True
-        except:
+        except (socket.error, ValueError):
+            return False
+        except Exception:
             return False

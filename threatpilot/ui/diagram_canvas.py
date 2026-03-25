@@ -126,7 +126,15 @@ class DiagramCanvas(QGraphicsView):
         self.setDragMode(QGraphicsView.DragMode.NoDrag)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.setBackgroundBrush(QBrush(QColor("#11111b")))
+        
+        # Initial theme application (defaulting to dark if not specify)
+        self.set_theme(is_dark=True)
+
+    def set_theme(self, is_dark: bool) -> None:
+        """Update canvas background and overlay contrast based on theme."""
+        bg_color = "#0d1117" if is_dark else "#ffffff"
+        self.setBackgroundBrush(QBrush(QColor(bg_color)))
+        self.viewport().setStyleSheet(f"background-color: {bg_color}; border: none;")
 
     def showEvent(self, event) -> None:
         """Ensure the diagram is fitted to screen once the window is shown."""

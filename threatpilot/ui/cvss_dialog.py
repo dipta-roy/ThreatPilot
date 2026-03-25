@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QColor
 
-from threatpilot.utils.cvss_calculator import calculate_cvss_31
+from threatpilot.risk.cvss_calculator import parse_cvss_vector, calculate_cvss_base_score, generate_cvss_vector
 
 
 class CVSSCalculatorDialog(QDialog):
@@ -139,7 +139,9 @@ class CVSSCalculatorDialog(QDialog):
 
         new_vector = f"CVSS:3.1/AV:{get_val(self._av)}/AC:{get_val(self._ac)}/PR:{get_val(self._pr)}/UI:{get_val(self._ui)}/S:{get_val(self._scope)}/C:{get_val(self._conf)}/I:{get_val(self._integ)}/A:{get_val(self._avail)}"
         
-        score, vector = calculate_cvss_31(new_vector)
+        metrics = parse_cvss_vector(new_vector)
+        score = calculate_cvss_base_score(metrics)
+        vector = generate_cvss_vector(metrics)
         self._vector = vector
         self._score = score
         

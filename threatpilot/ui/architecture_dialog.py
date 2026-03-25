@@ -21,20 +21,24 @@ from PySide6.QtWidgets import (
     QWidget,
     QLabel,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 from threatpilot.core.project_manager import Project
 from threatpilot.core.domain_models import Component, Flow
+from threatpilot.ui import undo_commands
 
 
 class EntitiesDialog(QDialog):
     """Dialog for editing architectural entities and nodes."""
 
-    def __init__(self, project: Project, parent=None) -> None:
+    project_modified = Signal()
+
+    def __init__(self, project: Project, undo_stack=None, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Entities and Nodes")
         self.resize(900, 600)
         self._project = project
+        self._undo_stack = undo_stack
         self._setup_ui()
         self._load_data()
 
@@ -71,6 +75,7 @@ class EntitiesDialog(QDialog):
         self._table.setColumnWidth(2, 250)
 
         self._table.setAlternatingRowColors(True)
+        self._table.verticalHeader().setDefaultSectionSize(38)
         self._table.itemChanged.connect(self._on_item_changed)
         layout.addWidget(self._table)
 
@@ -151,24 +156,38 @@ class EntitiesDialog(QDialog):
         if row >= 0:
             name_item = self._table.item(row, 0)
             comp = name_item.data(Qt.ItemDataRole.UserRole)
-            if comp in self._project.components:
-                self._project.components.remove(comp)
-            self._load_data()
+            if comp:
+                if self._undo_stack:
+                    cmd = undo_commands.DeleteComponentCommand(self._project, comp)
+                    self._undo_stack.push(cmd)
+                else:
+                    if comp in self._project.components:
+                        self._project.components.remove(comp)
+                self.project_modified.emit()
+                self._load_data()
 
     def _on_add_component(self) -> None:
         new_comp = Component(name="New Component", x=100, y=100)
-        self._project.components.append(new_comp)
+        if self._undo_stack:
+            cmd = undo_commands.AddComponentCommand(self._project, new_comp)
+            self._undo_stack.push(cmd)
+        else:
+            self._project.components.append(new_comp)
+        self.project_modified.emit()
         self._load_data()
 
 
 class DataFlowDialog(QDialog):
     """Dialog for editing data flow connections and protocols."""
 
-    def __init__(self, project: Project, parent=None) -> None:
+    project_modified = Signal()
+
+    def __init__(self, project: Project, undo_stack=None, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Data Flow Mapping")
         self.resize(1000, 600)
         self._project = project
+        self._undo_stack = undo_stack
         self._setup_ui()
         self._load_data()
 
@@ -199,6 +218,7 @@ class DataFlowDialog(QDialog):
         self._flow_table.setColumnWidth(3, 160)
 
         self._flow_table.setAlternatingRowColors(True)
+        self._flow_table.verticalHeader().setDefaultSectionSize(38)
         layout.addWidget(self._flow_table)
 
         flow_btns = QHBoxLayout()
@@ -275,13 +295,24 @@ class DataFlowDialog(QDialog):
         if row >= 0:
             name_item = self._flow_table.item(row, 0)
             flow = name_item.data(Qt.ItemDataRole.UserRole)
-            if flow in self._project.flows:
-                self._project.flows.remove(flow)
-            self._load_data()
+            if flow:
+                if self._undo_stack:
+                    cmd = undo_commands.DeleteFlowCommand(self._project, flow)
+                    self._undo_stack.push(cmd)
+                else:
+                    if flow in self._project.flows:
+                        self._project.flows.remove(flow)
+                self.project_modified.emit()
+                self._load_data()
 
     def _on_add_flow(self) -> None:
         new_flow = Flow(name="Manual Flow", protocol="HTTPS")
-        self._project.flows.append(new_flow)
+        if self._undo_stack:
+            cmd = undo_commands.AddFlowCommand(self._project, new_flow)
+            self._undo_stack.push(cmd)
+        else:
+            self._project.flows.append(new_flow)
+        self.project_modified.emit()
         self._load_data()
 
     def _on_flow_item_changed(self, item: QTableWidgetItem) -> None:

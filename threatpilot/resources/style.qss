@@ -2,17 +2,35 @@
  * ThreatPilot Modern Design System (CSS-like QSS)
  * --------------------------------------------
  * A comprehensive darkness-inspired, professional UI overhaul.
- * Palette: Deep Navy, Glowing Blue, Slate Accents.
+ * Palette: Deep Navy (#0d1117), Glowing Blue (#58a6ff), Slate Accents (#30363d), Text Gray (#c9d1d9).
  */
 
-/* 1. Global Window Backgrounds */
-QMainWindow, QDialog, QDockWidget {
-    background-color: #0d1117;
+/* 1. Reset Global Styles */
+* {
+    outline: none;
     color: #c9d1d9;
-    font-family: 'Segoe UI', 'SF Pro Display', Roboto, sans-serif;
 }
 
-/* 1.5 Header & Menu Bar Redesign */
+/* 2. Primary Dark Backgrounds (Forcing all containers) */
+QMainWindow, QDialog, QDockWidget, QScrollArea, QGraphicsView, QTabWidget, QTabBar,
+QAbstractScrollArea, QWizard, QWizardPage, QMessageBox,
+#properties_container, #prop_widget_container, #assessment_container, #threat_panel, #central_tabs_container {
+    background-color: #0d1117;
+    background: #0d1117;
+    border: none;
+}
+
+/* 3. Deep-Nested Background Overrides */
+QWidget#properties_container QWidget, QWidget#assessment_container QWidget, QWizardPage QWidget {
+    background-color: #0d1117;
+}
+
+/* Viewports for Scroll Areas */
+QAbstractScrollArea > QWidget > QWidget {
+    background-color: #0d1117;
+}
+
+/* 4. Header & Menu Bar Redesign */
 QMenuBar {
     background-color: #161b22;
     color: #8b949e;
@@ -37,132 +55,101 @@ QMenu {
     color: #c9d1d9;
 }
 
-QMenu::item {
-    padding: 8px 25px;
-}
-
 QMenu::item:selected {
     background-color: #1f6feb;
     color: white;
 }
 
-QMenu::separator {
-    height: 1px;
-    background: #30363d;
-    margin: 4px 10px;
-}
-
-/* 2. Dock Widgets & Panes */
+/* 5. Dock Widgets & Panes */
 QDockWidget {
-    border: none;
-    titlebar-close-icon: url(none);
-    titlebar-normal-icon: url(none);
     font-weight: bold;
     color: #58a6ff;
 }
 
 QDockWidget::title {
     background: #161b22;
-    padding: 8px;
+    padding: 10px;
     border-bottom: 1px solid #30363d;
     text-align: left;
+    color: #58a6ff;
 }
 
-/* 3. Toolbar & Actions */
+/* 6. Toolbar & Actions */
 QToolBar {
     background: #161b22;
     border-bottom: 1px solid #30363d;
     padding: 6px;
-    spacing: 8px;
+    spacing: 12px;
 }
 
 QToolButton {
     background: transparent;
     border: 1px solid transparent;
-    border-radius: 4px;
-    padding: 4px;
+    border-radius: 6px;
+    padding: 5px;
     color: #c9d1d9;
 }
 
 QToolButton:hover {
     background: #21262d;
-    border: 1px solid #8b949e;
 }
 
-QToolButton:pressed {
-    background: #0d1117;
-}
-
-/* 4. Unified Inputs & Forms */
-QLineEdit, QTextEdit, QComboBox, QPlainTextEdit {
-    background-color: #0d1117;
+/* 7. Unified Inputs & Forms */
+QLineEdit, QTextEdit, QComboBox, QPlainTextEdit, QSpinBox, QDoubleSpinBox {
+    background-color: #161b22;
     border: 1px solid #30363d;
     border-radius: 6px;
     padding: 6px 12px;
     color: #f0f6fc;
-    selection-background-color: #1f6feb;
 }
 
 QLineEdit:focus, QTextEdit:focus, QComboBox:focus {
-    border: 1px solid #58a6ff;
+    border: 2px solid #58a6ff;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #161b22;
+    border: 1px solid #30363d;
+    selection-background-color: #1f6feb;
+    selection-color: #ffffff;
     outline: none;
 }
 
-QComboBox::drop-down {
-    border: none;
-    width: 30px;
+/* Fix for dropdowns inside table cells — strip extra spacing so they sit flush */
+QTableWidget QComboBox {
     background-color: #161b22;
-    border-top-right-radius: 6px;
-    border-bottom-right-radius: 6px;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    margin: 0px;
+    padding: 0px 8px;
 }
 
-QComboBox::down-arrow {
-    image: none;
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-top: 5px solid #8b949e;
-    margin-right: 10px;
-}
-
-QComboBox::down-arrow:on {
-    border-top: 5px solid #58a6ff;
-}
-
-/* 5. Modern Buttons (Call to Action) */
+/* 8. Modern Buttons */
 QPushButton {
     background-color: #21262d;
     border: 1px solid #30363d;
     border-radius: 6px;
     padding: 8px 16px;
     color: #c9d1d9;
-    font-weight: 500;
+    font-weight: 600;
 }
 
 QPushButton:hover {
     background-color: #30363d;
-    border-color: #8b949e;
 }
 
-QPushButton:pressed {
-    background-color: #161b22;
-}
-
-/* Highlight Primary Action */
-#btn_run_analysis, #btn_detect_objects {
+#btn_run_analysis, #btn_detect_objects, #btn_run, #btn_edit_threat {
     background-color: #238636;
-    border: 1px solid #2ea043;
     color: white;
 }
 
-#btn_run_analysis:hover {
-    background-color: #2ea043;
-}
-
-/* 6. Trees & Lists (Explorer/Threats) */
+/* 9. Trees, Lists, and Tables */
 QTreeWidget, QListWidget, QTableWidget {
     background-color: #0d1117;
-    border: none;
-    outline: none;
+    color: #c9d1d9;
+    font-size: 13px;
+    selection-background-color: #1f6feb;
+    selection-color: white;
 }
 
 QTreeWidget::item {
@@ -170,100 +157,66 @@ QTreeWidget::item {
     border-bottom: 1px solid #161b22;
 }
 
-QTreeWidget::item:selected {
-    background-color: #1f6feb;
-    color: white;
-    border-radius: 4px;
+QTableWidget::item {
+    padding: 4px;
+    border-bottom: 1px solid #161b22;
 }
 
-QTreeWidget::item:hover {
-    background-color: #161b22;
+/* Allow programmatic setBackground() colors on heatmap cells */
+#risk_heatmap::item {
+    padding: 4px;
+    border: none;
+    background-color: transparent;
 }
 
 QHeaderView::section {
     background-color: #161b22;
     color: #8b949e;
-    padding: 5px;
+    padding: 10px;
     border: none;
     border-bottom: 1px solid #30363d;
     font-weight: bold;
-    text-transform: uppercase;
-    font-size: 10px;
 }
 
-/* 7. Scrollbars (Slim Modern) */
-QScrollBar:vertical {
-    background: #0d1117;
-    width: 10px;
-    margin: 0px;
-}
-
-QScrollBar::handle:vertical {
-    background: #30363d;
-    min-height: 20px;
-    border-radius: 5px;
-}
-
-QScrollBar::handle:vertical:hover {
-    background: #484f58;
-}
-
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-    height: 0px;
-}
-
-/* 8. Status Bar */
-QStatusBar {
-    background: #0d1117;
-    border-top: 1px solid #30363d;
-    color: #8b949e;
-    font-size: 11px;
-}
-
-/* 9. Premium Tab Components */
+/* 10. Premium Tab Components */
 QTabWidget::pane {
     border: 1px solid #30363d;
-    background: #0d1117;
+    background-color: #0d1117;
     top: -1px;
-    border-radius: 8px;
-    border-top-left-radius: 0px;
 }
 
 QTabBar::tab {
-    background: #161b22;
+    background-color: #161b22;
     color: #8b949e;
-    padding: 10px 20px;
-    margin-right: 4px;
+    padding: 10px 24px;
     border: 1px solid #30363d;
     border-bottom: none;
     border-top-left-radius: 6px;
     border-top-right-radius: 6px;
-    font-weight: 500;
+    margin-right: 4px;
 }
 
 QTabBar::tab:selected {
-    background: #0d1117;
+    background-color: #0d1117;
     color: #58a6ff;
     border-bottom: 2px solid #58a6ff;
     font-weight: bold;
 }
 
-QTabBar::tab:hover:!selected {
-    background: #21262d;
-    color: #f0f6fc;
+/* 11. Specific Widget Overrides */
+QLabel {
+    color: #c9d1d9;
 }
 
-/* 10. Table Enhancements */
-QTableWidget {
-    gridline-color: #30363d;
-    selection-background-color: #1f6feb;
-    outline: none;
-}
-
-QHeaderView::section {
-    background-color: #161b22;
-    padding: 10px;
+#log_view {
+    background-color: #0d1117;
+    color: #c9d1d9;
+    font-family: 'Consolas', monospace;
     font-size: 11px;
-    color: #8b949e;
-    border-right: 1px solid #30363d;
+}
+
+#cvss_vector_edit {
+    background: #161b22;
+    font-weight: bold;
+    color: #58a6ff;
 }

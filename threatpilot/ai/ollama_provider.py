@@ -90,5 +90,7 @@ class OllamaProvider(AIProviderInterface):
             import requests # fallback to requests for simple sync healthcheck
             resp = requests.get(f"{self.config.endpoint_url}/api/tags", timeout=2)
             return resp.status_code == 200
-        except:
+        except (requests.RequestException, ConnectionError):
+            return False
+        except Exception:
             return False

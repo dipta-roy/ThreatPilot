@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict
 import dotenv
 
 from threatpilot.utils.crypto_utils import encrypt_api_key, decrypt_api_key
+from threatpilot.utils.logger import add_secret_to_redaction
 
 _ENV_FILE = Path(__file__).resolve().parent.parent.parent / "config.env"
 
@@ -90,7 +91,7 @@ class AIConfig(BaseModel):
                  return ""
             return clean
 
-        return cls(
+        config = cls(
             provider_type=get_opt("AI_PROVIDER_TYPE", "ollama"),
             endpoint_url=get_opt("AI_ENDPOINT_URL", "http://localhost:11434"),
             model_name=get_opt("AI_MODEL_NAME", "qwen2.5vl:3b"),
@@ -101,6 +102,13 @@ class AIConfig(BaseModel):
             gemini_api_key=scrub_key(decrypt_api_key(get_opt("GEMINI_API_KEY", ""))),
             claude_api_key=scrub_key(decrypt_api_key(get_opt("CLAUDE_API_KEY", ""))),
         )
+        
+        # Register keys for log redaction
+        add_secret_to_redaction(config.external_api_key)
+        add_secret_to_redaction(config.gemini_api_key)
+        add_secret_to_redaction(config.claude_api_key)
+        
+        return config
 
 
 

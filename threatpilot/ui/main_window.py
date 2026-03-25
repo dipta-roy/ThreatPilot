@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QAction, QKeySequence, QFont, QPixmap, QImage, QIcon
+from PySide6.QtCore import Qt, QSize, QTimer, QUrl
+from PySide6.QtGui import QAction, QKeySequence, QFont, QPixmap, QImage, QIcon, QUndoStack, QUndoCommand, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
     QDockWidget,
@@ -27,6 +27,9 @@ from PySide6.QtWidgets import (
     QToolBar,
     QVBoxLayout,
     QWidget,
+    QProgressDialog,
+    QWizard,
+    QWizardPage,
 )
 
 from threatpilot.core.diagram_model import Diagram
@@ -143,8 +146,7 @@ class AIVisionWorker(QThread):
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
-            with open(self.image_path, "rb") as f:
-                image_bytes = f.read()
+            image_bytes = Path(self.image_path).read_bytes()
 
             builder = PromptBuilder(self.prompt_config)
             prompt = builder.build_vision_detection_prompt(self.system_name)
@@ -192,7 +194,8 @@ class _PlaceholderPanel(QWidget):
         font.setPointSize(11)
         font.setBold(True)
         label.setFont(font)
-        label.setStyleSheet("color: #8899aa;")
+        label.setStyleSheet("color: #8899aa; font-weight: 500;")
+        label.setObjectName("placeholder_label")
         layout.addWidget(label)
 
 
@@ -222,6 +225,13 @@ class MainWindow(QMainWindow):
         self._project: Project | None = None
         self._current_diagram: Diagram | None = None
 
+        # Undo/Redo System (Must come before _setup_menu_bar)
+        self._undo_stack = QUndoStack(self)
+        self._undo_action = self._undo_stack.createUndoAction(self, "&Undo")
+        self._redo_action = self._undo_stack.createRedoAction(self, "&Redo")
+        self._undo_action.setShortcut(QKeySequence.StandardKey.Undo)
+        self._redo_action.setShortcut(QKeySequence.StandardKey.Redo)
+
         self._setup_window()
         self._setup_central_widget()
         self._setup_docks()
@@ -230,29 +240,69 @@ class MainWindow(QMainWindow):
         self._setup_status_bar()
         self._connect_actions()
         
+        # Add undo/redo to the Edit menu (which is set up in _setup_menu_bar)
+        # We'll need to reference it there.
+        
+        # Theme State
+        self._is_dark_theme = True
+        
         # Load and apply global modern dark-theme stylesheet
         self._load_stylesheet()
         
         self._load_recent_project()
+        
+        # Setup auto-save timer (every 60 seconds)
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.timeout.connect(self._on_autosave)
+        self._autosave_timer.start(60000)
 
     def _load_stylesheet(self) -> None:
-        """Apply a professional dark theme across the entire application."""
-        style_path = Path("f:/ThreatPilot/threatpilot/resources/style.qss")
+        """Apply a professional dark or light theme across the entire application."""
+        theme_file = "style.qss" if self._is_dark_theme else "style_light.qss"
+        # Use absolute path relative to this file
+        resource_dir = Path(__file__).parent.parent / "resources"
+        style_path = resource_dir / theme_file
         if style_path.exists():
-            with open(style_path, "r") as f:
-                self.setStyleSheet(f.read())
+            from PySide6.QtWidgets import QApplication
+            QApplication.instance().setStyleSheet(style_path.read_text())
+        else:
+            # Fallback for dark theme if light is missing
+            fallback_path = resource_dir / "style.qss"
+            if fallback_path.exists():
+                from PySide6.QtWidgets import QApplication
+                QApplication.instance().setStyleSheet(fallback_path.read_text())
+                
+        # Sync components with theme
+        if hasattr(self, "_risk_assessment_panel"):
+            self._risk_assessment_panel.set_theme(self._is_dark_theme)
+        if hasattr(self, "_threat_panel"):
+            self._threat_panel.set_theme(self._is_dark_theme)
+        if hasattr(self, "_full_threat_ledger"):
+            self._full_threat_ledger.set_theme(self._is_dark_theme)
+        if hasattr(self, "_properties_panel"):
+            self._properties_panel.set_theme(self._is_dark_theme)
+        if hasattr(self, "_canvas"):
+            self._canvas.set_theme(self._is_dark_theme)
+
+    def _on_toggle_theme(self) -> None:
+        """Switch between dark and light modes."""
+        self._is_dark_theme = not self._is_dark_theme
+        self._load_stylesheet()
+        theme_name = "Dark" if self._is_dark_theme else "Light"
+        self.statusBar().showMessage(f"Theme switched to {theme_name}")
 
     def _load_recent_project(self) -> None:
         """Attempt to automatically reload the last opened project on startup."""
-        recent_file = Path("f:/ThreatPilot/.threatpilot_recent")
+        # Get project root and path to recent project tracker
+        project_root = Path(__file__).parent.parent.parent
+        recent_file = project_root / ".threatpilot_recent"
         if recent_file.exists():
-            with open(recent_file, "r") as f:
-                path = f.read().strip()
-                if path and Path(path).exists():
-                    try:
-                        self._open_project_from_path(path)
-                    except Exception:
-                        pass # Silently fail and boot empty if the recent project was deleted or corrupted
+            path = recent_file.read_text().strip()
+            if path and Path(path).exists():
+                try:
+                    self._open_project_from_path(path)
+                except Exception:
+                    pass # Silently fail and boot empty if the recent project was deleted or corrupted
     # ------------------------------------------------------------------
     # Window chrome
     # ------------------------------------------------------------------
@@ -286,22 +336,23 @@ class MainWindow(QMainWindow):
         """Initialise central workspace with tabbed navigation for diagrams and reports."""
         from PySide6.QtWidgets import QTabWidget
         self._central_tabs = QTabWidget()
+        self._central_tabs.setObjectName("central_tabs_container")
         self._central_tabs.setDocumentMode(True)  # cleaner tab look
         
         # Tab 1: Diagram Workspace
         self._canvas = DiagramCanvas(self)
-        self._central_tabs.addTab(self._canvas, "Infrastructure Blueprint")
+        self._central_tabs.addTab(self._canvas, "System Architecture")
         
         # Tab 2: Full Threat Ledger
         from threatpilot.ui.threat_panel import ThreatPanel
         self._full_threat_ledger = ThreatPanel(self)
-        self._central_tabs.addTab(self._full_threat_ledger, "System Threat Register")
+        self._central_tabs.addTab(self._full_threat_ledger, "Threats List")
 
         # Tab 3: Detailed Risk Assessment
         from threatpilot.ui.risk_assessment_panel import RiskAssessmentPanel
         self._risk_assessment_panel = RiskAssessmentPanel(self)
         self._risk_assessment_panel.threat_edited.connect(self._on_save_project)
-        self._central_tabs.addTab(self._risk_assessment_panel, "Risk Assessment Matrix")
+        self._central_tabs.addTab(self._risk_assessment_panel, "Risk Assessment")
         
         self.setCentralWidget(self._central_tabs)
 
@@ -432,16 +483,23 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
 
         self._action_exit = QAction("E&xit", self)
-        self._action_exit.setShortcut(QKeySequence("Alt+F4"))
         self._action_exit.triggered.connect(self.close)
         file_menu.addAction(self._action_exit)
 
+        # --- Edit menu ---
+        edit_menu = menu_bar.addMenu("&Edit")
+        edit_menu.addAction(self._undo_action)
+        edit_menu.addAction(self._redo_action)
+        edit_menu.addSeparator()
+        
         # Standalone Architecture Actions (No longer in menu but used by Toolbar/Shortcuts)
         self._action_detect_objects = QAction("&Detect Entities", self)
         self._action_detect_objects.setShortcut(QKeySequence("Ctrl+D"))
 
         self._action_edit_components = QAction("&Component Inventory (Edit)...", self)
         self._action_edit_components.setShortcut(QKeySequence("Ctrl+E"))
+        edit_menu.addAction(self._action_detect_objects)
+        edit_menu.addAction(self._action_edit_components)
 
         # --- Intelligence menu (formerly AI) ---
         intel_menu = menu_bar.addMenu("&Intelligence")
@@ -452,7 +510,7 @@ class MainWindow(QMainWindow):
 
         intel_menu.addSeparator()
 
-        self._action_ai_settings = QAction("&Manage AI Providers...", self)
+        self._action_ai_settings = QAction("&AI Settings...", self)
         intel_menu.addAction(self._action_ai_settings)
 
         self._action_prompt_config = QAction("&Business Context & Policy...", self)
@@ -481,6 +539,11 @@ class MainWindow(QMainWindow):
         self._action_fit_diagram.triggered.connect(self._canvas.fit_to_screen)
         view_menu.addAction(self._action_fit_diagram)
 
+        view_menu.addSeparator()
+        self._action_toggle_theme = QAction("&Toggle Dark/Light Mode", self)
+        self._action_toggle_theme.setShortcut(QKeySequence("Ctrl+T"))
+        view_menu.addAction(self._action_toggle_theme)
+
         # --- Reporting menu (formerly Export) ---
         report_menu = menu_bar.addMenu("&Reporting")
 
@@ -497,6 +560,15 @@ class MainWindow(QMainWindow):
 
         # --- Help menu ---
         help_menu = menu_bar.addMenu("&Help")
+        
+        self._action_quickstart = QAction("&Quick Start Wizard...", self)
+        help_menu.addAction(self._action_quickstart)
+
+        self._action_open_logs = QAction("Open &Log Folder", self)
+        help_menu.addAction(self._action_open_logs)
+        
+        help_menu.addSeparator()
+        
         self._action_about = QAction("&About ThreatPilot...", self)
         help_menu.addAction(self._action_about)
 
@@ -560,6 +632,9 @@ class MainWindow(QMainWindow):
         self._action_about.triggered.connect(self._on_about)
         self._action_detect_objects.triggered.connect(self._on_detect_objects)
         self._action_edit_components.triggered.connect(self._on_edit_components)
+        self._action_toggle_theme.triggered.connect(self._on_toggle_theme)
+        self._action_quickstart.triggered.connect(self._on_quick_start)
+        self._action_open_logs.triggered.connect(self._on_open_logs)
 
     # ------------------------------------------------------------------
     # Slots – File actions
@@ -593,9 +668,9 @@ class MainWindow(QMainWindow):
             )
             
             # Save to recent
-            recent_file = Path("f:/ThreatPilot/.threatpilot_recent")
-            with open(recent_file, "w") as f:
-                f.write(str(self._project.project_path))
+            project_root = Path(__file__).parent.parent.parent
+            recent_file = project_root / ".threatpilot_recent"
+            recent_file.write_text(str(self._project.project_path))
                 
         except OSError as exc:
             QMessageBox.critical(self, "Error", f"Could not create project:\n{exc}")
@@ -615,7 +690,8 @@ class MainWindow(QMainWindow):
         self._update_title()
         
         # Clear recent info
-        recent_file = Path("f:/ThreatPilot/.threatpilot_recent")
+        project_root = Path(__file__).parent.parent.parent
+        recent_file = project_root / ".threatpilot_recent"
         if recent_file.exists():
             recent_file.unlink()
             
@@ -654,9 +730,9 @@ class MainWindow(QMainWindow):
         )
         
         # Save to recent
-        recent_file = Path("f:/ThreatPilot/.threatpilot_recent")
-        with open(recent_file, "w") as f:
-            f.write(str(directory))
+        project_root = Path(__file__).parent.parent.parent
+        recent_file = project_root / ".threatpilot_recent"
+        recent_file.write_text(str(directory))
 
     def _on_save_project(self) -> None:
         """Save the current project to disk."""
@@ -670,6 +746,15 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Project saved.")
         except (ValueError, OSError) as exc:
             QMessageBox.critical(self, "Error", f"Could not save project:\n{exc}")
+
+    def _on_autosave(self) -> None:
+        """Automatically save the active project periodically without UX intrusion."""
+        if self._project is not None:
+            try:
+                save_project(self._project)
+                self.statusBar().showMessage("Project auto-saved.", 2000)
+            except Exception:
+                pass
 
     def _on_diagram_deleted(self, diagram: Diagram) -> None:
         """Handle the physical removal of a diagram and cleanup the canvas."""
@@ -787,7 +872,7 @@ class MainWindow(QMainWindow):
             from threatpilot.ui.risk_matrix_dialog import RiskMatrixDialog
             component_names = [c.name for c in self._project.components]
             component_names.extend([f.name for f in self._project.flows])
-            dialog = RiskMatrixDialog(self._project.threat_register.threats, component_names=component_names, parent=self)
+            dialog = RiskMatrixDialog(self._project.threat_register.threats, component_names=component_names, is_dark=self._is_dark_theme, parent=self)
             dialog.exec()
 
     def _on_run_analysis(self) -> None:
@@ -810,9 +895,14 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "AI Error", f"Could not create AI provider:\n{exc}")
             return
 
-        # 3. Launch Background Worker
+        # 3. Launch Background Worker with Progress Dialog
+        self._progress = QProgressDialog("Analyzing system architecture...", "Cancel", 0, 0, self)
+        self._progress.setWindowTitle("AI Threat Analysis")
+        self._progress.setWindowModality(Qt.WindowModality.WindowModal)
+        self._progress.setMinimumDuration(500)
+        
         self.statusBar().showMessage(f"Running threat analysis via {config.provider_type}...")
-        self._threat_panel._btn_run.setEnabled(False) # Visual feedback
+        self._threat_panel._btn_run.setEnabled(False) 
 
         self._worker = AnalysisWorker(
             provider, 
@@ -822,10 +912,13 @@ class MainWindow(QMainWindow):
         )
         self._worker.finished.connect(self._on_analysis_finished)
         self._worker.failed.connect(self._on_analysis_failed)
+        self._worker.finished.connect(self._progress.close)
+        self._worker.failed.connect(self._progress.close)
+        self._progress.canceled.connect(self._worker.terminate)
+        
         def sanitize_log(text: str) -> str:
             """Mask sensitive API keys or secrets in logs."""
             if not text: return ""
-            # Simple mask for the actual API key if it's found in the text
             from threatpilot.config.ai_config import AIConfig
             config = AIConfig.load()
             if config.api_key and len(config.api_key) > 8:
@@ -835,9 +928,9 @@ class MainWindow(QMainWindow):
         self._worker.prompt_ready.connect(lambda p: self._properties_panel.append_log(sanitize_log(p), "PROMPT"))
         self._worker.response_ready.connect(lambda r: self._properties_panel.append_log(sanitize_log(r), "RESPONSE"))
         
-        # Add a one-time security warning to the log window
         self._properties_panel.append_log("SECURITY WARNING: Logs may contain architectural details. Masking is active for identified API keys.", "SYSTEM")
         self._worker.start()
+        self._progress.show()
 
     def _on_analysis_finished(self, new_register) -> None:
         """Merge new threats into the project and refresh UI."""
@@ -872,7 +965,7 @@ class MainWindow(QMainWindow):
             safe_error_msg = safe_error_msg.replace(config.api_key, "YOUR-API-KEY-IS-HIDDEN")
             
         try:
-            with open("threatpilot_error.log", "a", encoding="utf-8") as f:
+            with Path("threatpilot_error.log").open("a", encoding="utf-8") as f:
                 f.write(f"\n[{datetime.now()}] {title} - {prefix}\n{safe_error_msg}\n")
         except Exception:
             pass
@@ -1134,7 +1227,8 @@ class MainWindow(QMainWindow):
         if not self._project:
             return
             
-        dialog = EntitiesDialog(self._project, self)
+        dialog = EntitiesDialog(self._project, self._undo_stack, self)
+        dialog.project_modified.connect(self._refresh_canvas_overlays)
         dialog.exec()
         
         # Reload visual overlays to reflect renamed/deleted entities
@@ -1146,7 +1240,8 @@ class MainWindow(QMainWindow):
         if not self._project:
             return
             
-        dialog = DataFlowDialog(self._project, self)
+        dialog = DataFlowDialog(self._project, self._undo_stack, self)
+        dialog.project_modified.connect(self._refresh_canvas_overlays)
         dialog.exec()
         
         # Reload visual overlays to reflect flow changes
@@ -1205,5 +1300,19 @@ class MainWindow(QMainWindow):
         from threatpilot.ui.about_dialog import AboutDialog
         dialog = AboutDialog(self)
         dialog.exec()
+
+    def _on_quick_start(self) -> None:
+        """Launch the Quick Start Wizard for new users."""
+        from threatpilot.ui.quick_start_wizard import QuickStartWizard
+        wizard = QuickStartWizard(self)
+        wizard.exec()
+
+    def _on_open_logs(self) -> None:
+        """Open the application's log directory in the OS file explorer."""
+        from threatpilot.utils.logger import LOG_DIR
+        if LOG_DIR.exists():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(LOG_DIR)))
+        else:
+            QMessageBox.warning(self, "Logs", "Log directory not found yet.")
 
 

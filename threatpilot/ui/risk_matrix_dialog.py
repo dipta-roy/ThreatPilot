@@ -29,12 +29,13 @@ from threatpilot.core.threat_model import Threat, ThreatRegister
 class RiskMatrixDialog(QDialog):
     """Visual heat map for risk prioritization."""
 
-    def __init__(self, threats: List[Threat], component_names: List[str] = None, parent=None) -> None:
+    def __init__(self, threats: List[Threat], component_names: List[str] = None, is_dark: bool = True, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Strategic Risk Matrix")
         self.resize(900, 650)
         self._threats = threats
         self._component_names = component_names or []
+        self._is_dark_theme = is_dark
         self._setup_ui()
         self._populate_matrix()
 
@@ -58,9 +59,31 @@ class RiskMatrixDialog(QDialog):
         
         # 1. Left: The Heatmap
         self._matrix = QTableWidget(5, 5)
+        self._matrix.setObjectName("risk_heatmap")
         self._matrix.setMinimumSize(450, 450)
         self._matrix.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._matrix.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        # Use a custom delegate that paints item.background(), bypassing QSS
+        from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem
+        from PySide6.QtCore import QModelIndex
+        
+        class HeatmapDelegate(QStyledItemDelegate):
+            def paint(self, painter, option, index):
+                bg = index.data(Qt.ItemDataRole.BackgroundRole)
+                if bg:
+                    painter.fillRect(option.rect, bg)
+                # Draw text
+                painter.save()
+                fg = index.data(Qt.ItemDataRole.ForegroundRole)
+                if fg:
+                    painter.setPen(fg.color())
+                font = index.data(Qt.ItemDataRole.FontRole)
+                if font:
+                    painter.setFont(font)
+                painter.drawText(option.rect, Qt.AlignmentFlag.AlignCenter, index.data() or "")
+                painter.restore()
+        
+        self._matrix.setItemDelegate(HeatmapDelegate(self._matrix))
         
         # Headers
         self._matrix.setVerticalHeaderLabels(["Certain (5)", "Likely (4)", "Possible (3)", "Unlikely (2)", "Rare (1)"])
@@ -74,15 +97,22 @@ class RiskMatrixDialog(QDialog):
         
         main_h.addWidget(self._matrix, 3)
 
-        # 2. Right: Drill-down List
+        # 2. Right: Drill-down List (theme-aware)
         self._side_panel = QFrame()
         self._side_panel.setFrameShape(QFrame.Shape.StyledPanel)
-        self._side_panel.setStyleSheet("background-color: #161b22; border-radius: 8px;")
+        if self._is_dark_theme:
+            self._side_panel.setStyleSheet("background-color: #161b22; border-radius: 8px;")
+            title_color = "#f0f6fc"
+            table_color = "#f0f6fc"
+        else:
+            self._side_panel.setStyleSheet("background-color: #f6f8fa; border-radius: 8px; border: 1px solid #d0d7de;")
+            title_color = "#24292f"
+            table_color = "#24292f"
         side_layout = QVBoxLayout(self._side_panel)
         
         self._cell_title = QLabel("Select a cell to view threats")
         self._cell_title.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        self._cell_title.setStyleSheet("color: #f0f6fc; padding-top: 5px;")
+        self._cell_title.setStyleSheet(f"color: {title_color}; padding-top: 5px;")
         side_layout.addWidget(self._cell_title)
         
         self._threat_table = QTableWidget(0, 2)
@@ -90,7 +120,7 @@ class RiskMatrixDialog(QDialog):
         self._threat_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self._threat_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
         self._threat_table.setColumnWidth(1, 80)
-        self._threat_table.setStyleSheet("background: transparent; border: none; color: #f0f6fc;")
+        self._threat_table.setStyleSheet(f"background: transparent; border: none; color: {table_color};")
         self._threat_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._threat_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._threat_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -129,20 +159,23 @@ class RiskMatrixDialog(QDialog):
         return 1
 
     def _get_cell_color(self, row: int, col: int) -> QColor:
-        """Heatmap logic: top-right is red (5,5), bottom-left is green (1,1).
-        
-        Table rows: 0 (Likelihood 5) to 4 (Likelihood 1)
-        Table cols: 0 (Impact 1) to 4 (Impact 5)
-        """
         likelihood = 5 - row
         impact = col + 1
         risk_score = likelihood * impact
         
-        if risk_score >= 15: return QColor("#8b0000") # Critical Deep Red
-        if risk_score >= 10: return QColor("#d73a49") # Major Red
-        if risk_score >= 6:  return QColor("#d29922") # Warning Orange/Yellow
-        if risk_score >= 3:  return QColor("#30363d") # Mid
-        return QColor("#238636") # Low Green
+        if self._is_dark_theme:
+            if risk_score >= 15: return QColor("#8b0000") # Critical Deep Red
+            if risk_score >= 10: return QColor("#d73a49") # Major Red
+            if risk_score >= 6:  return QColor("#d29922") # Warning Orange/Yellow
+            if risk_score >= 3:  return QColor("#30363d") # Mid
+            return QColor("#238636") # Low Green
+        else:
+            # Light Mode High-Contrast Colors
+            if risk_score >= 15: return QColor("#cf222e") # Bright Red
+            if risk_score >= 10: return QColor("#ffcccc") # Lighter Red
+            if risk_score >= 6:  return QColor("#fff8c5") # Soft Yellow
+            if risk_score >= 3:  return QColor("#ddf4ff") # Light Blue/Mid
+            return QColor("#dafbe1") # Pale Green
 
     def _populate_matrix(self) -> None:
         """Group threats into matrix cells and update counts."""
@@ -179,10 +212,27 @@ class RiskMatrixDialog(QDialog):
                 # Apply heat color
                 bg = self._get_cell_color(r, c)
                 item.setBackground(bg)
-                if count > 0:
-                    item.setForeground(QColor("white"))
+                
+                if self._is_dark_theme:
+                    if count > 0:
+                        item.setForeground(QColor("white"))
+                    else:
+                        item.setForeground(QColor("#484f58")) # subtle zero
                 else:
-                    item.setForeground(QColor("#484f58")) # subtle zero
+                    if count > 0:
+                        # For very dark cells in light theme (Critical/Certain), use white text
+                        if r + c <= 2: # Top left-ish are higher risk (Likelihood rank 5, Impact rank 5 is 0,4)
+                            # Actually top right is higher.
+                            # Row 0 is Likelihood 5. Col 4 is Impact 5.
+                            # Row 4 is Likelihood 1. Col 0 is Impact 1.
+                            pass
+                        
+                        # Simplest: dark text for everything in light theme except maybe most critical
+                        item.setForeground(QColor("#1a7f37") if (r >= 4 and c <= 0) else QColor("#1a1a1a"))
+                        if r == 0 and c == 4: # Critical
+                            item.setForeground(QColor("white"))
+                    else:
+                        item.setForeground(QColor("#cccccc")) # subtle zero light
                 
                 self._matrix.setItem(r, c, item)
 
@@ -204,7 +254,7 @@ class RiskMatrixDialog(QDialog):
             self._threat_table.setItem(row_idx, 0, title_item)
             
             edit_btn = QPushButton("Edit")
-            edit_btn.setFixedSize(60, 24)
+            edit_btn.setFixedSize(60, 32)
             edit_btn.setStyleSheet("background-color: #238636; color: white; border-radius: 4px; font-weight: bold;")
             edit_btn.clicked.connect(lambda checked=False, threat=t: self._edit_threat(threat))
             self._threat_table.setCellWidget(row_idx, 1, edit_btn)

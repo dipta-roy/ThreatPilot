@@ -205,7 +205,9 @@ def export_to_excel(project: Project, output_path: str | Path) -> None:
                          val_str = str(cell.value)
                          if len(val_str) > max_length:
                              max_length = len(val_str)
-                     except:
+                     except (ValueError, TypeError):
+                         pass
+                     except Exception:
                          pass
                  adjusted_width = (max_length + 2)
                  ws.column_dimensions[column].width = min(adjusted_width, 60) # cap at 60

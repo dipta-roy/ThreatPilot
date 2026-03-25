@@ -52,10 +52,12 @@ class PropertiesPanel(QWidget):
 
     def _setup_ui(self) -> None:
         """Initialise the layout with tabs for Properties and AI Logs."""
+        self.setObjectName("properties_container")
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(0, 0, 0, 0)
 
         self._tabs = QTabWidget()
+        self._tabs.setObjectName("properties_tabs")
         root_layout.addWidget(self._tabs)
 
         # --- Tab 1: Properties ---
@@ -65,7 +67,7 @@ class PropertiesPanel(QWidget):
 
         # Title/Header
         self._header = QLabel("No item selected")
-        self._header.setStyleSheet("font-weight: bold; font-size: 13px; color: #58a6ff; margin-bottom: 5px;")
+        self._header.setObjectName("property_header")
         self._header.setAlignment(Qt.AlignmentFlag.AlignLeft)
         prop_layout.addWidget(self._header)
 
@@ -84,18 +86,35 @@ class PropertiesPanel(QWidget):
         # --- Tab 2: AI Activity Logs ---
         self._log_view = QTextEdit()
         self._log_view.setReadOnly(True)
-        self._log_view.setStyleSheet("background-color: #0d1117; color: #8b949e; font-family: 'Consolas', monospace; font-size: 11px; border: none;")
+        self._log_view.setObjectName("log_view")
         self._log_view.setPlaceholderText("AI transaction logs will appear here during detection or analysis...")
         
         self._tabs.addTab(self._log_view, "AI Activity Logs")
+
+    def set_theme(self, is_dark: bool) -> None:
+        """Update the panel's internal state for theme changes."""
+        self._is_dark_theme = is_dark
+        # Refresh the current item to apply any object-name based styles if needed
+        # (Though most are handled by QSS or re-rendered on set_item)
+        if self._current_item:
+            self.set_item(self._current_item)
 
     def append_log(self, text: str, category: str = "INFO") -> None:
         """Add a timestamped entry to the AI Activity Log tab."""
         from datetime import datetime
         time_str = datetime.now().strftime("%H:%M:%S")
-        color = "#58a6ff" if "PROMPT" in category else "#7ee787" if "RESPONSE" in category else "#8b949e"
         
-        log_entry = f"<span style='color: #484f58;'>[{time_str}]</span> <b style='color: {color};'>{category}</b>: {text}<br>"
+        is_dark = getattr(self, "_is_dark_theme", True)
+        
+        # Theme-aware log colors
+        if is_dark:
+            color = "#58a6ff" if "PROMPT" in category else "#7ee787" if "RESPONSE" in category else "#8b949e"
+            time_color = "#484f58"
+        else:
+            color = "#0969da" if "PROMPT" in category else "#1a7f37" if "RESPONSE" in category else "#57606a"
+            time_color = "#8b949e"
+        
+        log_entry = f"<span style='color: {time_color};'>[{time_str}]</span> <b style='color: {color};'>{category}</b>: {text}<br>"
         self._log_view.append(log_entry)
         # Scroll to bottom
         self._log_view.verticalScrollBar().setValue(self._log_view.verticalScrollBar().maximum())
@@ -186,7 +205,7 @@ class PropertiesPanel(QWidget):
             edit.setReadOnly(True)
             edit.setCursor(Qt.CursorShape.PointingHandCursor)
             edit.setToolTip("Click to launch interactive CVSS 3.1 Calculator")
-            edit.setStyleSheet("color: #58a6ff; font-weight: bold; background: #161b22;")
+            edit.setObjectName("cvss_vector_edit")
             
             def launch_calc():
                 from threatpilot.ui.cvss_dialog import CVSSCalculatorDialog
@@ -216,7 +235,7 @@ class PropertiesPanel(QWidget):
         """Add a non-editable text row for information/IDs."""
         edit = QLineEdit(str(value))
         edit.setReadOnly(True)
-        edit.setStyleSheet("color: #888; background: transparent; border: none;")
+        edit.setObjectName("readonly_edit")
         self._form_layout.addRow(label, edit)
 
     def _add_checkbox_row(self, label: str, field: str, checked: bool) -> None:
