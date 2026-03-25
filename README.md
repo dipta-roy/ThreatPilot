@@ -1,4 +1,4 @@
-![FaceGallery](./threatpilot/resources/app-icon.png)
+![ThreatPilot](./threatpilot/resources/app-icon.png)
 
 # ThreatPilot
 
