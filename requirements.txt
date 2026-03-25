@@ -9,6 +9,7 @@ pydantic>=2.0
 
 # Image handling
 Pillow>=10.0
+opencv-python>=4.10.0
 
 # AI communication
 httpx>=0.25
