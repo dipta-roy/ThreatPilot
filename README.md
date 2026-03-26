@@ -15,9 +15,9 @@
 
 ### 2. AI-Powered Threat Analysis
 - **Context-Aware Prompts**: Generates structured, industry-contextualized prompts for LLMs to perform detailed **STRIDE** analysis.
-- **Multi-Provider Support**: Seamlessly switch between local **Ollama** instances or high-performance external providers like **Google Gemini**, **Anthropic Claude**, and OpenAI-compatible endpoints.
+- **Multi-Provider Support**: Seamlessly switch between local **Ollama** instances or high-performance external providers like **Google Gemini** endpoints.
 - **Segmented Analysis**: Automatically handles large-scale architectures by segmenting diagrams into batches to respect model token limits while maintaining context.
-- **Vision-to-Architecture**: Utilize multimodal LLMs (like Qwen2.5-VL or Gemini 1.5 Flash) to directly "see" and bootstrap architecture models from diagram images.
+- **Vision-to-Architecture**: Utilize multimodal LLMs (like Qwen2.5-VL or Gemini 2.5 Flash) to directly "see" and bootstrap architecture models from diagram images.
 
 ### 3. Risk Assessment & Controls
 - **CVSS v3.1 Scoring**: Built-in calculator to determine base vulnerability scores with automatic severity categorization (Low-Critical).
@@ -63,7 +63,7 @@ python main.py
 ## Architecture Stack
 - **UI Framework**: PySide6 (Qt for Python)
 - **Data & Validation**: Pydantic (v2)
-- **AI Orchestration**: Custom provider interface supporting Ollama, Gemini, Claude, and Generic REST.
+- **AI Orchestration**: Custom provider interface supporting Ollama, Gemini.
 - **Image Processing**: OpenCV, Pillow (PIL).
 - **Networking**: HTTPX (Asynchronous I/O).
 - **Exporting**: Pandas, OpenPyXL.

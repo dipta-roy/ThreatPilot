@@ -65,9 +65,7 @@ A sophisticated pipeline that transforms architectural diagrams into structured 
 - **Threat Analyzer**: The primary orchestrator that segments large architectures to fit within LLM context windows.
 - **AI Providers**: Pluggable interfaces for multiple backends:
     - **Google Gemini**: Native integration with v1 and v1beta versions.
-    - **Anthropic Claude**: Integration via official SDK.
     - **Ollama**: Local AI execution for offline or private analysis.
-    - **External/OpenAI**: Generic API support.
 - **Prompt Builder**: Dynamically builds multi-shot, instructional prompts containing DFD context, security standards, and strict output requirements.
 - **Response Parser**: A resilient parser with partial-JSON recovery logic to extract structured threats even from truncated or imperfect LLM outputs.
 

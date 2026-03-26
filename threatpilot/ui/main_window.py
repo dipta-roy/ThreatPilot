@@ -1067,11 +1067,16 @@ class MainWindow(QMainWindow):
 
         self.statusBar().showMessage("Running computer vision detection...")
         
-        # Determine if we can use AI Vision (Gemini / Claude)
+        # Determine if we can use AI Vision (Gemini / Claude / Ollama)
         from threatpilot.config.ai_config import AIConfig
         config = AIConfig.load()
         prov_type = config.provider_type.lower()
-        if prov_type in ["gemini", "claude"] and config.api_key:
+        # Ollama/external use endpoint_url; cloud providers require api_key
+        has_valid_config = (
+            (prov_type == "ollama" and config.endpoint_url)
+            or (prov_type in ["gemini", "claude", "external"] and config.api_key)
+        )
+        if has_valid_config:
             self.statusBar().showMessage(f"Using AI Vision ({prov_type.capitalize()}) to detect components...")
             provider = create_ai_provider(config)
             self._worker_ai_vision = AIVisionWorker(

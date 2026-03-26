@@ -97,7 +97,8 @@ def setup_logging(level: int = logging.INFO, project_path: str | Path | None = N
     except OSError as e:
         print(f"Failed to initialize file logging: {e}")
 
-    logging.info(f"Logging initialized at {level}. Log file: {log_file}")
+    level_name = logging.getLevelName(level)
+    logging.info(f"Logging initialized at {level_name}. Log file: {log_file}")
 
 def get_logger(name: str) -> logging.Logger:
     """Helper to get a named logger."""

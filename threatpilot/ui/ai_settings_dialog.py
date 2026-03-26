@@ -58,7 +58,8 @@ class AISettingsDialog(QDialog):
 
         # Provider Type
         self._provider_type = QComboBox()
-        self._provider_type.addItems(["ollama", "external", "gemini", "claude"])
+        #self._provider_type.addItems(["ollama", "external", "gemini", "claude"])
+        self._provider_type.addItems(["ollama", "gemini"])
         self._provider_type.setCurrentText(self._config.provider_type)
         self._provider_type.currentTextChanged.connect(self._on_provider_changed)
         self._form.addRow("Provider Type:", self._provider_type)
@@ -72,17 +73,17 @@ class AISettingsDialog(QDialog):
         self._form.addRow("Model Name:", self._model_name)
 
         # API Keys
-        self._external_key = QLineEdit(self._config.external_api_key)
-        self._external_key.setEchoMode(QLineEdit.EchoMode.Password)
-        self._form.addRow("OpenAI/External Key:", self._external_key)
+        #self._external_key = QLineEdit(self._config.external_api_key)
+        #self._external_key.setEchoMode(QLineEdit.EchoMode.Password)
+        #self._form.addRow("OpenAI/External Key:", self._external_key)
 
         self._gemini_key = QLineEdit(self._config.gemini_api_key)
         self._gemini_key.setEchoMode(QLineEdit.EchoMode.Password)
         self._form.addRow("Gemini API Key:", self._gemini_key)
 
-        self._claude_key = QLineEdit(self._config.claude_api_key)
-        self._claude_key.setEchoMode(QLineEdit.EchoMode.Password)
-        self._form.addRow("Claude API Key:", self._claude_key)
+        #self._claude_key = QLineEdit(self._config.claude_api_key)
+        #self._claude_key.setEchoMode(QLineEdit.EchoMode.Password)
+        #self._form.addRow("Claude API Key:", self._claude_key)
 
         # Temperature
         self._temperature = QDoubleSpinBox()
@@ -142,7 +143,7 @@ class AISettingsDialog(QDialog):
         # 2. Sensible Model Defaults
         defaults = {
             "gemini": "gemini-2.5-flash",
-            "claude": "claude-3-haiku-20240307",
+            #"claude": "claude-3-haiku-20240307",
             "ollama": "qwen2.5vl:3b"
         }
 

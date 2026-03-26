@@ -28,7 +28,7 @@ Include as much detail as possible:
 ThreatPilot was designed with security in mind from the start:
 
 - **Credential Management**  
-  API keys (OpenAI, Gemini, Claude, etc.) are **never stored in plaintext**.  
+  API keys (Gemini) are **never stored in plaintext**.  
   - Master encryption key is generated with `Fernet.generate_key()` and stored in the OS credential manager (`keyring`).  
   - Symmetric encryption uses `cryptography.fernet` (AES-128-CBC).  
   - Encrypted keys live in `config.env` (excluded from git).

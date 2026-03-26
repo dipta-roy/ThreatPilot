@@ -80,17 +80,72 @@ class OllamaProvider(AIProviderInterface):
         system_instructions: Optional[str] = None,
         **kwargs: Any
     ) -> tuple[str, dict]:
-        """Vision is not currently supported by local Ollama plugin."""
-        raise NotImplementedError("Vision analysis is not supported via local Ollama.")
+        """Send a multimodal vision request to a local Ollama vision model.
+
+        Ollama supports vision models (e.g. llava, qwen2.5vl) by passing
+        base64-encoded images in the ``images`` field of the user message.
+
+        Args:
+            prompt: The text prompt describing what to extract from the image.
+            image_bytes: Raw binary data of the image.
+            mime_type: MIME type of the image (unused by Ollama, kept for interface compat).
+            system_instructions: Optional system context.
+            **kwargs: Extra generation parameters.
+
+        Returns:
+            A tuple of (raw text content, metadata dict).
+        """
+        import base64
+
+        b64_image = base64.b64encode(image_bytes).decode("utf-8")
+
+        messages: List[Dict[str, Any]] = []
+        if system_instructions:
+            messages.append({"role": "system", "content": system_instructions})
+        messages.append({
+            "role": "user",
+            "content": prompt,
+            "images": [b64_image],
+        })
+
+        payload = {
+            "model": self.config.model_name,
+            "messages": messages,
+            "stream": False,
+            "options": {
+                "temperature": self.config.temperature,
+                "num_predict": self.config.max_tokens,
+                **kwargs,
+            },
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=self.config.timeout) as client:
+                response = await client.post(
+                    f"{self.config.endpoint_url}/api/chat",
+                    json=payload,
+                )
+                response.raise_for_status()
+                data = response.json()
+                text = str(data.get("message", {}).get("content", ""))
+                return text, {"usage": data}
+
+        except httpx.HTTPError as exc:
+            raise IOError(f"Could not reach Ollama at {self.config.endpoint_url}: {exc}")
+        except Exception as exc:
+            raise RuntimeError(f"Ollama vision request failed: {exc}")
 
     def is_available(self) -> bool:
-        """Check if the local Ollama instance is alive."""
+        """Test if Ollama is running and accessible."""
         try:
-            # We use synchronous check for local availability
-            import requests # fallback to requests for simple sync healthcheck
-            resp = requests.get(f"{self.config.endpoint_url}/api/tags", timeout=2)
-            return resp.status_code == 200
-        except (requests.RequestException, ConnectionError):
+            # Use httpx (consistent with the rest of your AI providers)
+            with httpx.Client(timeout=5.0) as client:
+                response = client.get("http://localhost:11434/api/tags")
+                response.raise_for_status()
+                return True
+        except (httpx.ConnectError, httpx.TimeoutException, httpx.RequestError):
             return False
-        except Exception:
+        except Exception as e:
+            # Log the real error but don't expose technical details to user
+            logger.error(f"Ollama connection test failed: {e}")
             return False

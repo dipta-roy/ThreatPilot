@@ -58,7 +58,8 @@ class PromptBuilder:
         prompt += (
             "\nOutput Format Instructions:\n"
             "Return the analysis as a JSON list of threats. "
-            "IMPORTANT: Analyze EVERY Data Flow (Edge) for communication-specific threats (e.g., Tampering, Information Disclosure) "
+            "IMPORTANT: ALL OUTPUT MUST BE STRICTLY IN ENGLISH ONLY. Do not use any other language for any field.\n"
+            "Analyze EVERY Data Flow (Edge) for communication-specific threats (e.g., Tampering, Information Disclosure) "
             "based on its protocol, and EVERY DFD Node for architectural threats.\n\n"
             "If a vulnerability affects multiple components or flows, "
             "you MUST output a SEPARATE threat entry for EACH affected item. "
@@ -131,6 +132,7 @@ class PromptBuilder:
             "- 's': Source component name\n"
             "- 'd': Destination component name\n"
             "- 'p': Protocol (e.g., HTTPS)\n\n"
+            "IMPORTANT: ALL EXTRACTED LABELS AND TEXT MUST BE RETURNED IN ENGLISH ONLY.\n"
             "Return ONLY a strictly valid JSON object. Do not output any thinking or conversational text.\n"
             "Target Format:\n"
             "{\n"
