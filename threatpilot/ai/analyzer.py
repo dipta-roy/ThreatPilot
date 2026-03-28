@@ -55,7 +55,6 @@ class ThreatAnalyzer:
             return await self._analyze_segment(dfd, system_name)
         
         # Segmented Analysis
-        from threatpilot.core.dfd_converter import DFDNode, DFDEdge
         all_threats = ThreatRegister()
         full_raw_text = []
         total_input = 0

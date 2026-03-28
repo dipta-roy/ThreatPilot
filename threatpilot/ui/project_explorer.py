@@ -62,7 +62,7 @@ class ProjectExplorer(QWidget):
 
         self._tree = QTreeWidget()
         self._tree.setHeaderHidden(True)
-        self._tree.itemDoubleClicked.connect(self._on_item_double_clicked)
+        self._tree.itemClicked.connect(self._on_item_clicked)
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._on_context_menu)
 
@@ -91,6 +91,10 @@ class ProjectExplorer(QWidget):
         root = QTreeWidgetItem(self._tree, [self._project.project_name])
         # root.setIcon(0, QIcon.fromTheme("project-development")) # optional
         root.setExpanded(True)
+
+        # --- Environment & Context ---
+        bc_item = QTreeWidgetItem(root, ["Business Context"])
+        bc_item.setData(0, Qt.ItemDataRole.UserRole, "action_prompt_config")
 
         # --- Diagrams Folder ---
         self._diagrams_root = QTreeWidgetItem(root, ["Diagrams"])
@@ -123,15 +127,13 @@ class ProjectExplorer(QWidget):
         config_root.setExpanded(True)
         i3 = QTreeWidgetItem(config_root, ["AI Settings"])
         i3.setData(0, Qt.ItemDataRole.UserRole, "action_ai_settings")
-        i4 = QTreeWidgetItem(config_root, ["Business Context"])
-        i4.setData(0, Qt.ItemDataRole.UserRole, "action_prompt_config")
 
     # ------------------------------------------------------------------
     # Event Handlers
     # ------------------------------------------------------------------
 
-    def _on_item_double_clicked(self, item: QTreeWidgetItem, column: int) -> None:
-        """Handle double-click (or single click via mapping) on a tree item."""
+    def _on_item_clicked(self, item: QTreeWidgetItem, column: int) -> None:
+        """Handle single click on a tree item."""
         data = item.data(0, Qt.ItemDataRole.UserRole)
         if isinstance(data, Diagram):
             self.diagram_activated.emit(data)

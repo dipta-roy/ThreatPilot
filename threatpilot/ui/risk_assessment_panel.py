@@ -56,6 +56,12 @@ class RiskAssessmentPanel(QWidget):
         self._filter_input.textChanged.connect(self._on_filter_changed)
         header_layout.addWidget(self._filter_input)
         
+        self._btn_add_threat = QPushButton("Add New Risk")
+        self._btn_add_threat.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_add_threat.clicked.connect(self._on_add_threat)
+        self._btn_add_threat.setEnabled(False)
+        header_layout.addWidget(self._btn_add_threat)
+        
         layout.addLayout(header_layout)
 
         self._table = QTableWidget(0, 12)
@@ -91,7 +97,7 @@ class RiskAssessmentPanel(QWidget):
         self._table.setColumnWidth(5, 300) # Description wider
         header.setSectionResizeMode(10, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(11, QHeaderView.ResizeMode.Fixed)
-        self._table.setColumnWidth(11, 120)
+        self._table.setColumnWidth(11, 185)
         
         self._table.setAlternatingRowColors(True)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -116,6 +122,7 @@ class RiskAssessmentPanel(QWidget):
     def set_project(self, project: Optional[Project]) -> None:
         """Load data from the project into the assessment table."""
         self._project = project
+        self._btn_add_threat.setEnabled(project is not None)
         self.refresh()
 
     def set_theme(self, is_dark: bool) -> None:
@@ -164,50 +171,86 @@ class RiskAssessmentPanel(QWidget):
             # 9. Likelihood
             self._table.setItem(row, 8, QTableWidgetItem(f"{t.likelihood}/5"))
             
-            # 10. Severity (With Premium Cell Background Coloring)
+            # 10. Severity (With Premium Cell Background Coloring via Cell Widget)
             severity = get_cvss_severity(t.cvss_score)
-            sev_item = QTableWidgetItem(f"{severity} ({t.cvss_score})")
+            sev_text = f"{severity} ({t.cvss_score})"
+            sev_item = QTableWidgetItem(sev_text)
             self._table.setItem(row, 9, sev_item)
+            
+            lbl = QLabel(sev_text)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)  # Let double clicks pass to table row
+            lbl.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
             
             s_upper = severity.upper()
             if is_dark:
                 # Dark Mode Palette (Strong background, white text)
                 if s_upper == "CRITICAL":
-                    sev_item.setBackground(QColor("#7b1e1e"))
-                    sev_item.setForeground(QColor("white"))
+                    lbl.setStyleSheet("background-color: #7b1e1e; color: white; border-radius: 4px; padding: 3px;")
                 elif s_upper == "HIGH":
-                    sev_item.setBackground(QColor("#cc0000"))
-                    sev_item.setForeground(QColor("white"))
+                    lbl.setStyleSheet("background-color: #cc0000; color: white; border-radius: 4px; padding: 3px;")
                 elif s_upper == "MEDIUM":
-                    sev_item.setBackground(QColor("#e3b341"))
-                    sev_item.setForeground(QColor("black"))
+                    lbl.setStyleSheet("background-color: #e3b341; color: white; border-radius: 4px; padding: 3px;")
                 elif s_upper == "LOW":
-                    sev_item.setBackground(QColor("#1f6feb"))
-                    sev_item.setForeground(QColor("white"))
+                    lbl.setStyleSheet("background-color: #1f6feb; color: white; border-radius: 4px; padding: 3px;")
+                else:
+                    lbl.setStyleSheet("background-color: #30363d; color: white; border-radius: 4px; padding: 3px;")
             else:
                 # Light Mode Premium Palette (Subtle backgrounds, dark text)
                 if s_upper == "CRITICAL":
-                    sev_item.setBackground(QColor("#ffebe9"))
-                    sev_item.setForeground(QColor("#cf222e"))
+                    lbl.setStyleSheet("background-color: #ffebe9; color: #cf222e; border-radius: 4px; padding: 3px;")
                 elif s_upper == "HIGH":
-                    sev_item.setBackground(QColor("#fff1e5"))
-                    sev_item.setForeground(QColor("#af4e00"))
+                    lbl.setStyleSheet("background-color: #fff1e5; color: #af4e00; border-radius: 4px; padding: 3px;")
                 elif s_upper == "MEDIUM":
-                    sev_item.setBackground(QColor("#fff8c5"))
-                    sev_item.setForeground(QColor("#9a6700"))
+                    lbl.setStyleSheet("background-color: #fff8c5; color: #9a6700; border-radius: 4px; padding: 3px;")
                 elif s_upper == "LOW":
-                    sev_item.setBackground(QColor("#ddf4ff"))
-                    sev_item.setForeground(QColor("#0969da"))
+                    lbl.setStyleSheet("background-color: #ddf4ff; color: #0969da; border-radius: 4px; padding: 3px;")
+                else:
+                    lbl.setStyleSheet("background-color: #f6f8fa; color: #24292f; border-radius: 4px; padding: 3px;")
+
+            container = QWidget()
+            layout = QHBoxLayout(container)
+            layout.setContentsMargins(4, 2, 4, 2)
+            layout.addWidget(lbl)
+            # Make container ignore clicks so table can still process selection/double-click
+            container.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            self._table.setCellWidget(row, 9, container)
 
             # 11. Mitigation Strategy
             self._table.setItem(row, 10, QTableWidgetItem(t.mitigation))
             
-            # 12. Actions (Edit Button)
+            # 12. Actions (Edit & Delete Buttons)
+            actions_container = QWidget()
+            actions_layout = QHBoxLayout(actions_container)
+            actions_layout.setContentsMargins(4, 2, 4, 2)
+            actions_layout.setSpacing(6)
+            
             edit_btn = QPushButton("Edit")
-            edit_btn.setFixedSize(90, 32)
-            edit_btn.setObjectName("btn_edit_threat")
+            edit_btn.setFixedSize(70, 28)
+            edit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             edit_btn.clicked.connect(lambda checked=False, threat=t: self._edit_threat(threat))
-            self._table.setCellWidget(row, 11, edit_btn)
+            actions_layout.addWidget(edit_btn)
+            
+            del_btn = QPushButton("Delete")
+            del_btn.setFixedSize(90, 28)
+            del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            
+            # Professional warning button styling
+            if is_dark:
+                del_btn.setStyleSheet("""
+                    QPushButton { color: #ff6b6b; background-color: #2a1515; border: 1px solid #7b1e1e; border-radius: 4px; font-weight: bold; }
+                    QPushButton:hover { background-color: #7b1e1e; color: white; }
+                """)
+            else:
+                del_btn.setStyleSheet("""
+                    QPushButton { color: #cf222e; background-color: #ffebe9; border: 1px solid #d73a49; border-radius: 4px; font-weight: bold; }
+                    QPushButton:hover { background-color: #d73a49; color: white; }
+                """)
+                
+            del_btn.clicked.connect(lambda checked=False, tid=t.threat_id: self._delete_threat(tid))
+            actions_layout.addWidget(del_btn)
+            
+            self._table.setCellWidget(row, 11, actions_container)
             
             # Set tooltip for the row header so users know they can double-click it.
             self._table.setVerticalHeaderItem(row, QTableWidgetItem(str(row + 1)))
@@ -228,6 +271,34 @@ class RiskAssessmentPanel(QWidget):
         dialog = ThreatEditDialog(threat, component_names=component_names, parent=self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.threat_edited.emit()
+
+    def _on_add_threat(self) -> None:
+        """Create a new manual threat and open the edit dialog."""
+        if not self._project or not self._project.threat_register:
+            return
+            
+        from threatpilot.core.threat_model import Threat, STRIDECategory
+        new_threat = Threat(title="New Identified Risk", category=STRIDECategory.TAMPERING)
+        self._project.threat_register.add_threat(new_threat)
+        self.refresh()
+        self._edit_threat(new_threat)
+        self.threat_edited.emit()
+
+    def _delete_threat(self, threat_id: str) -> None:
+        """Delete the specified threat after confirmation."""
+        from PySide6.QtWidgets import QMessageBox
+        reply = QMessageBox.question(
+            self,
+            "Delete Threat",
+            "Are you sure you want to delete this threat? This action cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            if self._project and self._project.threat_register:
+                self._project.threat_register.remove_threat(threat_id)
+                self.refresh()
+                self.threat_edited.emit()
 
     def _on_filter_changed(self, text: str) -> None:
         """Filter the table rows based on the text."""

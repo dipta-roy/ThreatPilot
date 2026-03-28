@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from threatpilot.config.ai_config import AIConfig
 from threatpilot.ai.factory import create_ai_provider
+import httpx
 
 
 class AISettingsDialog(QDialog):
@@ -48,7 +49,7 @@ class AISettingsDialog(QDialog):
         # Restore the user's custom model name that may have been temporarily 
         # overwritten by the default provider switching logic during setup.
         if self._config.model_name:
-            self._model_name.setText(self._config.model_name)
+            self._model_name.setCurrentText(self._config.model_name)
 
     def _setup_ui(self) -> None:
         """Initialise form fields and button box."""
@@ -58,7 +59,6 @@ class AISettingsDialog(QDialog):
 
         # Provider Type
         self._provider_type = QComboBox()
-        #self._provider_type.addItems(["ollama", "external", "gemini", "claude"])
         self._provider_type.addItems(["ollama", "gemini"])
         self._provider_type.setCurrentText(self._config.provider_type)
         self._provider_type.currentTextChanged.connect(self._on_provider_changed)
@@ -69,21 +69,13 @@ class AISettingsDialog(QDialog):
         self._form.addRow("Endpoint URL:", self._endpoint_url)
 
         # Model Name
-        self._model_name = QLineEdit(self._config.model_name)
+        self._model_name = QComboBox()
+        self._model_name.setEditable(True)
         self._form.addRow("Model Name:", self._model_name)
-
-        # API Keys
-        #self._external_key = QLineEdit(self._config.external_api_key)
-        #self._external_key.setEchoMode(QLineEdit.EchoMode.Password)
-        #self._form.addRow("OpenAI/External Key:", self._external_key)
 
         self._gemini_key = QLineEdit(self._config.gemini_api_key)
         self._gemini_key.setEchoMode(QLineEdit.EchoMode.Password)
         self._form.addRow("Gemini API Key:", self._gemini_key)
-
-        #self._claude_key = QLineEdit(self._config.claude_api_key)
-        #self._claude_key.setEchoMode(QLineEdit.EchoMode.Password)
-        #self._form.addRow("Claude API Key:", self._claude_key)
 
         # Temperature
         self._temperature = QDoubleSpinBox()
@@ -134,23 +126,52 @@ class AISettingsDialog(QDialog):
     def _on_provider_changed(self, provider_type: str) -> None:
         """Show or hide fields and update model defaults based on the selected backend."""
         # 1. Row Visibility
-        show_endpoint = provider_type in ("ollama", "external", "gemini")
+        show_endpoint = provider_type in ("ollama", "gemini")
         self._set_row_visible(self._endpoint_url, show_endpoint)
         
-        # We show all keys always per request "configure api key for multiple ai providers as well simultaniously"
-        # but we highlighted them, so it's fine.
-
         # 2. Sensible Model Defaults
-        defaults = {
-            "gemini": "gemini-2.5-flash",
-            #"claude": "claude-3-haiku-20240307",
+        model_defaults = {
+            "gemini": "gemini-3.1-flash-lite-preview",
             "ollama": "qwen2.5vl:3b"
         }
+        
+        endpoint_defaults = {
+            "gemini": "https://generativelanguage.googleapis.com",
+            "ollama": "http://localhost:11434"
+        }
+        
+        if provider_type in endpoint_defaults:
+            self._endpoint_url.setText(endpoint_defaults[provider_type])
 
-        if provider_type in defaults:
-            self._model_name.setText(defaults[provider_type])
-        elif provider_type == "external":
-            self._model_name.setText("gpt-4o")
+        self._model_name.clear()
+
+        if provider_type == "ollama":
+            url = endpoint_defaults["ollama"]
+            if hasattr(self, "_endpoint_url") and self._endpoint_url.text():
+                url = self._endpoint_url.text()
+            
+            try:
+                with httpx.Client(timeout=1.0) as client:
+                    resp = client.get(f"{url}/api/tags")
+                    resp.raise_for_status()
+                    models = [m.get("name") for m in resp.json().get("models", [])]
+                    if models:
+                        self._model_name.addItems(models)
+                        self._model_name.setCurrentText(models[0])
+                    else:
+                        self._model_name.addItem("No Models Detected")
+                        self._model_name.setCurrentText("No Models Detected")
+            except Exception:
+                self._model_name.addItem("No Models Detected")
+                self._model_name.setCurrentText("No Models Detected")
+        
+        elif provider_type == "gemini":
+            self._model_name.addItems([
+                "gemini-3.1-flash-lite-preview",
+                "gemini-2.0-flash", 
+                "gemini-1.5-flash"
+            ])
+            self._model_name.setCurrentText(model_defaults.get("gemini", "gemini-3.1-flash-lite-preview"))
 
     def _set_row_visible(self, widget: QWidget, visible: bool) -> None:
         """Helper to hide/show a field and its associated layout label."""
@@ -163,10 +184,8 @@ class AISettingsDialog(QDialog):
         """Return the updated ``AIConfig`` object from form data."""
         self._config.provider_type = self._provider_type.currentText()
         self._config.endpoint_url = self._endpoint_url.text()
-        self._config.model_name = self._model_name.text()
-        self._config.external_api_key = self._external_key.text()
+        self._config.model_name = self._model_name.currentText()
         self._config.gemini_api_key = self._gemini_key.text()
-        self._config.claude_api_key = self._claude_key.text()
         self._config.temperature = self._temperature.value()
         self._config.max_tokens = self._max_tokens.value()
         self._config.timeout = self._timeout.value()

@@ -10,10 +10,14 @@ import base64
 import httpx
 import json
 import socket
+import logging
 from typing import Any, Dict, Optional
 
 from threatpilot.ai.ai_provider_interface import AIProviderInterface
 from threatpilot.config.ai_config import AIConfig
+from threatpilot.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class GeminiProvider(AIProviderInterface):
@@ -52,10 +56,16 @@ class GeminiProvider(AIProviderInterface):
             }
         }
 
-        # For Gemini 2.5+ models, cap thinking tokens so the bulk of the budget
+        # For Gemini 2.x models, cap thinking tokens so the bulk of the budget
         # goes to actual JSON output rather than internal reasoning.
         model_name = (self.config.model_name or "").lower()
-        if "2.5" in model_name or "2-5" in model_name:
+        if "2.0" in model_name or "2-0" in model_name:
+            payload["generationConfig"]["thinkingConfig"] = {
+                "thinkingBudget": 2048
+            }
+        
+        # Backward compatibility for any experimental versions
+        elif "2.5" in model_name or "2-5" in model_name:
             payload["generationConfig"]["thinkingConfig"] = {
                 "thinkingBudget": 2048
             }
@@ -103,7 +113,7 @@ class GeminiProvider(AIProviderInterface):
 
     async def _execute_with_fallback(self, payload: Dict[str, Any]) -> tuple[str, dict]:
         """Execute request with automated URL version fallback (v1 -> v1beta)."""
-        model = (self.config.model_name or "gemini-2.5-flash").strip().replace("\n", "").replace("\r", "")
+        model = (self.config.model_name or "gemini-3.1-flash-lite-preview").strip().replace("\n", "").replace("\r", "")
         # Strip internal 'models/' prefix if user accidentally included it
         if model.lower().startswith("models/"):
             model = model[7:]
@@ -141,20 +151,25 @@ class GeminiProvider(AIProviderInterface):
                     retries = 3
                     import asyncio
                     for attempt in range(retries):
+                        logger.debug(f"Sending request to Gemini: {url}")
                         response = await client.post(url, json=payload)
                         
                         # If the server is temporarily unavailable or overloaded, back off and retry
                         if response.status_code in [500, 502, 503, 504] and attempt < retries - 1:
+                            logger.warning(f"Gemini server error {response.status_code}. Retrying ({attempt+1}/{retries})...")
                             await asyncio.sleep(2 ** attempt) # 1s, 2s, 4s...
                             continue
                             
                         # If 404 or 400, the model might only be in the other version channel (Common for new models)
                         if response.status_code in [400, 404]:
                             try:
-                                error_details = response.json().get("error", {}).get("message", "")
+                                error_data = response.json()
+                                error_details = error_data.get("error", {}).get("message", "")
                                 last_error = f"API error ({response.status_code}): {error_details}"
                             except Exception:
                                 last_error = f"API returned {response.status_code}"
+                            
+                            logger.info(f"Gemini URL attempt failed with {response.status_code}: {last_error}")
                             break # Break the retry loop to immediately fall back to v1beta
                             
                         response.raise_for_status()
@@ -164,6 +179,7 @@ class GeminiProvider(AIProviderInterface):
                         continue # Fall back to next version in urls_to_try
                         
                     data = response.json()
+                    logger.debug("Gemini response received successfully.")
                     
                     usage = data.get("usageMetadata", {})
                     if "candidates" in data and len(data["candidates"]) > 0:
@@ -198,7 +214,9 @@ class GeminiProvider(AIProviderInterface):
                 # or fail at the end of loop.
 
         error_context = url if 'url' in locals() else 'unknown URL'
-        raise IOError(f"Gemini API request failed. Last attempted URL: {error_context}. Error: {last_error}")
+        error_msg = f"Gemini API request failed. Last attempted URL: {error_context}. Error: {last_error}"
+        logger.error(error_msg)
+        raise IOError(error_msg)
 
     def is_available(self) -> bool:
         """Check if the Gemini API host is reachable."""

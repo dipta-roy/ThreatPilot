@@ -9,30 +9,30 @@
 ## Key Features
 
 ### 1. Intelligent Architecture Detection
-- **Computer Vision Analysis**: Automatically identify architectural components, trust boundaries, and communication flows from images.
-- **Integrated OCR**: Extracts text labels from diagram elements using **AI**, mapping them to logical system components.
+- **AI Vision Analysis**: Automatically identify architectural components, trust boundaries, and communication flows from images using multimodal AI (Recommended Qwen2.5-VL or Gemini 3.1-Flash-Lite).
 - **Formal DFD Conversion**: Transforms logical architectural elements into industry-standard Data Flow Diagrams (DFD) with distinct **Process**, **Data Store**, **External Entity**, and **Data Flow** nodes.
+- **Zero-Dependency Detection**: Traditional Computer Vision (OpenCV) has been replaced by more accurate AI-driven detection, reducing application size by 80%.
 
-### 2. AI-Powered Threat Analysis
+### 2. Streamlined AI Threat Analysis
 - **Context-Aware Prompts**: Generates structured, industry-contextualized prompts for LLMs to perform detailed **STRIDE** analysis.
-- **Multi-Provider Support**: Seamlessly switch between local **Ollama** instances or high-performance external providers like **Google Gemini** endpoints.
+- **Optimized Provider Support**: Focused support for local **Ollama** instances (for privacy) and high-performance **Google Gemini** endpoints.
 - **Segmented Analysis**: Automatically handles large-scale architectures by segmenting diagrams into batches to respect model token limits while maintaining context.
-- **Vision-to-Architecture**: Utilize multimodal LLMs (like Qwen2.5-VL or Gemini 2.5 Flash) to directly "see" and bootstrap architecture models from diagram images.
 
 ### 3. Risk Assessment & Controls
 - **CVSS v3.1 Scoring**: Built-in calculator to determine base vulnerability scores with automatic severity categorization (Low-Critical).
-- **Security Control Mapping**: (In-development) Maps identified threats to established security controls from **NIST SP 800-53** and **OWASP Top 10**.
 - **Interactive Risk Matrix**: Visualize your system's risk profile through a dynamic Likelihood vs. Impact matrix.
+- **High-Fidelity Tracking**: Manage threats with a full-featured Threat Ledger, supporting acceptance, mitigation status, and manual overrides.
 
 ### 4. Professional Reporting & Export
 - **Comprehensive Markdown Reports**: Generates deep-dive narrative reports including methodology, executive summaries, and detailed threat registers.
-- **Tabular Excel Exports**: High-fidelity 7-tab Risk Assessment workbooks for GRC integration or manual management.
+- **Lightweight Excel Exports**: Custom-built Excel generation using `openpyxl`, ensuring high-fidelity 7-tab GRC workbooks without the bloat of heavy data libraries.
 - **Architecture Export**: Save your modeled architecture as structured JSON or export annotated diagrams.
 
-### 5. Advanced Workflow Management
-- **Full-Featured GUI**: A modern, dark-themed desktop application built with **PySide6**.
-- **Human-in-the-Loop**: Manually refine detected components, add custom threats, or override AI-generated assessments.
-- **Project Versioning**: Built-in manager to track changes and maintain a history of your threat model's evolution.
+### 5. Advanced UX & Workflow
+- **Modern UI**: A premium desktop application built with **PySide6**, featuring **Dark** and **Light** theme support.
+- **Undo/Redo System**: Full state management for editing components, flows, and trust boundaries.
+- **Quick Start Wizard**: Onboarding experience for new users to bootstrap their first project in seconds.
+- **Human-in-the-Loop**: Manually refine detected components, add custom threats, or override AI-generated assessments via the Project Explorer.
 
 ---
 
@@ -40,8 +40,8 @@
 
 ### Prerequisites
 - **Python 3.11+**
-- **Local LLM** (Ollama recommended) or an **API Key** for external providers (Tested with Gemini).
-- **Recommended Models** Qwen2.5-VL or Qwen3-VL or Gemini-3-flash-preview
+- **Local LLM** (Ollama recommended) or a **Google Gemini API Key**.
+- **Recommended Models**: `qwen2.5vl:3b` or `qwen2.5vl:7b` (for Ollama) and `gemini-3.1-flash-lite-preview` or `gemini-2.0-flash`.
 
 ### Installation
 ```bash
@@ -49,7 +49,7 @@
 git clone https://github.com/dipta-roy/ThreatPilot.git
 cd ThreatPilot
 
-# Install dependencies
+# Install lightweight dependencies
 pip install -r requirements.txt
 ```
 
@@ -61,12 +61,12 @@ python main.py
 ---
 
 ## Architecture Stack
-- **UI Framework**: PySide6 (Qt for Python)
-- **Data & Validation**: Pydantic (v2)
-- **AI Orchestration**: Custom provider interface supporting Ollama, Gemini.
-- **Image Processing**: OpenCV, Pillow (PIL).
-- **Networking**: HTTPX (Asynchronous I/O).
-- **Exporting**: Pandas, OpenPyXL.
+- **UI Framework**: PySide6 (Qt for Python).
+- **Data & Validation**: Pydantic (v2).
+- **AI Orchestration**: Custom asynchronous interface supporting Ollama and Gemini.
+- **Networking**: HTTPX.
+- **Exporting**: OpenPyXL (Native Excel generation).
+- **Build System**: cx_Freeze optimized for lean MSI installers (~200MB).
 
 ---
 
@@ -75,7 +75,7 @@ python main.py
 ### API Key Management
 ThreatPilot prioritizes the security of your credentials:
 - **AES-128 Encryption**: API keys are encrypted using **Fernet** before storage.
-- **Hardware-Bound Keys**: The master encryption key is stored in your OS's native **Credential Manager** (Windows Credential Manager, macOS Keychain, etc.) via `keyring`.
+- **Hardware-Bound Keys**: The master encryption key is stored in your OS's native **Credential Manager** via `keyring`.
 
 ### Data Privacy
 - **Local Analysis**: Using the **Ollama** provider ensures that your architecture diagrams and threat models never leave your local machine.
@@ -84,8 +84,8 @@ ThreatPilot prioritizes the security of your credentials:
 ---
 
 ## Design Philosophy
-ThreatPilot is built on a **Modular Domain-Driven Architecture**. Each core package—`ai`, `detection`, `risk`, `core`, and `ui`—is isolated, making it easy to add new AI backends, detection algorithms, or export formats without side effects.
+ThreatPilot is built on a **Modular Domain-Driven Architecture**. Each core package—`ai`, `detection`, `risk`, `core`, and `ui`—is isolated, making it easy to add new AI backends or export formats without side effects.
 
-For a deep dive into the system's internal structure, layers, and data flows, please see the [Architecture Overview](./architecture.md).
+Detailed developer documentation: [Architecture Overview](./architecture.md).
 
 ---

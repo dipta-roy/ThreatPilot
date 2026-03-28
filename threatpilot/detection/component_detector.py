@@ -6,8 +6,8 @@ within a diagram image.
 
 from __future__ import annotations
 
-import cv2
-import numpy as np
+# import cv2
+# import numpy as np
 from pathlib import Path
 from pydantic import BaseModel
 
@@ -46,15 +46,7 @@ def detect_components(image_path: str | Path) -> list[DetectedComponent]:
         FileNotFoundError: If the image path is invalid.
         RuntimeError: If OpenCV processing fails.
     """
-    path = Path(image_path)
-    if not path.is_file():
-        raise FileNotFoundError(f"Diagram image for detection not found: {path}")
-
-    # Load image via OpenCV
-    # Note: image_path is converted to string for OpenCV compatibility
-    img = cv2.imread(str(path))
-    if img is None:
-        raise RuntimeError(f"OpenCV could not load image: {path}")
+    raise RuntimeError("Traditional Computer Vision (OpenCV) has been removed to reduce bundle size. Please use AI-driven detection instead.")
 
     # --- Pre-processing ---
     # 1. Grayscale

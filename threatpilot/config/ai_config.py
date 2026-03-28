@@ -20,15 +20,13 @@ class AIConfig(BaseModel):
     """Configuration for the AI provider used by the application.
 
     Attributes:
-        provider_type: The AI backend type ('ollama', 'external', 'gemini', or 'claude').
-        endpoint_url: The URL of the AI endpoint (ignored for native Gemini/Claude).
+        provider_type: The AI backend type ('ollama' or 'gemini').
+        endpoint_url: The URL of the AI endpoint (ignored for native Gemini).
         model_name: The model identifier to use.
         temperature: Sampling temperature (0.0 - 2.0).
         max_tokens: Maximum number of tokens in the response.
         timeout: Request timeout in seconds.
-        external_api_key: API key for external providers.
         gemini_api_key: API key for Gemini.
-        claude_api_key: API key for Claude.
     """
 
     provider_type: str = "ollama"
@@ -37,32 +35,22 @@ class AIConfig(BaseModel):
     temperature: float = 0.7
     max_tokens: int = 8192
     timeout: int = 120
-    external_api_key: str = ""
     gemini_api_key: str = ""
-    claude_api_key: str = ""
 
     model_config = ConfigDict(extra="ignore")
 
     @property
     def api_key(self) -> str:
         """Helper to get the appropriate API key based on provider type."""
-        if self.provider_type == "external":
-            return self.external_api_key
-        elif self.provider_type == "gemini":
+        if self.provider_type == "gemini":
             return self.gemini_api_key
-        elif self.provider_type == "claude":
-            return self.claude_api_key
         return ""
 
     @api_key.setter
     def api_key(self, value: str) -> None:
         """Helper to set the API key for the current provider."""
-        if self.provider_type == "external":
-            self.external_api_key = value
-        elif self.provider_type == "gemini":
+        if self.provider_type == "gemini":
             self.gemini_api_key = value
-        elif self.provider_type == "claude":
-            self.claude_api_key = value
 
     @classmethod
     def load(cls) -> AIConfig:
@@ -98,15 +86,11 @@ class AIConfig(BaseModel):
             temperature=float(get_opt("AI_TEMPERATURE", "0.7")),
             max_tokens=int(get_opt("AI_MAX_TOKENS", "8192")),
             timeout=int(get_opt("AI_TIMEOUT", "120")),
-            external_api_key=scrub_key(decrypt_api_key(get_opt("EXTERNAL_API_KEY", ""))),
             gemini_api_key=scrub_key(decrypt_api_key(get_opt("GEMINI_API_KEY", ""))),
-            claude_api_key=scrub_key(decrypt_api_key(get_opt("CLAUDE_API_KEY", ""))),
         )
         
         # Register keys for log redaction
-        add_secret_to_redaction(config.external_api_key)
         add_secret_to_redaction(config.gemini_api_key)
-        add_secret_to_redaction(config.claude_api_key)
         
         return config
 
@@ -123,18 +107,8 @@ class AIConfig(BaseModel):
         dotenv.set_key(_ENV_FILE, "AI_TIMEOUT", str(self.timeout))
         
         # Only write non-empty keys
-        if self.external_api_key:
-            dotenv.set_key(_ENV_FILE, "EXTERNAL_API_KEY", encrypt_api_key(self.external_api_key))
-        elif os.getenv("EXTERNAL_API_KEY"):
-            dotenv.unset_key(_ENV_FILE, "EXTERNAL_API_KEY")
-            
         if self.gemini_api_key:
             dotenv.set_key(_ENV_FILE, "GEMINI_API_KEY", encrypt_api_key(self.gemini_api_key))
         elif os.getenv("GEMINI_API_KEY"):
             dotenv.unset_key(_ENV_FILE, "GEMINI_API_KEY")
-
-        if self.claude_api_key:
-            dotenv.set_key(_ENV_FILE, "CLAUDE_API_KEY", encrypt_api_key(self.claude_api_key))
-        elif os.getenv("CLAUDE_API_KEY"):
-            dotenv.unset_key(_ENV_FILE, "CLAUDE_API_KEY")
 

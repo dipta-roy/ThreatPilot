@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QSize, QTimer, QUrl
+from PySide6.QtCore import Qt, QSize, QTimer, QUrl, QThread, Signal, QRectF, QPointF
 from PySide6.QtGui import QAction, QKeySequence, QFont, QPixmap, QImage, QIcon, QUndoStack, QUndoCommand, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
@@ -30,6 +30,8 @@ from PySide6.QtWidgets import (
     QProgressDialog,
     QWizard,
     QWizardPage,
+    QDialog,
+    QTabWidget,
 )
 
 from threatpilot.core.diagram_model import Diagram
@@ -40,6 +42,8 @@ from threatpilot.core.project_manager import (
     load_project,
     save_project,
 )
+from threatpilot.core.domain_models import Component, Flow, TrustBoundary
+from threatpilot.core.dfd_converter import convert_to_dfd, DFDModel, DFDNode, DFDEdge
 from threatpilot.detection.image_loader import import_diagram_file
 from threatpilot.ui.diagram_canvas import DiagramCanvas
 from threatpilot.ui.project_explorer import ProjectExplorer
@@ -47,6 +51,11 @@ from threatpilot.ui.ai_settings_dialog import AISettingsDialog
 from threatpilot.ui.prompt_settings_dialog import PromptSettingsDialog
 from threatpilot.ui.properties_panel import PropertiesPanel
 from threatpilot.ui.threat_panel import ThreatPanel
+from threatpilot.ui.architecture_dialog import EntitiesDialog, DataFlowDialog
+from threatpilot.ui.risk_matrix_dialog import RiskMatrixDialog
+from threatpilot.ui.risk_assessment_panel import RiskAssessmentPanel
+from threatpilot.ui.about_dialog import AboutDialog
+from threatpilot.ui.quick_start_wizard import QuickStartWizard
 from threatpilot.export.excel_exporter import export_to_excel
 from threatpilot.export.markdown_exporter import export_to_markdown
 from threatpilot.export.diagram_exporter import export_scene_to_image
@@ -54,13 +63,8 @@ from threatpilot.ai.factory import create_ai_provider
 from threatpilot.ai.prompt_builder import PromptBuilder
 from threatpilot.ai.analyzer import ThreatAnalyzer
 from threatpilot.ai.response_parser import extract_json
-from threatpilot.core.dfd_converter import convert_to_dfd
-from threatpilot.core.dfd_converter import convert_to_dfd
-from threatpilot.core.domain_models import Component, Flow, TrustBoundary
-from threatpilot.ui.architecture_dialog import EntitiesDialog, DataFlowDialog
-from threatpilot.ui.risk_matrix_dialog import RiskMatrixDialog
-from PySide6.QtWidgets import QDialog
-from PySide6.QtCore import QThread, Signal, QRectF, QPointF
+from threatpilot.config.ai_config import AIConfig
+from threatpilot.utils.logger import setup_logging, LOG_DIR
 import asyncio
 import json
 import re
@@ -106,9 +110,13 @@ class AnalysisWorker(QThread):
             self.response_ready.emit(raw_resp)
             if usage:
                 u = usage.get("usage", usage)
-                finish_reason = usage.get("finish_reason", "UNKNOWN")
-                meta_log = f"METADATA: Tokens [In: {u.get('prompt_tokens', u.get('promptTokenCount', 0))} | Out: {u.get('completion_tokens', u.get('candidatesTokenCount', 0))} | Total: {u.get('total_tokens', u.get('totalTokenCount', 0))}]"
-                meta_log += f" | FinishReason: {finish_reason}"
+                # Handle both OpenAI/External and Gemini metadata structures
+                in_t = u.get('prompt_tokens', u.get('promptTokenCount', 0))
+                out_t = u.get('completion_tokens', u.get('candidatesTokenCount', 0))
+                total_t = u.get('total_tokens', u.get('totalTokenCount', in_t + out_t))
+                
+                finish_reason = usage.get("finish_reason", "SUCCESS")
+                meta_log = f"METADATA: Tokens [In: {in_t} | Out: {out_t} | Total: {total_t}] | FinishReason: {finish_reason}"
                 self.response_ready.emit(meta_log)
                 
             self.finished.emit(register)
@@ -742,7 +750,12 @@ class MainWindow(QMainWindow):
 
         try:
             save_project(self._project)
-            self._risk_assessment_panel.refresh()
+            if hasattr(self, "_risk_assessment_panel"):
+                self._risk_assessment_panel.refresh()
+            if hasattr(self, "_threat_panel"):
+                self._threat_panel.refresh()
+            if hasattr(self, "_full_threat_ledger"):
+                self._full_threat_ledger.refresh()
             self.statusBar().showMessage("Project saved.")
         except (ValueError, OSError) as exc:
             QMessageBox.critical(self, "Error", f"Could not save project:\n{exc}")
@@ -902,7 +915,10 @@ class MainWindow(QMainWindow):
         self._progress.setMinimumDuration(500)
         
         self.statusBar().showMessage(f"Running threat analysis via {config.provider_type}...")
-        self._threat_panel._btn_run.setEnabled(False) 
+        if hasattr(self._threat_panel, "_btn_run"):
+            self._threat_panel._btn_run.setEnabled(False)
+        if hasattr(self._full_threat_ledger, "_btn_run"):
+            self._full_threat_ledger._btn_run.setEnabled(False) 
 
         self._worker = AnalysisWorker(
             provider, 
@@ -925,7 +941,7 @@ class MainWindow(QMainWindow):
                 text = text.replace(config.api_key, "YOUR-API-KEY-IS-HIDDEN")
             return text
 
-        self._worker.prompt_ready.connect(lambda p: self._properties_panel.append_log(sanitize_log(p), "PROMPT"))
+        self._worker.prompt_ready.connect(lambda p: self._properties_panel.append_log(sanitize_log(p), "SYSTEM"))
         self._worker.response_ready.connect(lambda r: self._properties_panel.append_log(sanitize_log(r), "RESPONSE"))
         
         self._properties_panel.append_log("SECURITY WARNING: Logs may contain architectural details. Masking is active for identified API keys.", "SYSTEM")
@@ -934,7 +950,10 @@ class MainWindow(QMainWindow):
 
     def _on_analysis_finished(self, new_register) -> None:
         """Merge new threats into the project and refresh UI."""
-        self._threat_panel._btn_run.setEnabled(True)
+        if hasattr(self._threat_panel, "_btn_run"):
+            self._threat_panel._btn_run.setEnabled(True)
+        if hasattr(self._full_threat_ledger, "_btn_run"):
+            self._full_threat_ledger._btn_run.setEnabled(True)
         self.statusBar().showMessage("Analysis complete.")
         
         # Merge threats (simple append or replacement for now)
@@ -950,7 +969,10 @@ class MainWindow(QMainWindow):
 
     def _on_analysis_failed(self, error_msg: str) -> None:
         """Handle analysis failure with concise error reporting."""
-        self._threat_panel._btn_run.setEnabled(True)
+        if hasattr(self._threat_panel, "_btn_run"):
+            self._threat_panel._btn_run.setEnabled(True)
+        if hasattr(self._full_threat_ledger, "_btn_run"):
+            self._full_threat_ledger._btn_run.setEnabled(True)
         self.statusBar().showMessage("Analysis failed.")
         self._show_concise_error("Analysis Error", "The AI analysis failed:", error_msg)
 

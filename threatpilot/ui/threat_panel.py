@@ -58,34 +58,37 @@ class ThreatPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         # Toolbar / Actions area
-        self._btn_run = QPushButton("Analyze Threats")
-        self._btn_run.setObjectName("btn_run_analysis")
-        self._btn_run.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._btn_run.clicked.connect(self.run_analysis_requested.emit)
-        layout.addWidget(self._btn_run)
-
-        btn_row = QHBoxLayout()
-        self._btn_add = QPushButton("Add Manual Threat")
-        self._btn_add.clicked.connect(self._on_add_threat)
-        btn_row.addWidget(self._btn_add)
-
-        self._btn_delete = QPushButton("Delete Selected")
-        self._btn_delete.clicked.connect(self._on_delete_threat)
-        btn_row.addWidget(self._btn_delete)
-        layout.addLayout(btn_row)
-
-        # Start disabled (no project)
-        self._btn_run.setEnabled(False)
-        self._btn_add.setEnabled(False)
-        self._btn_delete.setEnabled(False)
-
-        # Filter bar
-        filter_layout = QHBoxLayout()
+        toolbar_layout = QHBoxLayout()
+        
         self._search_input = QLineEdit()
         self._search_input.setPlaceholderText("Filter threats...")
+        self._search_input.setFixedWidth(250)
         self._search_input.textChanged.connect(lambda: self.refresh())
-        filter_layout.addWidget(self._search_input)
-        layout.addLayout(filter_layout)
+        toolbar_layout.addWidget(self._search_input)
+
+        self._btn_add = QPushButton("Add Manual Threat")
+        self._btn_add.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_add.clicked.connect(self._on_add_threat)
+        toolbar_layout.addWidget(self._btn_add)
+
+        self._btn_delete = QPushButton("Delete Selected")
+        self._btn_delete.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_delete.clicked.connect(self._on_delete_threat)
+        toolbar_layout.addWidget(self._btn_delete)
+        
+        self._btn_run = QPushButton("Run AI Analysis")
+        self._btn_run.setObjectName("btn_run_threat_analysis")
+        self._btn_run.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_run.setStyleSheet("background-color: #238636; color: white; font-weight: bold;")
+        self._btn_run.clicked.connect(self.run_analysis_requested.emit)
+        toolbar_layout.addWidget(self._btn_run)
+        
+        toolbar_layout.addStretch()
+        layout.addLayout(toolbar_layout)
+
+        # Start disabled (no project)
+        self._btn_add.setEnabled(False)
+        self._btn_delete.setEnabled(False)
 
         self._tree = QTreeWidget()
         self._tree.setHeaderLabels(["REF ID", "SEVERITY", "VULNERABILITY TITLE"])
@@ -124,7 +127,6 @@ class ThreatPanel(QWidget):
         self.setEnabled(has_reg)
         
         if has_reg:
-            self._btn_run.setEnabled(True)
             self._btn_add.setEnabled(True)
             self._btn_delete.setEnabled(True)
         
@@ -181,21 +183,29 @@ class ThreatPanel(QWidget):
                 is_dark = getattr(self, "_is_dark_theme", True)
                 if is_dark:
                     if sev_label == "CRITICAL":
-                        threat_item.setForeground(1, QColor("#ff6b6b"))
+                        threat_item.setBackground(1, QColor("#7b1e1e"))
+                        threat_item.setForeground(1, QColor("white"))
                     elif sev_label == "HIGH":
-                        threat_item.setForeground(1, QColor("#ff9f43"))
+                        threat_item.setBackground(1, QColor("#cc0000"))
+                        threat_item.setForeground(1, QColor("white"))
                     elif sev_label == "MEDIUM":
-                        threat_item.setForeground(1, QColor("#feca57"))
+                        threat_item.setBackground(1, QColor("#e3b341"))
+                        threat_item.setForeground(1, QColor("white"))
                     elif sev_label == "LOW":
-                        threat_item.setForeground(1, QColor("#1dd1a1"))
+                        threat_item.setBackground(1, QColor("#1f6feb"))
+                        threat_item.setForeground(1, QColor("white"))
                 else:
                     if sev_label == "CRITICAL":
+                        threat_item.setBackground(1, QColor("#ffebe9"))
                         threat_item.setForeground(1, QColor("#cf222e"))
                     elif sev_label == "HIGH":
+                        threat_item.setBackground(1, QColor("#fff1e5"))
                         threat_item.setForeground(1, QColor("#af4e00"))
                     elif sev_label == "MEDIUM":
+                        threat_item.setBackground(1, QColor("#fff8c5"))
                         threat_item.setForeground(1, QColor("#9a6700"))
                     elif sev_label == "LOW":
+                        threat_item.setBackground(1, QColor("#ddf4ff"))
                         threat_item.setForeground(1, QColor("#0969da"))
                 # Store reference in user data
                 threat_item.setData(0, Qt.ItemDataRole.UserRole, threat)

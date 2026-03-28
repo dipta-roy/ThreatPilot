@@ -7,9 +7,8 @@ PySide6>=6.5
 # Data validation
 pydantic>=2.0
 
-# Image handling
+# Image handling & Excel support
 Pillow>=10.0
-opencv-python>=4.10.0
 
 # AI communication
 httpx>=0.25
@@ -18,5 +17,4 @@ keyring>=24.2
 python-dotenv>=1.0
 
 # Export
-pandas>=2.0
 openpyxl>=3.1

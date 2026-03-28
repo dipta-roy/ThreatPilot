@@ -6,8 +6,8 @@ within arch diagrams and determine their approximate direction.
 
 from __future__ import annotations
 
-import cv2
-import numpy as np
+# import cv2
+# import numpy as np
 from pathlib import Path
 from pydantic import BaseModel
 
@@ -48,14 +48,7 @@ def detect_flows(image_path: str | Path) -> list[DetectedFlow]:
         FileNotFoundError: If the image file path is invalid.
         RuntimeError: If OpenCV processing fails.
     """
-    path = Path(image_path)
-    if not path.is_file():
-        raise FileNotFoundError(f"Diagram image for flow detection not found: {path}")
-
-    # Load image
-    img = cv2.imread(str(path))
-    if img is None:
-        raise RuntimeError(f"OpenCV could not load image: {path}")
+    raise RuntimeError("Traditional Computer Vision (OpenCV) has been removed to reduce bundle size. Please use AI-driven detection instead.")
 
     # Pre-processing
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)

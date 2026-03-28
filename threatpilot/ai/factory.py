@@ -9,9 +9,7 @@ from __future__ import annotations
 from threatpilot.config.ai_config import AIConfig
 from threatpilot.ai.ai_provider_interface import AIProviderInterface
 from threatpilot.ai.ollama_provider import OllamaProvider
-from threatpilot.ai.external_provider import ExternalProvider
 from threatpilot.ai.gemini_provider import GeminiProvider
-from threatpilot.ai.claude_provider import ClaudeProvider
 
 
 def create_ai_provider(config: AIConfig) -> AIProviderInterface:
@@ -30,11 +28,7 @@ def create_ai_provider(config: AIConfig) -> AIProviderInterface:
     
     if p_type == "ollama":
         return OllamaProvider(config)
-    elif p_type == "external":
-        return ExternalProvider(config)
     elif p_type == "gemini":
         return GeminiProvider(config)
-    elif p_type == "claude":
-        return ClaudeProvider(config)
     else:
         raise ValueError(f"Unknown AI provider type: {config.provider_type}")
