@@ -66,7 +66,6 @@ python main.py
 - **AI Orchestration**: Custom asynchronous interface supporting Ollama and Gemini.
 - **Networking**: HTTPX.
 - **Exporting**: OpenPyXL (Native Excel generation).
-- **Build System**: cx_Freeze optimized for lean MSI installers (~200MB).
 
 ---
 
@@ -86,6 +85,6 @@ ThreatPilot prioritizes the security of your credentials:
 ## Design Philosophy
 ThreatPilot is built on a **Modular Domain-Driven Architecture**. Each core package—`ai`, `detection`, `risk`, `core`, and `ui`—is isolated, making it easy to add new AI backends or export formats without side effects.
 
-Detailed developer documentation: [Architecture Overview](./architecture.md).
+Detailed developer documentation: [Architecture Overview](./ARCHITECTURE.md).
 
 ---
