@@ -24,7 +24,10 @@ from PySide6.QtWidgets import (
 
 from threatpilot.config.ai_config import AIConfig
 from threatpilot.ai.factory import create_ai_provider
+from threatpilot.utils.logger import sanitize_text
 import httpx
+import re
+from urllib.parse import urlparse
 
 
 class AISettingsDialog(QDialog):
@@ -73,7 +76,7 @@ class AISettingsDialog(QDialog):
         self._model_name.setEditable(True)
         self._form.addRow("Model Name:", self._model_name)
 
-        self._gemini_key = QLineEdit(self._config.gemini_api_key)
+        self._gemini_key = QLineEdit(self._config.gemini_api_key.get_secret_value())
         self._gemini_key.setEchoMode(QLineEdit.EchoMode.Password)
         self._form.addRow("Gemini API Key:", self._gemini_key)
 
@@ -95,6 +98,40 @@ class AISettingsDialog(QDialog):
         self._timeout.setRange(1, 3600)
         self._timeout.setValue(self._config.timeout)
         self._form.addRow("Timeout (sec):", self._timeout)
+
+        # --- Security & Privacy ---
+        from PySide6.QtWidgets import QFrame, QLabel
+        line_sec = QFrame()
+        line_sec.setFrameShape(QFrame.Shape.HLine)
+        line_sec.setFrameShadow(QFrame.Shadow.Sunken)
+        self._form.addRow(line_sec)
+        
+        self._privacy_warning = QLabel(
+            "⚠️ Data Privacy Warning: When using 'gemini', your architectural data (Diagrams and DFD) "
+            "will be sent to Google Cloud for analysis. Ensure this complies with your security policy."
+        )
+        self._privacy_warning.setWordWrap(True)
+        self._privacy_warning.setStyleSheet("color: #d73a49; font-style: italic; font-size: 10px; margin: 4px;")
+        self._privacy_warning.setVisible(False)
+        self._form.addRow(self._privacy_warning)
+
+        # --- General Settings ---
+        from PySide6.QtWidgets import QFrame, QLabel
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Sunken)
+        self._form.addRow(line)
+        
+        lbl_general = QLabel("General Application Settings")
+        lbl_general.setStyleSheet("font-weight: bold; color: #58a6ff; margin-top: 10px;")
+        self._form.addRow(lbl_general)
+
+        # Auto-save
+        self._autosave = QSpinBox()
+        self._autosave.setRange(1, 60)
+        self._autosave.setSuffix(" min")
+        self._autosave.setValue(self._config.autosave_interval)
+        self._form.addRow("Auto-save Interval:", self._autosave)
 
         layout.addLayout(self._form)
 
@@ -128,6 +165,8 @@ class AISettingsDialog(QDialog):
         # 1. Row Visibility
         show_endpoint = provider_type in ("ollama", "gemini")
         self._set_row_visible(self._endpoint_url, show_endpoint)
+        self._set_row_visible(self._gemini_key, provider_type == "gemini")
+        self._privacy_warning.setVisible(provider_type == "gemini")
         
         # 2. Sensible Model Defaults
         model_defaults = {
@@ -182,11 +221,33 @@ class AISettingsDialog(QDialog):
 
     def get_config(self) -> AIConfig:
         """Return the updated ``AIConfig`` object from form data."""
+        # SSRF Validation (Finding 3.1)
+        url_raw = self._endpoint_url.text().strip()
+        try:
+             parsed = urlparse(url_raw)
+             host = str(parsed.hostname).lower() if parsed.hostname else url_raw.lower()
+             
+             # Block metadata service and specific internal patterns
+             is_restricted = any(kw in host for kw in ["169.254", "metadata.google", "metadata.internal", "instance-data"])
+             
+             # Block common local/private ranges if not explicitly using Ollama on localhost
+             if self._provider_type.currentText() != "ollama" or "localhost" not in host:
+                  if host.startswith("127.") or host.startswith("10.") or host.startswith("192.168.") or host.startswith("172."):
+                       is_restricted = True
+             
+             if is_restricted:
+                  QMessageBox.warning(self, "Security Warning", "Restricted or internal endpoint detected. Please use a public AI provider URL.")
+                  return self._config
+        except Exception:
+             pass
+
         self._config.provider_type = self._provider_type.currentText()
         self._config.endpoint_url = self._endpoint_url.text()
         self._config.model_name = self._model_name.currentText()
-        self._config.gemini_api_key = self._gemini_key.text()
+        # Finding 5.2 - Use setter for SecretStr
+        self._config.api_key = self._gemini_key.text()
         self._config.temperature = self._temperature.value()
         self._config.max_tokens = self._max_tokens.value()
         self._config.timeout = self._timeout.value()
+        self._config.autosave_interval = self._autosave.value()
         return self._config

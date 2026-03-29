@@ -20,10 +20,13 @@ LOG_FILENAME = "threatpilot.log"
 # Shared list of secrets to redact, populated at runtime
 _SECRETS_TO_REDACT: list[str] = []
 
-# Regex patterns for identifying potential secrets in logs
+# Regex patterns for identifying potential secrets in logs (M.3)
 SECRET_PATTERNS = [
-    re.compile(r"API_KEY=[\"']?([a-zA-Z0-9_\-]{16,})[\"']?", re.IGNORECASE),
-    re.compile(r"Bearer\s+([a-zA-Z0-9_\-\.]{16,})", re.IGNORECASE),
+    re.compile(r"API_KEY=[\"']?(?P<secret>[a-zA-Z0-9_\-]{16,})[\"']?", re.IGNORECASE),
+    re.compile(r"Bearer\s+(?P<secret>[a-zA-Z0-9_\-\.]{16,})", re.IGNORECASE),
+    re.compile(r"([?&](?:key|token|auth|secret)=)(?P<secret>[a-zA-Z0-9_\-]{16,})", re.IGNORECASE),
+    re.compile(r"(\"(?:api_key|secret|token|password|key)\":\s*\")(?P<secret>[a-zA-Z0-9_\-\.]{8,})(\")", re.IGNORECASE),
+    re.compile(r"x-goog-api-key\s*:\s*(?P<secret>[a-zA-Z0-9_\-]{16,})", re.IGNORECASE),
 ]
 
 class RedactingFormatter(logging.Formatter):
@@ -33,18 +36,42 @@ class RedactingFormatter(logging.Formatter):
         super().__init__(fmt, datefmt)
     def format(self, record: logging.LogRecord) -> str:
         original = super().format(record)
-        redacted = original
+        return sanitize_text(original)
+
+def sanitize_text(text: str) -> str:
+    """Mask known secrets and sensitive patterns (M.3: Robust Redaction)."""
+    if not text:
+        return ""
+    
+    redacted = str(text)
+    
+    # 1. Redact known secrets from the global registry
+    for secret in _SECRETS_TO_REDACT:
+        if secret and len(secret) > 8:
+            redacted = redacted.replace(secret, "[REDACTED]")
+    
+    # 2. Redact pattern-based secrets (M.3: Non-brittle regex substitution)
+    def _redact_match(m: re.Match) -> str:
+        full = m.group(0)
+        # Identify the secret segment via the named "secret" group if available
+        try:
+            start, end = m.span('secret')
+            local_start = start - m.start(0)
+            local_end = end - m.start(0)
+            return full[:local_start] + "[REDACTED]" + full[local_end:]
+        except (IndexError, KeyError):
+            # Generic fallback: redact the first capture group
+            if m.groups() >= 1:
+                start, end = m.span(1)
+                local_start = start - m.start(0)
+                local_end = end - m.start(0)
+                return full[:local_start] + "[REDACTED]" + full[local_end:]
+        return "[REDACTED]"
+
+    for pattern in SECRET_PATTERNS:
+        redacted = pattern.sub(_redact_match, redacted)
         
-        # Redact known secrets
-        for secret in _SECRETS_TO_REDACT:
-            if secret and len(secret) > 8:
-                redacted = str(redacted).replace(secret, "[REDACTED]")
-        
-        # Apply regex patterns for common secret formats
-        for pattern in SECRET_PATTERNS:
-            redacted = pattern.sub(lambda m: m.group(0).replace(m.group(1), "[REDACTED]"), redacted)
-            
-        return redacted
+    return redacted
 
 def setup_logging(level: int = logging.INFO, project_path: str | Path | None = None) -> None:
     """Initialize the application-level logging infrastructure.
@@ -104,14 +131,23 @@ def get_logger(name: str) -> logging.Logger:
     """Helper to get a named logger."""
     return logging.getLogger(name)
 
-def add_secret_to_redaction(secret: str) -> None:
-    """Register a new secret (like an API key) to be redacted from all future logs.
-
-    Args:
-        secret: The sensitive string to redact.
+def add_secret_to_redaction(secret: Any) -> None:
+    """Register a new secret to be redacted from all future logs.
+    
+    Correctly handles Pydantic SecretStr objects (Finding 5.2).
     """
-    if secret and len(secret) > 8 and secret not in _SECRETS_TO_REDACT:
-        _SECRETS_TO_REDACT.append(secret)
+    if not secret:
+        return
+        
+    # Extract raw value from Pydantic SecretStr if applicable
+    raw_secret = secret
+    if hasattr(secret, "get_secret_value"):
+        raw_secret = secret.get_secret_value()
+    
+    raw_secret = str(raw_secret)
+    
+    if len(raw_secret) > 8 and raw_secret not in _SECRETS_TO_REDACT:
+        _SECRETS_TO_REDACT.append(raw_secret)
 
 
 # Expose constants in __all__ later when init is updated

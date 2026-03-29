@@ -10,6 +10,8 @@ Provides the primary PySide6 QMainWindow with:
 
 from __future__ import annotations
 
+import asyncio
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QSize, QTimer, QUrl, QThread, Signal, QRectF, QPointF
@@ -64,10 +66,8 @@ from threatpilot.ai.prompt_builder import PromptBuilder
 from threatpilot.ai.analyzer import ThreatAnalyzer
 from threatpilot.ai.response_parser import extract_json
 from threatpilot.config.ai_config import AIConfig
-from threatpilot.utils.logger import setup_logging, LOG_DIR
-import asyncio
-import json
-import re
+from threatpilot.utils.logger import setup_logging, LOG_DIR, sanitize_text
+
 
 
 class AnalysisWorker(QThread):
@@ -81,6 +81,7 @@ class AnalysisWorker(QThread):
     failed = Signal(str)      # Error message
     prompt_ready = Signal(str)
     response_ready = Signal(str)
+    request_segment_continuation = Signal(int, int) # (current, total)
 
     def __init__(self, provider, prompt_config, dfd, system_name, parent=None):
         super().__init__(parent)
@@ -88,6 +89,16 @@ class AnalysisWorker(QThread):
         self.prompt_config = prompt_config
         self.dfd = dfd
         self.system_name = system_name
+        
+        # Continuation flow
+        import threading
+        self._continue_event = threading.Event()
+        self._should_continue_result = True
+
+    def continue_analysis(self, should_continue: bool):
+        """Called by the UI thread to resume analysis."""
+        self._should_continue_result = should_continue
+        self._continue_event.set()
 
     def run(self):
         """Execute the async analysis within a new event loop."""
@@ -102,8 +113,15 @@ class AnalysisWorker(QThread):
             user_p = analyzer.builder.build_user_prompt(self.dfd, self.system_name)
             self.prompt_ready.emit(f"SYSTEM: {system_p}\n\nUSER: {user_p}")
 
+            async def progress_cb(current, total):
+                self._continue_event.clear()
+                self.request_segment_continuation.emit(current, total)
+                # Block the worker thread until UI signals back
+                self._continue_event.wait()
+                return self._should_continue_result
+
             register, raw_resp, usage = loop.run_until_complete(
-                analyzer.analyze(self.dfd, self.system_name)
+                analyzer.analyze(self.dfd, self.system_name, progress_callback=progress_cb)
             )
             
             # Log the raw response and usage
@@ -259,10 +277,11 @@ class MainWindow(QMainWindow):
         
         self._load_recent_project()
         
-        # Setup auto-save timer (every 60 seconds)
+        # Setup auto-save timer based on configuration (default 5 min)
+        config = AIConfig.load()
         self._autosave_timer = QTimer(self)
         self._autosave_timer.timeout.connect(self._on_autosave)
-        self._autosave_timer.start(60000)
+        self._autosave_timer.start(config.autosave_interval * 60000)
 
     def _load_stylesheet(self) -> None:
         """Apply a professional dark or light theme across the entire application."""
@@ -342,7 +361,6 @@ class MainWindow(QMainWindow):
 
     def _setup_central_widget(self) -> None:
         """Initialise central workspace with tabbed navigation for diagrams and reports."""
-        from PySide6.QtWidgets import QTabWidget
         self._central_tabs = QTabWidget()
         self._central_tabs.setObjectName("central_tabs_container")
         self._central_tabs.setDocumentMode(True)  # cleaner tab look
@@ -357,7 +375,6 @@ class MainWindow(QMainWindow):
         self._central_tabs.addTab(self._full_threat_ledger, "Threats List")
 
         # Tab 3: Detailed Risk Assessment
-        from threatpilot.ui.risk_assessment_panel import RiskAssessmentPanel
         self._risk_assessment_panel = RiskAssessmentPanel(self)
         self._risk_assessment_panel.threat_edited.connect(self._on_save_project)
         self._central_tabs.addTab(self._risk_assessment_panel, "Risk Assessment")
@@ -849,7 +866,9 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             config = dialog.get_config()
             config.save()
-            self.statusBar().showMessage("AI settings updated.")
+            # Update auto-save timer immediately
+            self._autosave_timer.setInterval(config.autosave_interval * 60000)
+            self.statusBar().showMessage(f"Settings updated (Auto-save: {config.autosave_interval} min).")
 
     def _on_prompt_config(self) -> None:
         """Edit the prompt generation parameters."""
@@ -901,8 +920,25 @@ class MainWindow(QMainWindow):
 
         # 2. Create AI Provider via Factory
         try:
-            from threatpilot.config.ai_config import AIConfig
             config = AIConfig.load()
+            
+            # Privacy Acknowledgement (Finding H.3)
+            if config.provider_type == "gemini":
+                reply = QMessageBox.warning(
+                    self, 
+                    "Data Privacy Acknowledgement",
+                    "You are using Google Gemini (Cloud AI).\n\n"
+                    "Your system architecture (components, flows, and descriptions) will be sent to "
+                    "Google's servers for analysis. Ensure this complies with your organization's "
+                    "security and privacy policies.\n\n"
+                    "Do you want to proceed?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No
+                )
+                if reply == QMessageBox.StandardButton.No:
+                    self.statusBar().showMessage("Analysis cancelled due to privacy preference.")
+                    return
+
             provider = create_ai_provider(config)
         except Exception as exc:
             QMessageBox.critical(self, "AI Error", f"Could not create AI provider:\n{exc}")
@@ -932,21 +968,36 @@ class MainWindow(QMainWindow):
         self._worker.failed.connect(self._progress.close)
         self._progress.canceled.connect(self._worker.terminate)
         
-        def sanitize_log(text: str) -> str:
-            """Mask sensitive API keys or secrets in logs."""
-            if not text: return ""
-            from threatpilot.config.ai_config import AIConfig
-            config = AIConfig.load()
-            if config.api_key and len(config.api_key) > 8:
-                text = text.replace(config.api_key, "YOUR-API-KEY-IS-HIDDEN")
-            return text
-
-        self._worker.prompt_ready.connect(lambda p: self._properties_panel.append_log(sanitize_log(p), "SYSTEM"))
-        self._worker.response_ready.connect(lambda r: self._properties_panel.append_log(sanitize_log(r), "RESPONSE"))
+        self._worker.prompt_ready.connect(lambda p: self._properties_panel.append_log(sanitize_text(p), "SYSTEM"))
+        self._worker.response_ready.connect(lambda r: self._properties_panel.append_log(sanitize_text(r), "RESPONSE"))
+        self._worker.request_segment_continuation.connect(self._on_request_continuation)
         
         self._properties_panel.append_log("SECURITY WARNING: Logs may contain architectural details. Masking is active for identified API keys.", "SYSTEM")
         self._worker.start()
         self._progress.show()
+
+    def _on_request_continuation(self, current, total):
+        """Prompt user to continue to the next segment for large architecture."""
+        if current == 0:
+            title = "Large Architecture Detected"
+            msg = (
+                f"The system architecture is large ({self._project_explorer._tree.topLevelItemCount() if hasattr(self._project_explorer, '_tree') else 'multiple'} components) "
+                f"and will be analyzed in {total} separate segments to ensure high-quality results within AI token limits.\n\n"
+                f"Do you want to start the segmented analysis?"
+            )
+        else:
+            title = "Segmented Analysis"
+            msg = f"Segment {current} of {total} is complete.\n\nDo you want to proceed with analyzing Segment {current + 1}?"
+
+        reply = QMessageBox.question(
+            self,
+            title,
+            msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes
+        )
+        should_continue = (reply == QMessageBox.StandardButton.Yes)
+        self._worker.continue_analysis(should_continue)
 
     def _on_analysis_finished(self, new_register) -> None:
         """Merge new threats into the project and refresh UI."""
@@ -978,9 +1029,6 @@ class MainWindow(QMainWindow):
 
     def _show_concise_error(self, title: str, prefix: str, error_msg: str) -> None:
         """Sanitize and display a concise version of technical AI/API errors, writing full details to log."""
-        from threatpilot.config.ai_config import AIConfig
-        from datetime import datetime
-        
         config = AIConfig.load()
         safe_error_msg = str(error_msg)
         if config.api_key and len(config.api_key) > 8:
@@ -1093,10 +1141,19 @@ class MainWindow(QMainWindow):
         from threatpilot.config.ai_config import AIConfig
         config = AIConfig.load()
         prov_type = config.provider_type.lower()
-        # Ollama/external use endpoint_url; cloud providers require api_key
+        model_name = config.model_name.lower()
+        
+        # Determine if the selected model is vision-capable
+        is_vision_model = (
+            "llava" in model_name or 
+            "vl" in model_name or 
+            "vision" in model_name or 
+            prov_type == "gemini"
+        )
+        
         has_valid_config = (
-            (prov_type == "ollama" and config.endpoint_url)
-            or (prov_type in ["gemini", "claude", "external"] and config.api_key)
+            (prov_type == "ollama" and config.endpoint_url and is_vision_model)
+            or (prov_type == "gemini" and config.api_key)
         )
         if has_valid_config:
             self.statusBar().showMessage(f"Using AI Vision ({prov_type.capitalize()}) to detect components...")
@@ -1106,8 +1163,8 @@ class MainWindow(QMainWindow):
             )
             self._worker_ai_vision.finished.connect(self._on_ai_detection_finished)
             self._worker_ai_vision.failed.connect(lambda msg: self._show_concise_error("AI Detection Failed", "Computer Vision detection failed:", msg))
-            self._worker_ai_vision.prompt_ready.connect(lambda p: self._properties_panel.append_log(p, "PROMPT"))
-            self._worker_ai_vision.response_ready.connect(lambda r: self._properties_panel.append_log(r, "RESPONSE"))
+            self._worker_ai_vision.prompt_ready.connect(lambda p: self._properties_panel.append_log(sanitize_text(p), "PROMPT"))
+            self._worker_ai_vision.response_ready.connect(lambda r: self._properties_panel.append_log(sanitize_text(r), "RESPONSE"))
 
             self._properties_panel._tabs.setCurrentIndex(1) # Switch to Logs
             self._worker_ai_vision.start()
@@ -1324,19 +1381,16 @@ class MainWindow(QMainWindow):
 
     def _on_about(self) -> None:
         """Show the About dialog with project metadata."""
-        from threatpilot.ui.about_dialog import AboutDialog
         dialog = AboutDialog(self)
         dialog.exec()
 
     def _on_quick_start(self) -> None:
         """Launch the Quick Start Wizard for new users."""
-        from threatpilot.ui.quick_start_wizard import QuickStartWizard
         wizard = QuickStartWizard(self)
         wizard.exec()
 
     def _on_open_logs(self) -> None:
         """Open the application's log directory in the OS file explorer."""
-        from threatpilot.utils.logger import LOG_DIR
         if LOG_DIR.exists():
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(LOG_DIR)))
         else:

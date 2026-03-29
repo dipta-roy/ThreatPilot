@@ -9,7 +9,7 @@ Orchestrates the end-to-end AI analysis workflow:
 from __future__ import annotations
 
 import asyncio
-from typing import List, Optional
+from typing import List, Optional, Callable
 
 from threatpilot.ai.ai_provider_interface import AIProviderInterface
 from threatpilot.ai.prompt_builder import PromptBuilder
@@ -21,6 +21,9 @@ from threatpilot.config.prompt_config import PromptConfig
 
 # Max number of components to process in a single AI prompt
 # Architecture larger than this will be automatically segmented to avoid token limits
+# Max number of components to process in a single AI prompt
+# Architecture larger than this will be automatically segmented to avoid token limits
+# (Reduced to 6 to better handle segmented analysis feedback on smaller diagrams)
 BATCH_THRESHOLD = 6
 
 # Minimum output tokens required for a useful STRIDE analysis.
@@ -46,23 +49,46 @@ class ThreatAnalyzer:
         self.prompt_config = prompt_config
         self.builder = PromptBuilder(prompt_config)
 
-    async def analyze(self, dfd: DFDModel, system_name: str) -> tuple[ThreatRegister, str, dict]:
+    async def analyze(
+        self, 
+        dfd: DFDModel, 
+        system_name: str,
+        progress_callback: Optional[Callable] = None
+    ) -> tuple[ThreatRegister, str, dict]:
         """Execute a full STRIDE analysis on the provided DFD.
 
         Automatically switches to segmented analysis if the diagram is too large.
+        If progress_callback is provided, it will be called after each segment
+        with (current_segment, total_segments). If it returns False, analysis stops.
         """
-        if len(dfd.nodes) <= BATCH_THRESHOLD:
+        num_nodes = len(dfd.nodes)
+        total_segments = (num_nodes + BATCH_THRESHOLD - 1) // BATCH_THRESHOLD
+
+        if num_nodes <= BATCH_THRESHOLD:
             return await self._analyze_segment(dfd, system_name)
         
-        # Segmented Analysis
+        # Segmented Analysis - Initial Prompt
+        if progress_callback:
+            should_start = await progress_callback(0, total_segments) # 0 indicates initial segment check
+            if not should_start:
+                return ThreatRegister(), "Analysis cancelled by user prior to segmentation.", {}
+
         all_threats = ThreatRegister()
         full_raw_text = []
         total_input = 0
         total_output = 0
         last_finish_reason = "UNKNOWN"
 
-        # Divide nodes into overlapping batches
-        for i in range(0, len(dfd.nodes), BATCH_THRESHOLD):
+        # Divide nodes into batches
+        for i in range(0, num_nodes, BATCH_THRESHOLD):
+            current_segment = i // BATCH_THRESHOLD + 1
+            
+            # If we already did segment 1 and are about to do segment 2+, prompt again
+            if progress_callback and current_segment > 1:
+                should_continue = await progress_callback(current_segment - 1, total_segments) 
+                if not should_continue:
+                    break
+
             batch_nodes = dfd.nodes[i : i + BATCH_THRESHOLD]
             node_ids = {n.id for n in batch_nodes}
             
@@ -71,24 +97,29 @@ class ThreatAnalyzer:
             sub_edges = [e for e in dfd.edges if e.source_id in node_ids or e.target_id in node_ids]
             neighbor_ids = {e.source_id for e in sub_edges} | {e.target_id for e in sub_edges}
             
-            # Ensure batch nodes are always included (even if no edges reference them)
+            # Ensure batch nodes are always included
             sub_node_ids = node_ids | neighbor_ids
             sub_nodes = [n for n in dfd.nodes if n.id in sub_node_ids]
             sub_dfd = DFDModel(nodes=sub_nodes, edges=sub_edges)
             
             # Analysis focus note for the prompt
-            segment_name = f"{system_name} (Segment {i//BATCH_THRESHOLD + 1})"
+            segment_name = f"{system_name} (Segment {current_segment} of {total_segments})"
             reg, raw, usage = await self._analyze_segment(sub_dfd, segment_name)
             
             # Merge
             for t in reg.threats:
-                # Deduplicate based on title and affected component (crude)
-                if not any(et.title == t.title and et.affected_components == t.affected_components for et in all_threats.threats):
+                is_duplicate = any(
+                    et.title == t.title and 
+                    et.affected_components == t.affected_components and
+                    et.description == t.description
+                    for et in all_threats.threats
+                )
+                if not is_duplicate:
                     all_threats.add_threat(t)
             
-            full_raw_text.append(f"--- Segment {i//BATCH_THRESHOLD + 1} Analysis ---\n{raw}")
+            full_raw_text.append(f"--- Segment {current_segment} Analysis ---\n{raw}")
             
-            # Aggregate usage from the nested structure returned by provider
+            # Aggregate usage
             seg_usage = usage.get("usage", usage)
             total_input += seg_usage.get("promptTokenCount", seg_usage.get("input_tokens", 0))
             total_output += seg_usage.get("candidatesTokenCount", seg_usage.get("output_tokens", 0))
@@ -106,81 +137,76 @@ class ThreatAnalyzer:
         return all_threats, "\n\n".join(full_raw_text), aggregated_usage
 
     async def _analyze_segment(self, dfd: DFDModel, system_name: str) -> tuple[ThreatRegister, str, dict]:
-        """Internal helper for a single AI pass."""
+        """Internal helper for a single AI pass with retry logic (M.2)."""
         system_prompt = self.builder.build_system_prompt()
         user_prompt = self.builder.build_user_prompt(dfd, system_name)
 
-        # Enforce minimum token budget for threat analysis.
-        # The user's config.max_tokens may be set low (e.g. 4096) for general use,
-        # but STRIDE analysis of multiple components requires much more headroom.
+        # Enforce minimum token budget
         original_max = self.provider.config.max_tokens
         if original_max < MIN_ANALYSIS_TOKENS:
             self.provider.config.max_tokens = MIN_ANALYSIS_TOKENS
 
-        try:
-            # Execute AI Request
-            raw_response, usage = await self.provider.chat_complete(
-                prompt=user_prompt,
-                system_instructions=system_prompt
-            )
-        finally:
-            # Restore original config value
-            self.provider.config.max_tokens = original_max
-
-        if not raw_response:
-             raise RuntimeError("AI provider returned an empty response.")
-
-        # Parse AI results into structured dictionaries
-        threat_dicts = parse_threat_list(raw_response)
+        last_error = None
+        max_retries = 3
         
-        register = ThreatRegister()
-        
-        for t_data in threat_dicts:
+        for attempt in range(max_retries):
             try:
-                # Map case-insensitive STRIDE category strings to our enum
-                cat_str = str(t_data.get("category", "")).strip()
-                category = self._map_category(cat_str)
-
-                # Safer numeric conversion
-                def _to_int(val, default=3):
-                    try:
-                        return int(float(str(val)))
-                    except (ValueError, TypeError):
-                        return default
-                
-                def _to_float(val, default=0.0):
-                    try:
-                        return float(str(val))
-                    except (ValueError, TypeError):
-                        return default
-
-                threat = Threat(
-                    category=category,
-                    title=t_data.get("title", "New Threat"),
-                    description=t_data.get("description", ""),
-                    impact=t_data.get("impact", ""),
-                    likelihood=_to_int(t_data.get("likelihood", 3)),
-                    mitigation=t_data.get("recommended_mitigation", "") or t_data.get("mitigation", ""),
-                    vulnerabilities=str(t_data.get("vulnerabilities", "")),
-                    affected_components=str(t_data.get("affected_components", "")),
-                    cvss_score=_to_float(t_data.get("cvss_score", 0.0)),
-                    cvss_vector=str(t_data.get("cvss_vector", "")),
-                    source_dfd_node=t_data.get("threat_id") 
+                # Execute AI Request
+                raw_response, usage = await self.provider.chat_complete(
+                    prompt=user_prompt,
+                    system_instructions=system_prompt
                 )
-                register.add_threat(threat)
-            except Exception:
-                continue
+                
+                if not raw_response:
+                    raise RuntimeError("AI provider returned an empty response.")
 
-        return register, raw_response, usage
+                # Parse AI results into structured dictionaries (uses Pydantic internally)
+                threat_dicts = parse_threat_list(raw_response)
+                
+                # If we got NO threats for a multi-node DFD, something might have failed in formatting
+                if not threat_dicts and len(dfd.nodes) > 0 and attempt < max_retries - 1:
+                    import logging
+                    logging.getLogger(__name__).warning(f"AI returned 0 threats for {len(dfd.nodes)} nodes. Retrying ({attempt+1}/{max_retries})...")
+                    continue
+
+                register = ThreatRegister()
+                for t_data in threat_dicts:
+                    try:
+                        # Map and validate (The ResponseParser already uses Threat.model_validate)
+                        # but we re-map enum here for extra safety
+                        cat_str = str(t_data.get("category", "")).strip()
+                        category = self._map_category(cat_str)
+                        
+                        t_data["category"] = category
+                        threat = Threat.model_validate(t_data)
+                        register.add_threat(threat)
+                    except Exception:
+                        continue
+
+                # Success
+                self.provider.config.max_tokens = original_max
+                return register, raw_response, usage
+
+            except Exception as exc:
+                last_error = exc
+                import logging
+                logging.getLogger(__name__).error(f"Analysis attempt {attempt+1} failed: {exc}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(1) # Brief backoff
+                    continue
+        
+        # Restore and fail
+        self.provider.config.max_tokens = original_max
+        raise last_error or RuntimeError("Analysis failed after maximum retries.")
 
     def _map_category(self, cat_str: str) -> STRIDECategory:
-        """Map text categories from AI to the standard STRIDE enum."""
-        cmap = {
-            "spoofing": STRIDECategory.SPOOFING,
-            "tampering": STRIDECategory.TAMPERING,
-            "repudiation": STRIDECategory.REPUDIATION,
-            "information disclosure": STRIDECategory.INFORMATION_DISCLOSURE,
-            "denial of service": STRIDECategory.DENIAL_OF_SERVICE,
-            "elevation of privilege": STRIDECategory.ELEVATION_OF_PRIVILEGE
-        }
-        return cmap.get(cat_str.lower(), STRIDECategory.TAMPERING)
+        """Fuzzy map text categories from AI to the standard STRIDE enum."""
+        s = str(cat_str).lower().strip()
+        if "spoofing" in s: return STRIDECategory.SPOOFING
+        if "tampering" in s: return STRIDECategory.TAMPERING
+        if "repudiation" in s: return STRIDECategory.REPUDIATION
+        if "disclosure" in s or "privacy" in s: return STRIDECategory.INFORMATION_DISCLOSURE
+        if "denial" in s or "dos" in s: return STRIDECategory.DENIAL_OF_SERVICE
+        if "privilege" in s or "elevation" in s: return STRIDECategory.ELEVATION_OF_PRIVILEGE
+        
+        return STRIDECategory.INFORMATION_DISCLOSURE

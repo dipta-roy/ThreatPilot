@@ -6,11 +6,15 @@ instance via its REST API (defaulting to port 11434).
 
 from __future__ import annotations
 
-import httpx
+import base64
 import json
 from typing import Any, Dict, List, Optional
 
+import httpx
 from threatpilot.ai.ai_provider_interface import AIProviderInterface
+from threatpilot.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class OllamaProvider(AIProviderInterface):
@@ -81,22 +85,20 @@ class OllamaProvider(AIProviderInterface):
         **kwargs: Any
     ) -> tuple[str, dict]:
         """Send a multimodal vision request to a local Ollama vision model.
-
+        
         Ollama supports vision models (e.g. llava, qwen2.5vl) by passing
         base64-encoded images in the ``images`` field of the user message.
 
         Args:
             prompt: The text prompt describing what to extract from the image.
             image_bytes: Raw binary data of the image.
-            mime_type: MIME type of the image (unused by Ollama, kept for interface compat).
+            mime_type: MIME type of the image (unused by Ollama).
             system_instructions: Optional system context.
             **kwargs: Extra generation parameters.
 
         Returns:
             A tuple of (raw text content, metadata dict).
         """
-        import base64
-
         b64_image = base64.b64encode(image_bytes).decode("utf-8")
 
         messages: List[Dict[str, Any]] = []

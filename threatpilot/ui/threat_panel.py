@@ -146,9 +146,27 @@ class ThreatPanel(QWidget):
             return
 
         # Prepare STRIDE category headers
+        header_font = self._tree.font()
+        header_font.setBold(True)
+        is_dark = getattr(self, "_is_dark_theme", True)
+        
         for cat in STRIDECategory:
-            cat_item = QTreeWidgetItem(self._tree, [cat.name, cat.value])
+            # Uppercase header names for professional UI look
+            cat_item = QTreeWidgetItem(self._tree, [cat.name.upper(), cat.value])
             cat_item.setFlags(cat_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            cat_item.setFont(0, header_font)
+            
+            # Apply distinctive section header styling
+            if is_dark:
+                # Deep slate background for category headers
+                for col in range(3):
+                    cat_item.setBackground(col, QColor("#21262d"))
+                cat_item.setForeground(0, QColor("#58a6ff")) # Section brand color
+            else:
+                for col in range(3):
+                    cat_item.setBackground(col, QColor("#f6f8fa"))
+                cat_item.setForeground(0, QColor("#0969da"))
+                
             cat_item.setExpanded(True)
             self._category_items[cat] = cat_item
 

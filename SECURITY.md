@@ -1,14 +1,10 @@
 # Security Policy
 
-## Supported Versions
-
-ThreatPilot is a **desktop application** (PySide6 + Python). Only the latest release on the `main` branch is actively supported.
-
-| Version | Supported          | Notes |
-|---------|--------------------|-------|
-| Latest (`main`) |  Yes | Actively maintained |
-
 ## Reporting a Vulnerability
+
+The ThreatPilot team takes the security of our application and its users seriously. If you discover a security vulnerability, we would appreciate it if you report it to us responsibly.
+
+**Please do not open a public issue for security vulnerabilities.**
 
 **Please report security issues responsibly.**
 
@@ -21,56 +17,47 @@ Include as much detail as possible:
 - Potential impact
 - Any suggested fix or mitigation
 
-**Do not** report security issues via public issues or pull requests.
+---
 
-## Security Features
+## Security Architecture
 
-ThreatPilot was designed with security in mind from the start:
+ThreatPilot is designed with a "Security-First" mindset, particularly concerning the handling of sensitive architectural data and AI credentials.
 
-- **Credential Management**  
-  API keys (Gemini) are **never stored in plaintext**.  
-  - Master encryption key is generated with `Fernet.generate_key()` and stored in the OS credential manager (`keyring`).  
-  - Symmetric encryption uses `cryptography.fernet` (AES-128-CBC).  
-  - Encrypted keys live in `config.env` (excluded from git).
+### 1. API Key & Credential Protection
+- **Encryption at Rest**: Sensitive API keys (e.g., Gemini) are never stored in plain text. They are encrypted using **AES-128 (Fernet)**.
+- **PBKDF2 Key Derivation**: Master encryption keys are derived using PBKDF2 with 100,000 iterations and a cryptographically secure salt.
+- **Key Management**:
+    - By default, ThreatPilot uses the OS-native Credential Manager (via `keyring`) for machine-bound key storage.
+    - For high-security environments, users can provide a `THREATPILOT_MASTER_KEY` environment variable for session-based encryption.
 
-- **Input Validation & Sandboxing**  
-  - Diagram images: strict extension whitelist (`.png`, `.jpg`, `.jpeg`), UUID-prefixed filenames, copied into project-scoped `diagrams/` folder. No path traversal possible.  
-  - All data models use **Pydantic v2** for strict validation.  
-  - AI responses are parsed with robust JSON repair and bracket balancing.
+### 2. AI Interaction Security
+- **Prompt Injection Defense**: All user-provided metadata, architectural descriptions, and custom prompts are sanitized (XML escaping and newline removal) before being embedded into AI system instructions.
+- **SSRF Protection**: AI endpoint URLs are strictly validated to prevent Server-Side Request Forgery against internal metadata services (e.g., `169.254.169.254`) and private IP ranges.
+- **Header-Based Authentication**: Gemini API keys are transmitted via the `x-goog-api-key` HTTP header, ensuring they are not exposed in URL logs or intermediate proxies.
 
-- **AI Prompt Security**  
-  - System prompt is dynamically built from a safe `PromptConfig` model.  
-  - Output is strictly enforced as JSON with detailed schema.  
-  - No user input can inject arbitrary instructions into the core threat-modeling logic.
+### 3. Data Privacy & Consent
+- **Local-First Analysis**: We strongly recommend using **Ollama** for local-only analysis of sensitive systems.
+- **Mandatory Consent**: A "Data Privacy Acknowledgement" is triggered before any architectural data is sent to cloud-based AI providers (e.g., Google Gemini).
+- **Log Redaction**: ThreatPilot automatically redacts identified API keys and secrets from application logs and error traces.
 
-- **Project Isolation**  
-  Every project lives in its own folder. Sensitive files (`project.json`, `threats.json`, diagrams) are isolated and excluded from version control.
-
-- **Export Safety**  
-  Excel exports sanitize formulas (`=`, `+`, `-`, `@` prefixed) to prevent formula injection.
-
-- **Dependency Management**  
-  All dependencies are **strictly pinned** in `requirements.txt`. Regular updates are performed to address upstream vulnerabilities.
-
-## Dependency Updates & Supply-Chain Security
-
-- We use exact version pins (`==`) to prevent unexpected updates.
-- `requirements.txt` is updated whenever new security patches are available.
-- OpenCV, cryptography, PySide6, and other core libraries are actively maintained and pinned to known-safe versions.
-
-## Known Limitations (Low Risk)
-
-- As a desktop tool, large malicious diagrams could theoretically cause high CPU/memory usage (standard computer-vision risk). The app runs locally and under user control.
-- LLM-based analysis inherits standard prompt-injection risks, but output parsing is hardened to mitigate malformed responses.
-- No remote code execution, network listeners, or database is present.
-
-## How to Run Securely
-
-1. Use the provided `run_threatpilot.bat` (Windows) or create a clean virtual environment.
-2. Never share your `config.env` or run the app on untrusted machines.
-3. Keep your OS credential manager (Keychain / Windows Credential Manager) protected.
-4. Update dependencies regularly: `pip install -r requirements.txt --upgrade`.
+### 4. Export Security
+- **Excel Formula Injection**: All Excel exports are sanitized to prevent CSV/Formula injection by escaping leading control characters (`=`, `+`, `-`, `@`).
+- **Markdown Integrity**: Markdown exports are sanitized to prevent structural injection and ensure report fidelity.
 
 ---
 
-Thank you for helping keep ThreatPilot secure!  
+## Supported Versions
+
+Currently, security updates are provided for the latest stable release of ThreatPilot.
+
+| Version | Supported |
+| ------- | --------- |
+| 1.0.x   | ✅ Yes    |
+| <= 0.5  | ❌ No     |
+
+---
+
+## Best Practices for Users
+- **Use Local Models**: For highly sensitive architecture, always use a local Ollama instance.
+- **Rotate Keys**: Regularly rotate your AI provider API keys.
+- **Session Keys**: In shared environments, use the `THREATPILOT_MASTER_KEY` environment variable rather than relying on the machine-bound OS keyring.

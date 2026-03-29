@@ -96,28 +96,28 @@ _PROJECT_FILE = "project.json"
 
 
 def create_project(project_name: str, parent_dir: str | Path | None = None) -> Project:
-    """Create a new ThreatPilot project.
-
-    A new directory named after a generated UUID is created under
-    *parent_dir* (defaults to the current working directory).  Inside the
-    directory a ``project.json`` file is written with the initial project
-    metadata.
-
-    Args:
-        project_name: Human-readable name for the project.
-        parent_dir: Parent directory for the project folder.  When
-            ``None`` the current working directory is used.
-
-    Returns:
-        The newly created ``Project`` instance.
-
-    Raises:
-        OSError: If the project directory cannot be created.
-    """
+    """Create a new ThreatPilot project. (M.4)"""
     if parent_dir is None:
         parent_dir = Path.cwd()
     else:
-        parent_dir = Path(parent_dir)
+        parent_dir = Path(parent_dir).resolve() # Normalize path (M.4)
+
+    # Path Traversal Protection: Block system-sensitive folders (M.4)
+    path_str = str(parent_dir).lower()
+    
+    # 1. Block known system folders
+    restricted_keywords = ["windows", "system32", "program files", "programdata", "etc", "var", "usr", "bin", "sbin", "tmp"]
+    for kw in restricted_keywords:
+        if f"\\{kw}" in path_str or f"/{kw}" in path_str or path_str.endswith(f"\\{kw}") or path_str.endswith(f"/{kw}"):
+            raise ValueError(f"Restricted directory detected: '{kw}'. Please choose a different workspace.")
+
+    # 2. Block direct drive roots (e.g., C:\)
+    if len(parent_dir.parts) <= 1:
+        raise ValueError("Cannot create projects directly in the drive root. Please choose a sub-folder.")
+
+    # 3. Block user-sensitive shared roots
+    if path_str.endswith(":\\"):
+        raise ValueError("Drive root detected. Please choose a specific user subdirectory.")
 
     project_id = uuid.uuid4().hex
     now = datetime.now(timezone.utc).isoformat()

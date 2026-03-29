@@ -12,7 +12,7 @@ from __future__ import annotations
 from enum import Enum, auto
 from typing import Any
 
-from PySide6.QtCore import Qt, QPointF, QRectF, Signal
+from PySide6.QtCore import Qt, QPointF, QRectF, QTimer, Signal
 from PySide6.QtGui import (
     QBrush,
     QColor,
@@ -140,7 +140,6 @@ class DiagramCanvas(QGraphicsView):
         """Ensure the diagram is fitted to screen once the window is shown."""
         super().showEvent(event)
         # Delay slightly to ensure layout is truly stable
-        from PySide6.QtCore import QTimer
         QTimer.singleShot(100, self.fit_to_screen)
 
     # ------------------------------------------------------------------

@@ -72,20 +72,27 @@ python main.py
 
 ## Security & Privacy
 
-### API Key Management
-ThreatPilot prioritizes the security of your credentials:
-- **AES-128 Encryption**: API keys are encrypted using **Fernet** before storage.
-- **Hardware-Bound Keys**: The master encryption key is stored in your OS's native **Credential Manager** via `keyring`.
+### API Key Management & Encryption
+ThreatPilot implements industry-standard protection for your credentials:
+- **PBKDF2 Key Derivation**: Master keys are derived using **PBKDF2 with 100,000 iterations** and SHA-256.
+- **Hardware-Bound & Session Keys**: Supports both OS-native **Credential Manager** (via `keyring`) for usability and the `THREATPILOT_MASTER_KEY` environment variable for high-security, session-based key rotation.
+- **AES-128 Encryption**: Sensitive API keys are encrypted using **Fernet (AES-CBC)** before being stored in `config.env`.
+
+### AI Interaction Security
+- **Injection Protection**: XML-style delimiters and metadata sanitization prevent "jailbreaking" through architectural descriptions or custom prompts.
+- **SSRF Defense**: Strict validation of AI endpoint URLs to block access to internal metadata services and private network ranges.
+- **Secure Transmission**: Uses the `x-goog-api-key` header for Gemini requests, preventing key exposure in URL logs or proxy history.
 
 ### Data Privacy
 - **Local Analysis**: Using the **Ollama** provider ensures that your architecture diagrams and threat models never leave your local machine.
-- **Masked Logs**: Application logs automatically redact identified API keys to prevent accidental exposure.
+- **Privacy Acknowledgement**: Mandatory user consent before transmitting any data to cloud AI providers (e.g., Gemini).
+- **Masked Logs**: Application logs and error traces automatically redact identified API keys and sensitive credentials.
 
 ---
 
 ## Design Philosophy
 ThreatPilot is built on a **Modular Domain-Driven Architecture**. Each core package—`ai`, `detection`, `risk`, `core`, and `ui`—is isolated, making it easy to add new AI backends or export formats without side effects.
 
-Detailed developer documentation: [Architecture Overview](./architecture.md).
+Detailed developer documentation: [Architecture Overview](./ARCHITECTURE.md).
 
 ---

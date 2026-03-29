@@ -15,12 +15,13 @@ def export_to_excel(project: Project, output_path: str | Path) -> None:
     """Generate a high-fidelity 8-tab Risk Assessment Excel workbook without using pandas."""
     
     def sanitize_excel(val):
-        """Prevent Excel formula injection and handle None values."""
+        """Prevent Excel formula injection and handle None values (M.1)."""
         if not val:
             return ""
-        str_val = str(val)
-        if str_val.startswith(('=', '+', '-', '@')):
-            return f"'{str_val}"
+        str_val = str(val).strip()
+        # OWASP recommendation: Escape =, +, -, @, \t, \r, and `
+        if str_val.startswith(('=', '+', '-', '@', '\t', '\r', '`')):
+            return f" '{str_val}" 
         return str_val
 
     wb = Workbook()

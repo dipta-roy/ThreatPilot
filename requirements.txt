@@ -1,20 +1,11 @@
 # ThreatPilot - External Dependencies
 # Python 3.11+
 
-# UI framework
-PySide6>=6.5
-
-# Data validation
-pydantic>=2.0
-
-# Image handling & Excel support
-Pillow>=10.0
-
-# AI communication
-httpx>=0.25
-cryptography>=41.0
-keyring>=24.2
-python-dotenv>=1.0
-
-# Export
-openpyxl>=3.1
+PySide6==6.5.3
+pydantic==2.5.2
+Pillow==10.1.0
+httpx==0.25.2
+cryptography==42.0.5
+keyring==24.3.0
+python-dotenv==1.0.0
+openpyxl==3.1.2

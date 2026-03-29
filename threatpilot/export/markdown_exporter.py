@@ -12,31 +12,33 @@ from pathlib import Path
 from threatpilot.core.project_manager import Project
 
 
+def sanitize_md(text: str | None) -> str:
+    """Escape Markdown special characters and handle newlines (L.1)."""
+    if not text:
+        return ""
+    # Remove newlines to prevent structural breakout
+    str_val = str(text).replace("\n", " ").replace("\r", " ").strip()
+    
+    # Escape Markdown special characters: \, `, *, _, {, }, [, ], (, ), #, +, -, ., !
+    escape_chars = r"\\`*_{}[]()#+-.!"
+    for char in escape_chars:
+        str_val = str_val.replace(char, f"\\{char}")
+    return str_val
+
 def export_to_markdown(project: Project, output_path: str | Path) -> None:
-    """Generate a comprehensive Markdown threat model report.
-
-    Includes project metadata, industry context, STRIDE analysis methodology,
-    and a detailed registry of identified threats.
-
-    Args:
-        project: The complete Project instance.
-        output_path: Path where the .md file will be saved.
-
-    Raises:
-        OSError: If the file cannot be written to disk.
-    """
+    """Generate a comprehensive Markdown threat model report (L.1)."""
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     lines = [
-        f"# ThreatPilot Security Analysis Report: {project.project_name}",
+        f"# ThreatPilot Security Analysis Report: {sanitize_md(project.project_name)}",
         f"*Generated on: {now}*",
         "",
         "## 1. Project Overview",
-        f"- **Project Name:** {project.project_name}",
+        f"- **Project Name:** {sanitize_md(project.project_name)}",
         f"- **Created:** {project.created_at}",
-        f"- **Industry Context:** {project.prompt_config.industry_context or 'General'}",
-        f"- **Security Posture:** {project.prompt_config.security_posture}",
-        f"- **Risk Preference:** {project.prompt_config.risk_preference}",
+        f"- **Industry Context:** {sanitize_md(project.prompt_config.industry_context or 'General')}",
+        f"- **Security Posture:** {sanitize_md(project.prompt_config.security_posture)}",
+        f"- **Risk Preference:** {sanitize_md(project.prompt_config.risk_preference)}",
         "",
         "## 2. Threat Analysis Methodology",
         "The system was analyzed using the **STRIDE** methodology. "
@@ -81,10 +83,14 @@ def export_to_markdown(project: Project, output_path: str | Path) -> None:
                     for name in names:
                         for c in project.components:
                             if c.name == name:
-                                comp_details.append(f"{c.name} ({c.element_classification} / {c.asset_classification})")
+                                # Sanitize names that might contain MD injection
+                                s_name = sanitize_md(c.name)
+                                s_el = sanitize_md(c.element_classification)
+                                s_as = sanitize_md(c.asset_classification)
+                                comp_details.append(f"{s_name} ({s_el} / {s_as})")
                                 break
                 
-                lines.append(f"#### {status} {t.title}")
+                lines.append(f"#### {status} {sanitize_md(t.title)}")
                 lines.append(f"- **Risk Level:** {severity} (Score: {t.cvss_score})")
                 lines.append(f"- **Likelihood:** {t.likelihood}/5")
                 if t.cvss_vector:
@@ -93,16 +99,16 @@ def export_to_markdown(project: Project, output_path: str | Path) -> None:
                 if comp_details:
                     lines.append(f"- **Affected Assets:** {', '.join(comp_details)}")
                 elif t.affected_components:
-                    lines.append(f"- **Affected Components:** {t.affected_components}")
+                    lines.append(f"- **Affected Components:** {sanitize_md(t.affected_components)}")
                 
-                lines.append(f"- **Description:** {t.description}")
+                lines.append(f"- **Description:** {sanitize_md(t.description)}")
                 if t.vulnerabilities:
-                    lines.append(f"- **Vulnerabilities:** {t.vulnerabilities}")
-                lines.append(f"- **Impact:** {t.impact}")
-                lines.append(f"- **Mitigation Strategy:** {t.mitigation}")
+                    lines.append(f"- **Vulnerabilities:** {sanitize_md(t.vulnerabilities)}")
+                lines.append(f"- **Impact:** {sanitize_md(t.impact)}")
+                lines.append(f"- **Mitigation Strategy:** {sanitize_md(t.mitigation)}")
                 
                 if t.is_accepted_risk and t.acceptance_justification:
-                    lines.append(f"- **Acceptance Rationale:** {t.acceptance_justification}")
+                    lines.append(f"- **Acceptance Rationale:** {sanitize_md(t.acceptance_justification)}")
                 lines.append("")
 
     lines.append("---")

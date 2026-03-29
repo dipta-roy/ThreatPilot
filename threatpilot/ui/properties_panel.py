@@ -6,6 +6,7 @@ currently selected architectural item (Component, Flow, or Trust Boundary).
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
@@ -23,7 +24,9 @@ from PySide6.QtWidgets import (
 )
 
 from threatpilot.core.domain_models import Component, Flow, TrustBoundary
-from threatpilot.core.threat_model import Threat
+from threatpilot.core.threat_model import Threat, STRIDECategory
+from threatpilot.ui.cvss_dialog import CVSSCalculatorDialog
+from threatpilot.utils.logger import sanitize_text
 
 
 class PropertiesPanel(QWidget):
@@ -80,8 +83,19 @@ class PropertiesPanel(QWidget):
         self._container = QWidget()
         self._form_layout = QFormLayout(self._container)
         scroll.setWidget(self._container)
-
+        
         self._tabs.addTab(self._prop_widget, "Element Attributes")
+
+        # Security Warning for generated content
+        self._security_warning = QLabel(
+            "⚠️ Security Advisory: All AI-generated mitigations and descriptions should be verified "
+            "by a security professional before implementation."
+        )
+        self._security_warning.setWordWrap(True)
+        self._security_warning.setStyleSheet("color: #d73a49; font-style: italic; font-size: 10px; margin: 4px;")
+        self._security_warning.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._security_warning.setVisible(False)
+        prop_layout.addWidget(self._security_warning)
 
         # --- Tab 2: AI Activity Logs ---
         self._log_view = QTextEdit()
@@ -101,7 +115,6 @@ class PropertiesPanel(QWidget):
 
     def append_log(self, text: str, category: str = "INFO") -> None:
         """Add a timestamped entry to the AI Activity Log tab."""
-        from datetime import datetime
         time_str = datetime.now().strftime("%H:%M:%S")
         
         is_dark = getattr(self, "_is_dark_theme", True)
@@ -114,7 +127,8 @@ class PropertiesPanel(QWidget):
             color = "#0969da" if "PROMPT" in category else "#1a7f37" if "RESPONSE" in category else "#57606a"
             time_color = "#8b949e"
         
-        log_entry = f"<span style='color: {time_color};'>[{time_str}]</span> <b style='color: {color};'>{category}</b>: {text}<br>"
+        sanitized_text = sanitize_text(text)
+        log_entry = f"<span style='color: {time_color};'>[{time_str}]</span> <b style='color: {color};'>{category}</b>: {sanitized_text}<br>"
         self._log_view.append(log_entry)
         # Scroll to bottom
         self._log_view.verticalScrollBar().setValue(self._log_view.verticalScrollBar().maximum())
@@ -134,7 +148,15 @@ class PropertiesPanel(QWidget):
 
         if item is None:
             self._header.setText("No selection")
+            self._security_warning.setVisible(False)
             return
+
+        # Show warning if the item came from AI or is a Threat
+        from threatpilot.core.threat_model import Threat
+        if isinstance(item, Threat):
+            self._security_warning.setVisible(True)
+        else:
+            self._security_warning.setVisible(False)
 
         # Build dynamic form based on type
         if isinstance(item, Component):
@@ -167,7 +189,6 @@ class PropertiesPanel(QWidget):
             self._header.setText("Threat Details")
             self._add_text_row("Title:", "title", item.title)
             
-            from threatpilot.core.threat_model import STRIDECategory
             self._add_combo_row("Category:", "category", item.category.value, [c.value for c in STRIDECategory])
             
             self._add_textarea_row("Description:", "description", item.description)
@@ -180,6 +201,8 @@ class PropertiesPanel(QWidget):
             self._add_text_row("CVSS Vector:", "cvss_vector", item.cvss_vector)
             
             self._add_textarea_row("Affected Components:", "affected_components", item.affected_components)
+            self._add_text_row("Affected Element:", "affected_element", item.affected_element)
+            self._add_text_row("Affected Asset:", "affected_asset", item.affected_asset)
             self._add_checkbox_row("Accepted Risk:", "is_accepted_risk", item.is_accepted_risk)
             self._add_textarea_row("Acceptance Rationale:", "acceptance_justification", item.acceptance_justification)
             self._add_readonly_row("Threat ID:", item.threat_id)
@@ -208,7 +231,6 @@ class PropertiesPanel(QWidget):
             edit.setObjectName("cvss_vector_edit")
             
             def launch_calc():
-                from threatpilot.ui.cvss_dialog import CVSSCalculatorDialog
                 dialog = CVSSCalculatorDialog(edit.text(), self)
                 if dialog.exec():
                     score, vector = dialog.get_result()
@@ -272,7 +294,6 @@ class PropertiesPanel(QWidget):
             
             # Special case for STRIDE Category enum
             if field == "category":
-                from threatpilot.core.threat_model import STRIDECategory
                 for cat in STRIDECategory:
                     if cat.value == value:
                         value = cat

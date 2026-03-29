@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, SecretStr
 import dotenv
 
 from threatpilot.utils.crypto_utils import encrypt_api_key, decrypt_api_key
@@ -35,22 +35,26 @@ class AIConfig(BaseModel):
     temperature: float = 0.7
     max_tokens: int = 8192
     timeout: int = 120
-    gemini_api_key: str = ""
+    gemini_api_key: SecretStr = SecretStr("")
+    autosave_interval: int = 5
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(
+        extra="ignore",
+        protected_namespaces=(),
+    )
 
     @property
     def api_key(self) -> str:
         """Helper to get the appropriate API key based on provider type."""
         if self.provider_type == "gemini":
-            return self.gemini_api_key
+            return self.gemini_api_key.get_secret_value()
         return ""
 
     @api_key.setter
     def api_key(self, value: str) -> None:
         """Helper to set the API key for the current provider."""
         if self.provider_type == "gemini":
-            self.gemini_api_key = value
+            self.gemini_api_key = SecretStr(value)
 
     @classmethod
     def load(cls) -> AIConfig:
@@ -86,7 +90,8 @@ class AIConfig(BaseModel):
             temperature=float(get_opt("AI_TEMPERATURE", "0.7")),
             max_tokens=int(get_opt("AI_MAX_TOKENS", "8192")),
             timeout=int(get_opt("AI_TIMEOUT", "120")),
-            gemini_api_key=scrub_key(decrypt_api_key(get_opt("GEMINI_API_KEY", ""))),
+            autosave_interval=int(get_opt("AUTOSAVE_INTERVAL", "5")),
+            gemini_api_key=SecretStr(scrub_key(decrypt_api_key(get_opt("GEMINI_API_KEY", "")))),
         )
         
         # Register keys for log redaction
@@ -105,10 +110,12 @@ class AIConfig(BaseModel):
         dotenv.set_key(_ENV_FILE, "AI_TEMPERATURE", str(self.temperature))
         dotenv.set_key(_ENV_FILE, "AI_MAX_TOKENS", str(self.max_tokens))
         dotenv.set_key(_ENV_FILE, "AI_TIMEOUT", str(self.timeout))
+        dotenv.set_key(_ENV_FILE, "AUTOSAVE_INTERVAL", str(self.autosave_interval))
         
         # Only write non-empty keys
-        if self.gemini_api_key:
-            dotenv.set_key(_ENV_FILE, "GEMINI_API_KEY", encrypt_api_key(self.gemini_api_key))
+        api_key_str = self.gemini_api_key.get_secret_value()
+        if api_key_str:
+            dotenv.set_key(_ENV_FILE, "GEMINI_API_KEY", encrypt_api_key(api_key_str))
         elif os.getenv("GEMINI_API_KEY"):
             dotenv.unset_key(_ENV_FILE, "GEMINI_API_KEY")
 

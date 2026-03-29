@@ -10,20 +10,23 @@ from typing import Optional
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
+    QDialog,
+    QHBoxLayout,
     QHeaderView,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
-    QHBoxLayout,
     QWidget,
-    QLabel,
-    QPushButton,
-    QLineEdit,
 )
 
 from threatpilot.core.project_manager import Project
-from threatpilot.core.threat_model import Threat
+from threatpilot.core.threat_model import Threat, STRIDECategory
 from threatpilot.risk.cvss_calculator import get_cvss_severity
+from threatpilot.ui.threat_edit_dialog import ThreatEditDialog
 
 
 class RiskAssessmentPanel(QWidget):
@@ -261,9 +264,6 @@ class RiskAssessmentPanel(QWidget):
 
     def _edit_threat(self, threat: Threat) -> None:
         """Open the edit dialog for the selected threat."""
-        from threatpilot.ui.threat_edit_dialog import ThreatEditDialog
-        from PySide6.QtWidgets import QDialog
-        
         if self._project:
             component_names = [c.name for c in self._project.components]
             component_names.extend([f.name for f in self._project.flows])
@@ -277,7 +277,6 @@ class RiskAssessmentPanel(QWidget):
         if not self._project or not self._project.threat_register:
             return
             
-        from threatpilot.core.threat_model import Threat, STRIDECategory
         new_threat = Threat(title="New Identified Risk", category=STRIDECategory.TAMPERING)
         self._project.threat_register.add_threat(new_threat)
         self.refresh()
@@ -286,7 +285,6 @@ class RiskAssessmentPanel(QWidget):
 
     def _delete_threat(self, threat_id: str) -> None:
         """Delete the specified threat after confirmation."""
-        from PySide6.QtWidgets import QMessageBox
         reply = QMessageBox.question(
             self,
             "Delete Threat",

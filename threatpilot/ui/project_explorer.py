@@ -10,14 +10,15 @@ Supports diagram management: rename, double-click to view.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import cast
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import (
     QInputDialog,
-    QMessageBox,
     QMenu,
+    QMessageBox,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -25,11 +26,10 @@ from PySide6.QtWidgets import (
 )
 
 from threatpilot.core.diagram_model import Diagram
+from threatpilot.core.project_manager import Project
 from threatpilot.utils.logger import get_logger
 
 logger = get_logger(__name__)
-
-from threatpilot.core.project_manager import Project
 
 
 class ProjectExplorer(QWidget):
@@ -196,7 +196,6 @@ class ProjectExplorer(QWidget):
         if reply == QMessageBox.StandardButton.Yes:
             if self._project and diag in self._project.diagrams:
                 # Physically delete the file
-                from pathlib import Path
                 full_path = Path(self._project.project_path) / diag.file_path
                 if full_path.exists():
                     try:

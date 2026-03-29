@@ -146,6 +146,7 @@ QPushButton:hover {
 /* 9. Trees, Lists, and Tables */
 QTreeWidget, QListWidget, QTableWidget {
     background-color: #0d1117;
+    alternate-background-color: #161b22;
     color: #c9d1d9;
     font-size: 13px;
     selection-background-color: #1f6feb;

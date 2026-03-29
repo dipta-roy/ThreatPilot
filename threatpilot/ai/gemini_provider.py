@@ -6,11 +6,12 @@ using the 'gemini' model family with automated API version fallback.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import httpx
 import json
-import socket
 import logging
+import socket
 from typing import Any, Dict, Optional
 
 from threatpilot.ai.ai_provider_interface import AIProviderInterface
@@ -129,19 +130,23 @@ class GeminiProvider(AIProviderInterface):
         
         if custom_endpoint and custom_endpoint != "http://localhost:11434":
             if ":generateContent" in custom_endpoint:
-                sep = "&" if "?" in custom_endpoint else "?"
-                urls_to_try = [f"{custom_endpoint}{sep}key={api_key}"]
+                urls_to_try = [custom_endpoint]
             else:
                 host = custom_endpoint.rstrip("/")
                 urls_to_try = [
-                    f"{host}/v1/models/{model}:generateContent?key={api_key}",
-                    f"{host}/v1beta/models/{model}:generateContent?key={api_key}"
+                    f"{host}/v1beta/models/{model}:generateContent",
+                    f"{host}/v1/models/{model}:generateContent"
                 ]
         else:
             urls_to_try = [
-                f"{self._api_host}/v1/models/{model}:generateContent?key={api_key}",
-                f"{self._api_host}/v1beta/models/{model}:generateContent?key={api_key}"
+                f"{self._api_host}/v1beta/models/{model}:generateContent",
+                f"{self._api_host}/v1/models/{model}:generateContent"
             ]
+            
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": api_key
+        }
             
         for url in urls_to_try:
             response = None
@@ -149,10 +154,9 @@ class GeminiProvider(AIProviderInterface):
                 async with httpx.AsyncClient(timeout=self.config.timeout) as client:
                     # Implement robust retry loop for 5xx Server Errors (like 503 Service Unavailable)
                     retries = 3
-                    import asyncio
                     for attempt in range(retries):
                         logger.debug(f"Sending request to Gemini: {url}")
-                        response = await client.post(url, json=payload)
+                        response = await client.post(url, json=payload, headers=headers)
                         
                         # If the server is temporarily unavailable or overloaded, back off and retry
                         if response.status_code in [500, 502, 503, 504] and attempt < retries - 1:
