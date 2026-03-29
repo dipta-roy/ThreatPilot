@@ -66,7 +66,6 @@ python main.py
 - **AI Orchestration**: Custom asynchronous interface supporting Ollama and Gemini.
 - **Networking**: HTTPX.
 - **Exporting**: OpenPyXL (Native Excel generation).
-- **Build System**: cx_Freeze optimized for lean MSI installers (~200MB).
 
 ---
 

@@ -86,9 +86,15 @@ A sophisticated pipeline that transforms architectural diagrams into structured 
 | **Language** | Python 3.11+ |
 | **GUI Framework** | PySide6 (Qt 6) |
 | **Data Validation** | Pydantic v2 |
+<<<<<<< HEAD
 | **AI Integration** | Custom HTTPX-based providers (Gemini, Ollama) |
 | **Encryption** | Cryptography.io (Fernet, PBKDF2) |
 | **Export Formats** | Excel (OpenPyXL), Markdown, Diagram Images |
+=======
+| **AI Integration** | Ollama Local AI, Google Generative AI|
+| **Environment** | python-dotenv |
+| **Export Formats** | Excel (XLSX), Reports (Markdown/PDF) |
+>>>>>>> e8d088a164bdc8952c0ea5c0e52e3f457e81399f
 
 ---
 
