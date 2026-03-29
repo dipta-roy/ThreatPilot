@@ -82,7 +82,7 @@ A sophisticated pipeline that transforms architectural diagrams into structured 
 | **Language** | Python 3.10+ |
 | **GUI Framework** | PyQt6 / PySide6 |
 | **Data Validation** | Pydantic v2 |
-| **AI Integration** | Google Generative AI, Anthropic SDK |
+| **AI Integration** | Ollama Local AI, Google Generative AI|
 | **Environment** | python-dotenv |
 | **Export Formats** | Excel (XLSX), Reports (Markdown/PDF) |
 
