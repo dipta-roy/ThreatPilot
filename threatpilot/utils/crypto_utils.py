@@ -11,11 +11,7 @@ import keyring
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-
 import os
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.backends import default_backend
 
 SERVICE_NAME = "ThreatPilot"
 KEY_ID = "MasterEncryptionKey"
@@ -35,8 +31,7 @@ def _get_or_create_master_key() -> str:
             algorithm=hashes.SHA256(),
             length=32,
             salt=SALT,
-            iterations=100000,
-            backend=default_backend()
+            iterations=100000
         )
         derived_key = base64.urlsafe_b64encode(kdf.derive(str(source_entropy).encode('utf-8')))
         return derived_key.decode('utf-8')
@@ -52,8 +47,7 @@ def _get_or_create_master_key() -> str:
             algorithm=hashes.SHA256(),
             length=32,
             salt=SALT,
-            iterations=100000,
-            backend=default_backend()
+            iterations=100000
         )
         derived_key = base64.urlsafe_b64encode(kdf.derive(str(source_entropy).encode('utf-8')))
         raw_key = derived_key.decode('utf-8')
