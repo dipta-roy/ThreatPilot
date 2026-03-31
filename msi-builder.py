@@ -52,7 +52,7 @@ build_exe_options = {
         "os", "sys", "threatpilot", "threatpilot.ai", "threatpilot.ui", 
         "threatpilot.core", "threatpilot.utils", "threatpilot.detection",
         "threatpilot.config", "threatpilot.export", "threatpilot.risk",
-        "pydantic", "pydantic_core", "httpx", "cryptography", "keyring", 
+        "pydantic", "pydantic_core", "httpx", "cryptography", "keyring", "shiboken6",
         "dotenv", "openpyxl", "certifi", "anyio", "idna", "sniffio", "httpcore",
         "PIL", "PySide6.QtCore", "PySide6.QtGui", "PySide6.QtWidgets", 
         "PySide6.QtNetwork", "PySide6.QtPrintSupport", "PySide6.QtXml", "PySide6.QtSvg"
@@ -121,9 +121,9 @@ shortcut_table = [
 bdist_msi_options = {
     "upgrade_code": "{A0B1C2D3-E4F5-6A7B-8C9D-0E1F2A3B4C5D}", 
     "add_to_path": True,
-    "initial_target_dir": r"[ProgramFilesFolder]\ThreatPilot",
+    "initial_target_dir": r"[LocalAppDataFolder]\ThreatPilot",
     "data": {"Shortcut": shortcut_table},
-    "all_users": True,
+    "all_users": False, # Allows installation without admin privileges
     "install_icon": str(icon_ico) if icon_ico.exists() else None,
 }
 
@@ -141,7 +141,8 @@ setup(
             script="main.py",
             base=base,
             target_name="ThreatPilot.exe",
-            icon=str(icon_ico) if icon_ico.exists() else None
+            icon=str(icon_ico) if icon_ico.exists() else None,
+            uac_admin=False # Ensure the EXE itself doesn't trigger UAC prompt
         )
     ]
 )

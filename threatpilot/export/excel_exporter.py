@@ -8,6 +8,7 @@ from openpyxl.drawing.image import Image
 from threatpilot.core.project_manager import Project
 from threatpilot.core.threat_model import Threat
 from threatpilot.risk.cvss_calculator import get_cvss_severity
+from threatpilot.ai.response_parser import convert_reasoning_to_markdown
 
 logger = logging.getLogger(__name__)
 
@@ -68,10 +69,14 @@ def export_to_excel(project: Project, output_path: str | Path) -> None:
     for cell in ws_elem[1]: cell.font = header_font
     
     for c in project.components:
+         # Use actual description if provided, otherwise fallback to system default (X.1)
+         raw_desc = c.description.strip() if c.description else ""
+         final_desc = raw_desc if raw_desc else f"Detected {c.element_classification} in architecture blueprint."
+         
          ws_elem.append([
              sanitize_excel(c.name),
              sanitize_excel(c.element_classification),
-             sanitize_excel(f"Detected {c.element_classification} in architecture blueprint.")
+             sanitize_excel(final_desc)
          ])
 
     # --- TAB 4: System Assets ---
@@ -80,10 +85,14 @@ def export_to_excel(project: Project, output_path: str | Path) -> None:
     for cell in ws_asset[1]: cell.font = header_font
     
     for c in project.components:
+         # Use actual description if provided, otherwise fallback to system default (X.1)
+         raw_desc = c.description.strip() if c.description else ""
+         final_desc = raw_desc if raw_desc else f"Identified {c.asset_classification} asset for security analysis."
+         
          ws_asset.append([
              sanitize_excel(c.name),
              sanitize_excel(c.asset_classification),
-             sanitize_excel(f"Identified {c.asset_classification} asset for security analysis.")
+             sanitize_excel(final_desc)
          ])
 
     # --- TAB 5: STRIDE Threats ---
@@ -114,9 +123,10 @@ def export_to_excel(project: Project, output_path: str | Path) -> None:
     # --- TAB 7: Risk Assessment ---
     ws_risk = wb.create_sheet("Risk Assessment")
     headers_risk = [
-        "Risk ID", "Element Component Name", "Asset Component Name", 
+        "Risk ID", "Element Name", "Asset Name", 
         "Threats", "Vulnerabilities", "Description", "Impact", 
-        "CVSS Vector (3.1)", "Likelihood", "Severity", "Mitigation Strategy"
+        "CVSS Vector (3.1)", "Likelihood", "Severity", "Mitigation Strategy",
+        "MITRE ATT&CK ID", "MITRE Technique", "XAI Reasoning"
     ]
     ws_risk.append(headers_risk)
     for cell in ws_risk[1]: cell.font = header_font
@@ -132,10 +142,14 @@ def export_to_excel(project: Project, output_path: str | Path) -> None:
         severity_label = get_cvss_severity(t.cvss_score)
         severity_full = f"{severity_label} ({t.cvss_score})"
         
+        # Use element and asset name if they are set, otherwise fall back to affected_components (matching UI)
+        elem_name = t.affected_element or t.affected_components or "N/A"
+        asset_name = t.affected_asset or t.affected_components or "N/A"
+        
         ws_risk.append([
             i + 1,
-            sanitize_excel(t.affected_components or "N/A"),
-            sanitize_excel(t.affected_components or "N/A"),
+            sanitize_excel(elem_name),
+            sanitize_excel(asset_name),
             sanitize_excel(t.title),
             sanitize_excel(t.vulnerabilities),
             sanitize_excel(t.description),
@@ -143,7 +157,10 @@ def export_to_excel(project: Project, output_path: str | Path) -> None:
             str(t.cvss_vector or "N/A"),
             f"{t.likelihood}/5",
             severity_full,
-            sanitize_excel(t.mitigation)
+            sanitize_excel(t.mitigation),
+            sanitize_excel(t.mitre_attack_id or "N/A"),
+            sanitize_excel(t.mitre_attack_technique or "N/A"),
+            sanitize_excel(convert_reasoning_to_markdown(t.reasoning or "N/A", markdown=False))
         ])
         
         # Style Severity cell (Col J - index 10)

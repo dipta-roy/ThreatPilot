@@ -67,3 +67,17 @@ class DeleteFlowCommand(QUndoCommand):
     def undo(self):
         if self.index >= 0:
             self.project.flows.insert(self.index, self.flow)
+class PropertyUpdateCommand(QUndoCommand):
+    """Generic command for updating a property of any object."""
+    def __init__(self, target_obj: Any, field: str, old_val: Any, new_val: Any, description: str = "Update Property"):
+        super().__init__(f"{description} ({field})")
+        self.target_obj = target_obj
+        self.field = field
+        self.old_val = old_val
+        self.new_val = new_val
+
+    def redo(self):
+        setattr(self.target_obj, self.field, self.new_val)
+
+    def undo(self):
+        setattr(self.target_obj, self.field, self.old_val)

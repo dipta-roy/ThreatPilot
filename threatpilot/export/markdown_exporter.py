@@ -10,18 +10,25 @@ from datetime import datetime
 from pathlib import Path
 
 from threatpilot.core.project_manager import Project
+from threatpilot.ai.response_parser import convert_reasoning_to_markdown
 
 
-def sanitize_md(text: str | None) -> str:
-    """Escape Markdown special characters and handle newlines (L.1)."""
+def sanitize_md(text: str | None, preserve_newlines: bool = False) -> str:
+    """Escape Markdown special characters. If preserve_newlines is False, collapse to single line."""
     if not text:
         return ""
-    # Remove newlines to prevent structural breakout
-    str_val = str(text).replace("\n", " ").replace("\r", " ").strip()
     
-    # Escape Markdown special characters: \, `, *, _, {, }, [, ], (, ), #, +, -, ., !
+    str_val = str(text).strip()
+    if not preserve_newlines:
+        str_val = str_val.replace("\n", " ").replace("\r", " ").strip()
+    
+    # Escape characters that have structural meaning in Markdown
+    # We escape broadly to prevent raw input from breaking report layout
+    # but for reasoning/description we should be more careful.
     escape_chars = r"\\`*_{}[]()#+-.!"
     for char in escape_chars:
+        # Don't escape # or * if we're in a multi-line "long text" block (preserving some MD)
+        if preserve_newlines and char in "#*>-": continue 
         str_val = str_val.replace(char, f"\\{char}")
     return str_val
 
@@ -96,6 +103,9 @@ def export_to_markdown(project: Project, output_path: str | Path) -> None:
                 if t.cvss_vector:
                     lines.append(f"- **CVSS Vector:** `{t.cvss_vector}`")
                 
+                if t.mitre_attack_id:
+                    lines.append(f"- **MITRE ATT&CK:** {sanitize_md(t.mitre_attack_id)} ({sanitize_md(t.mitre_attack_technique)})")
+                
                 if comp_details:
                     lines.append(f"- **Affected Assets:** {', '.join(comp_details)}")
                 elif t.affected_components:
@@ -109,6 +119,20 @@ def export_to_markdown(project: Project, output_path: str | Path) -> None:
                 
                 if t.is_accepted_risk and t.acceptance_justification:
                     lines.append(f"- **Acceptance Rationale:** {sanitize_md(t.acceptance_justification)}")
+                
+                if t.reasoning:
+                    lines.append("- **XAI Reasoning:**")
+                    # Convert raw JSON/Dict to Markdown paragraphs using the shared utility
+                    md_reasoning = convert_reasoning_to_markdown(t.reasoning)
+                    
+                    # Indent and prepend '>' for blockquote look
+                    reasoning_lines = md_reasoning.splitlines()
+                    for r_line in reasoning_lines:
+                        if r_line.strip():
+                            lines.append(f"  > {r_line.strip()}")
+                        else:
+                            lines.append("  >")
+                
                 lines.append("")
 
     lines.append("---")

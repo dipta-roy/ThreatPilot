@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QWizardPage,
     QDialog,
     QTabWidget,
+    QTextEdit,
 )
 
 from threatpilot.core.diagram_model import Diagram
@@ -79,6 +80,7 @@ class AnalysisWorker(QThread):
     """
     finished = Signal(object)  # ThreatRegister
     failed = Signal(str)      # Error message
+    partial_result_ready = Signal(object)
     prompt_ready = Signal(str)
     response_ready = Signal(str)
     request_segment_continuation = Signal(int, int) # (current, total)
@@ -107,11 +109,6 @@ class AnalysisWorker(QThread):
             asyncio.set_event_loop(loop)
             
             analyzer = ThreatAnalyzer(self.provider, self.prompt_config)
-            
-            # Capture the prompt for logging
-            system_p = analyzer.builder.build_system_prompt()
-            user_p = analyzer.builder.build_user_prompt(self.dfd, self.system_name)
-            self.prompt_ready.emit(f"SYSTEM: {system_p}\n\nUSER: {user_p}")
 
             async def progress_cb(current, total):
                 self._continue_event.clear()
@@ -120,18 +117,34 @@ class AnalysisWorker(QThread):
                 self._continue_event.wait()
                 return self._should_continue_result
 
+            # Execute the multi-segment logic (H.1)
             register, raw_resp, usage = loop.run_until_complete(
-                analyzer.analyze(self.dfd, self.system_name, progress_callback=progress_cb)
+                analyzer.analyze(
+                    self.dfd, 
+                    self.system_name, 
+                    progress_callback=progress_cb,
+                    result_callback=lambda partial: self.partial_result_ready.emit(partial)
+                )
             )
+            
+            # Handle cancellation prior to segmentation
+            if "Analysis cancelled by user" in raw_resp:
+                self.failed.emit("Analysis cancelled by user.")
+                return
+                
+            # Log the prompt only if we actually ran the analysis
+            system_p = analyzer.builder.build_system_prompt()
+            user_p = analyzer.builder.build_user_prompt(self.dfd, self.system_name)
+            self.prompt_ready.emit(f"SYSTEM: {system_p}\n\nUSER: {user_p}")
             
             # Log the raw response and usage
             self.response_ready.emit(raw_resp)
             if usage:
                 u = usage.get("usage", usage)
-                # Handle both OpenAI/External and Gemini metadata structures
-                in_t = u.get('prompt_tokens', u.get('promptTokenCount', 0))
-                out_t = u.get('completion_tokens', u.get('candidatesTokenCount', 0))
-                total_t = u.get('total_tokens', u.get('totalTokenCount', in_t + out_t))
+                # Universal token mapping (Gemini, Ollama, OpenAI)
+                in_t = u.get('promptTokenCount') or u.get('prompt_tokens') or u.get('prompt_eval_count') or 0
+                out_t = u.get('candidatesTokenCount') or u.get('completion_tokens') or u.get('eval_count') or 0
+                total_t = u.get('totalTokenCount') or u.get('total_tokens') or (in_t + out_t)
                 
                 finish_reason = usage.get("finish_reason", "SUCCESS")
                 meta_log = f"METADATA: Tokens [In: {in_t} | Out: {out_t} | Total: {total_t}] | FinishReason: {finish_reason}"
@@ -204,6 +217,36 @@ class AIVisionWorker(QThread):
             loop.close()
 
 
+class ReasoningWorker(QThread):
+    """Background worker for deep technical reasoning (XAI)."""
+    finished = Signal(str, object)  # Reasoning text, Threat object
+    failed = Signal(str)
+
+    def __init__(self, provider, prompt_config, threat, analysis_mode, parent=None):
+        super().__init__(parent)
+        self.provider = provider
+        self.prompt_config = prompt_config
+        self.threat = threat
+        self.analysis_mode = analysis_mode
+
+    def run(self):
+        """Execute the reasoning AI call in a private event loop."""
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            analyzer = ThreatAnalyzer(self.provider, self.prompt_config)
+            # Ensure analyzer is in the same mode as the UI
+            analyzer.builder.analysis_mode = self.analysis_mode
+            
+            reasoning = loop.run_until_complete(analyzer.analyze_reasoning(self.threat))
+            self.finished.emit(reasoning, self.threat)
+        except Exception as exc:
+            self.failed.emit(str(exc))
+        finally:
+            loop.close()
+
+
 class _PlaceholderPanel(QWidget):
     """A temporary placeholder widget used for dock panels.
 
@@ -265,6 +308,9 @@ class MainWindow(QMainWindow):
         self._setup_toolbar()
         self._setup_status_bar()
         self._connect_actions()
+        
+        # Connect Undo/Redo signals to refresh the UI automatically
+        self._undo_stack.indexChanged.connect(self._on_undo_redo_happened)
         
         # Add undo/redo to the Edit menu (which is set up in _setup_menu_bar)
         # We'll need to reference it there.
@@ -369,10 +415,14 @@ class MainWindow(QMainWindow):
         self._canvas = DiagramCanvas(self)
         self._central_tabs.addTab(self._canvas, "System Architecture")
         
-        # Tab 2: Full Threat Ledger
+        # Tab 2: STRIDE Threats
         from threatpilot.ui.threat_panel import ThreatPanel
-        self._full_threat_ledger = ThreatPanel(self)
-        self._central_tabs.addTab(self._full_threat_ledger, "Threats List")
+        self._stride_threat_ledger = ThreatPanel(self, filter_mode="STRIDE")
+        self._central_tabs.addTab(self._stride_threat_ledger, "STRIDE Security")
+
+        # Tab 3: LINDDUN Threats
+        self._linddun_threat_ledger = ThreatPanel(self, filter_mode="LINDDUN")
+        self._central_tabs.addTab(self._linddun_threat_ledger, "LINDDUN Privacy")
 
         # Tab 3: Detailed Risk Assessment
         self._risk_assessment_panel = RiskAssessmentPanel(self)
@@ -388,13 +438,18 @@ class MainWindow(QMainWindow):
     def _setup_docks(self) -> None:
         """Create and position the three dock panels."""
         # --- Right Stack 1: Properties Panel ---
-        self._properties_panel = PropertiesPanel(self)
-        self._properties_panel.property_changed.connect(self._on_save_project)
+        self._properties_panel = PropertiesPanel(self, undo_stack=self._undo_stack)
+        self._properties_panel.property_changed.connect(
+            lambda obj: self._on_project_modified(obj, refresh_properties=False)
+        )
+        self._properties_panel.reasoning_requested.connect(self._on_reasoning_requested)
         
         def _sync_labels(obj):
             if isinstance(obj, Threat):
-                self._threat_panel.refresh()
-                self._full_threat_ledger.refresh()
+                # Defer ledger refreshes so they don't interrupt typing focus
+                QTimer.singleShot(0, self._threat_panel.refresh)
+                QTimer.singleShot(0, self._stride_threat_ledger.refresh)
+                QTimer.singleShot(0, self._linddun_threat_ledger.refresh)
         self._properties_panel.property_changed.connect(_sync_labels)
         self._properties_panel_dock = self._create_dock(
             "Attributes",
@@ -430,13 +485,32 @@ class MainWindow(QMainWindow):
         )
         self._threat_panel_dock.setVisible(False)
         
-        # Synchronise the full ledger in central view too
+        # Synchronise the methodology ledgers in central view too
         self._threat_panel.threat_selected.connect(self._properties_panel.set_item)
-        self._full_threat_ledger.threat_selected.connect(self._properties_panel.set_item)
+        self._stride_threat_ledger.threat_selected.connect(self._properties_panel.set_item)
+        self._linddun_threat_ledger.threat_selected.connect(self._properties_panel.set_item)
 
-        self._full_threat_ledger.run_analysis_requested.connect(self._on_run_analysis)
-        self._full_threat_ledger.threat_added.connect(self._on_save_project)
-        self._full_threat_ledger.threat_removed.connect(self._on_save_project)
+        self._stride_threat_ledger.run_analysis_requested.connect(self._on_run_analysis)
+        self._stride_threat_ledger.threat_added.connect(self._on_save_project)
+        self._stride_threat_ledger.threat_removed.connect(self._on_save_project)
+        
+        self._linddun_threat_ledger.run_analysis_requested.connect(self._on_run_analysis)
+        self._linddun_threat_ledger.threat_added.connect(self._on_save_project)
+        self._linddun_threat_ledger.threat_removed.connect(self._on_save_project)
+
+        # --- Bottom Dock: AI Activity Log ---
+        self._ai_log_view = QTextEdit()
+        self._ai_log_view.setReadOnly(True)
+        self._ai_log_view.setObjectName("ai_log_view")
+        self._ai_log_view.setPlaceholderText("AI transaction logs will appear here during detection or analysis...")
+        
+        self._ai_log_dock = self._create_dock(
+            "AI Activity Log",
+            self._ai_log_view,
+            Qt.DockWidgetArea.BottomDockWidgetArea,
+            min_width=400,
+        )
+        self._ai_log_dock.setVisible(False)
 
     def _create_dock(
         self,
@@ -556,6 +630,10 @@ class MainWindow(QMainWindow):
         self._action_toggle_properties = self._properties_panel_dock.toggleViewAction()
         self._action_toggle_properties.setText("&Element Attributes")
         view_menu.addAction(self._action_toggle_properties)
+
+        self._action_toggle_ai_log = self._ai_log_dock.toggleViewAction()
+        self._action_toggle_ai_log.setText("&AI Activity Log")
+        view_menu.addAction(self._action_toggle_ai_log)
 
         view_menu.addSeparator()
 
@@ -683,7 +761,8 @@ class MainWindow(QMainWindow):
             self._project = create_project(name.strip(), parent_dir=directory)
             self._project_explorer.set_project(self._project)
             self._threat_panel.set_register(self._project.threat_register)
-            self._full_threat_ledger.set_register(self._project.threat_register)
+            self._stride_threat_ledger.set_register(self._project.threat_register)
+            self._linddun_threat_ledger.set_register(self._project.threat_register)
             self._risk_assessment_panel.set_project(self._project)
             self._current_diagram = None
             self._canvas.clear_diagram()
@@ -708,7 +787,8 @@ class MainWindow(QMainWindow):
         self._project = None
         self._project_explorer.set_project(None)
         self._threat_panel.set_register(None)
-        self._full_threat_ledger.set_register(None)
+        self._stride_threat_ledger.set_register(None)
+        self._linddun_threat_ledger.set_register(None)
         self._risk_assessment_panel.set_project(None)
         self._current_diagram = None
         self._canvas.clear_diagram()
@@ -740,7 +820,8 @@ class MainWindow(QMainWindow):
         self._project = load_project(directory)
         self._project_explorer.set_project(self._project)
         self._threat_panel.set_register(self._project.threat_register)
-        self._full_threat_ledger.set_register(self._project.threat_register)
+        self._stride_threat_ledger.set_register(self._project.threat_register)
+        self._linddun_threat_ledger.set_register(self._project.threat_register)
         self._risk_assessment_panel.set_project(self._project)
         self._current_diagram = None
         self._canvas.clear_diagram()
@@ -759,6 +840,19 @@ class MainWindow(QMainWindow):
         recent_file = project_root / ".threatpilot_recent"
         recent_file.write_text(str(directory))
 
+    def _on_project_modified(self, obj: Any = None, refresh_properties: bool = True) -> None:
+        """Trigger UI updates for panels when a project property changes. Does NOT save to disk."""
+        if hasattr(self, "_risk_assessment_panel"):
+            QTimer.singleShot(0, self._risk_assessment_panel.refresh)
+        if hasattr(self, "_threat_panel"):
+            QTimer.singleShot(0, self._threat_panel.refresh)
+        if hasattr(self, "_stride_threat_ledger"):
+            QTimer.singleShot(0, self._stride_threat_ledger.refresh)
+        if hasattr(self, "_linddun_threat_ledger"):
+            QTimer.singleShot(0, self._linddun_threat_ledger.refresh)
+        QTimer.singleShot(0, self._refresh_canvas_overlays)
+        self._update_title()
+
     def _on_save_project(self) -> None:
         """Save the current project to disk."""
         if self._project is None:
@@ -771,8 +865,10 @@ class MainWindow(QMainWindow):
                 self._risk_assessment_panel.refresh()
             if hasattr(self, "_threat_panel"):
                 self._threat_panel.refresh()
-            if hasattr(self, "_full_threat_ledger"):
-                self._full_threat_ledger.refresh()
+            if hasattr(self, "_stride_threat_ledger"):
+                self._stride_threat_ledger.refresh()
+            if hasattr(self, "_linddun_threat_ledger"):
+                self._linddun_threat_ledger.refresh()
             self.statusBar().showMessage("Project saved.")
         except (ValueError, OSError) as exc:
             QMessageBox.critical(self, "Error", f"Could not save project:\n{exc}")
@@ -896,8 +992,9 @@ class MainWindow(QMainWindow):
         elif action == "action_edit_flows":
             self._on_edit_flows()
         elif action == "action_view_threats":
-            self._central_tabs.setCurrentIndex(1)  # Focus the central threat register
-            self._full_threat_ledger.clear_filter()
+            self._central_tabs.setCurrentIndex(1)  # Focus STRIDE tab by default
+            self._stride_threat_ledger.clear_filter()
+            self._linddun_threat_ledger.clear_filter()
             self._threat_panel_dock.show()         # Also show the side summary
             self._threat_panel_dock.raise_()
         elif action == "action_view_risk_matrix" and self._project:
@@ -951,10 +1048,10 @@ class MainWindow(QMainWindow):
         self._progress.setMinimumDuration(500)
         
         self.statusBar().showMessage(f"Running threat analysis via {config.provider_type}...")
-        if hasattr(self._threat_panel, "_btn_run"):
-            self._threat_panel._btn_run.setEnabled(False)
-        if hasattr(self._full_threat_ledger, "_btn_run"):
-            self._full_threat_ledger._btn_run.setEnabled(False) 
+        if hasattr(self._stride_threat_ledger, "_btn_run"):
+            self._stride_threat_ledger._btn_run.setEnabled(False)
+        if hasattr(self._linddun_threat_ledger, "_btn_run"):
+            self._linddun_threat_ledger._btn_run.setEnabled(False)
 
         self._worker = AnalysisWorker(
             provider, 
@@ -968,13 +1065,140 @@ class MainWindow(QMainWindow):
         self._worker.failed.connect(self._progress.close)
         self._progress.canceled.connect(self._worker.terminate)
         
-        self._worker.prompt_ready.connect(lambda p: self._properties_panel.append_log(sanitize_text(p), "SYSTEM"))
-        self._worker.response_ready.connect(lambda r: self._properties_panel.append_log(sanitize_text(r), "RESPONSE"))
+        self._worker.prompt_ready.connect(lambda p: self.append_ai_log(p, "PROMPT"))
+        self._worker.response_ready.connect(lambda r: self.append_ai_log(r, "RESPONSE"))
         self._worker.request_segment_continuation.connect(self._on_request_continuation)
+        self._worker.partial_result_ready.connect(self._on_partial_analysis_result)
         
-        self._properties_panel.append_log("SECURITY WARNING: Logs may contain architectural details. Masking is active for identified API keys.", "SYSTEM")
+        self.append_ai_log("SECURITY WARNING: Logs may contain architectural details. Masking is active for identified API keys.", "SYSTEM")
+        
+        self._ai_log_dock.show()
+        self._ai_log_dock.raise_()
         self._worker.start()
         self._progress.show()
+
+    def _on_reasoning_requested(self, threat: Threat) -> None:
+        """Handle request for deep technical reasoning for a specific threat."""
+        config = AIConfig.load()
+        provider = create_ai_provider(config)
+        
+        self.statusBar().showMessage("Analyzing threat reasoning with AI...")
+        self._properties_panel.set_reasoning_progress(True)
+        
+        # We need a reference to keep worker alive
+        self._reasoning_worker = ReasoningWorker(
+            provider, 
+            self._project.prompt_config, 
+            threat,
+            config.analysis_mode
+        )
+        self._reasoning_worker.finished.connect(self._on_reasoning_finished)
+        self._reasoning_worker.failed.connect(self._on_reasoning_failed)
+        self._reasoning_worker.start()
+
+    def _on_reasoning_finished(self, reasoning: str, threat: Threat) -> None:
+        """Update threat with reasoning, converting any dict/JSON to Markdown."""
+        import json, ast, re
+
+        def _dict_to_markdown(data: dict) -> str:
+            SECTION_MAP = {
+                "attack_vector":            "### 1. Attack Vector",
+                "architectural_root_cause": "### 2. Architectural Root Cause",
+                "risk_rationalization":     "### 3. Risk Rationalization",
+                "framework_alignment":      "### 4. Framework Alignment",
+            }
+            md = ""
+            for key, heading in SECTION_MAP.items():
+                if key in data:
+                    val = data[key]
+                    if isinstance(val, dict):
+                        val = "\n".join(f"- **{k}**: {v}" for k, v in val.items())
+                    elif isinstance(val, list):
+                        val = "\n".join(f"- {item}" for item in val)
+                    # Blank line between heading and paragraph for proper Markdown rendering
+                    md += f"{heading}\n\n{val}\n\n"
+            if not md:
+                for k, v in data.items():
+                    if isinstance(v, (dict, list)):
+                        v = str(v)
+                    md += f"### {k.replace('_', ' ').title()}\n\n{v}\n\n"
+            return md.strip()
+
+        def _regex_extract_dict(text: str) -> dict | None:
+            """Fallback: extract key–value pairs from a Python dict string via regex.
+
+            Handles mixed-quote AI output where single-quoted values contain double
+            quotes (or vice versa), causing ast.literal_eval to raise SyntaxError.
+            """
+            result: dict = {}
+            key_pattern = re.compile(r"[\"\']([\w]+)[\"\']\s*:\s*", re.DOTALL)
+            keys_found = list(key_pattern.finditer(text))
+            for i, match in enumerate(keys_found):
+                key = match.group(1)
+                val_start = match.end()
+                val_end = keys_found[i + 1].start() if i + 1 < len(keys_found) else len(text)
+                raw_val = text[val_start:val_end].strip().rstrip(",").strip()
+                # Unwrap surrounding quote characters
+                if len(raw_val) >= 2 and raw_val[0] in ('"', "'"):
+                    q = raw_val[0]
+                    # Find the *last* occurrence of the same quote to close the string
+                    end_idx = raw_val.rfind(q)
+                    if end_idx > 0:
+                        raw_val = raw_val[1:end_idx]
+                result[key] = raw_val
+            return result if result else None
+
+        raw = reasoning.strip()
+        # Strip any "Technical Reasoning" prefix label (with optional colon/dash)
+        raw = re.sub(r"^Technical Reasoning\s*[:\-]?\s*\n+", "", raw, flags=re.IGNORECASE).strip()
+
+        processed_markdown = raw
+        brace_match = re.search(r"\{[\s\S]+\}", raw)
+        if brace_match:
+            candidate = brace_match.group(0)
+            data = None
+            # Attempt 1: standard JSON
+            try:
+                data = json.loads(candidate)
+            except Exception:
+                pass
+            # Attempt 2: Python literal (handles single-quoted dicts)
+            if data is None:
+                try:
+                    data = ast.literal_eval(candidate)
+                except Exception:
+                    pass
+            # Attempt 3: regex extraction (handles mixed-quote AI output)
+            if data is None:
+                data = _regex_extract_dict(candidate)
+            if isinstance(data, dict):
+                processed_markdown = _dict_to_markdown(data)
+
+        threat.reasoning = processed_markdown
+        self._properties_panel.set_reasoning_progress(False)
+        self._properties_panel.set_item(threat)
+        self.statusBar().showMessage("Reasoning analysis complete.")
+        save_project(self._project)
+
+    def _on_reasoning_failed(self, error_msg: str) -> None:
+        """Clean up UI and show error message on reasoning failure."""
+        self._properties_panel.set_reasoning_progress(False)
+        self._show_concise_error("Reasoning Error", "XAI Reasoning failed:", error_msg)
+
+    def _on_partial_analysis_result(self, partial_register) -> None:
+        """Merge intermediate results from a single segment while analysis continues."""
+        if not self._project: return
+        
+        # Merge threats from this segment incrementally
+        for t in partial_register.threats:
+            self._project.threat_register.add_threat(t)
+            
+        # Refresh UI
+        self._threat_panel.refresh()
+        self._stride_threat_ledger.refresh()
+        self._linddun_threat_ledger.refresh()
+        self._risk_assessment_panel.refresh()
+        self.statusBar().showMessage(f"Incremental update: {len(partial_register.threats)} threats added from segment.")
 
     def _on_request_continuation(self, current, total):
         """Prompt user to continue to the next segment for large architecture."""
@@ -1001,47 +1225,99 @@ class MainWindow(QMainWindow):
 
     def _on_analysis_finished(self, new_register) -> None:
         """Merge new threats into the project and refresh UI."""
-        if hasattr(self._threat_panel, "_btn_run"):
-            self._threat_panel._btn_run.setEnabled(True)
-        if hasattr(self._full_threat_ledger, "_btn_run"):
-            self._full_threat_ledger._btn_run.setEnabled(True)
+        if hasattr(self._stride_threat_ledger, "_btn_run"):
+            self._stride_threat_ledger._btn_run.setEnabled(True)
+        if hasattr(self._linddun_threat_ledger, "_btn_run"):
+            self._linddun_threat_ledger._btn_run.setEnabled(True)
         self.statusBar().showMessage("Analysis complete.")
         
-        # Merge threats (simple append or replacement for now)
-        for t in new_register.threats:
-            self._project.threat_register.add_threat(t)
-            
+        # Final merge (everything already partially merged, but this ensures final sync if needed)
+        # We calculate the total unique threats identified in this whole RUN (new_register)
+        # compared to what was there BEFORE the run started.
+        # But for simpler logic, we show how many they AI found total.
+        
         self._threat_panel.refresh()
-        self._full_threat_ledger.refresh()
+        self._stride_threat_ledger.refresh()
+        self._linddun_threat_ledger.refresh()
         self._risk_assessment_panel.refresh()
         
         save_project(self._project)
-        QMessageBox.information(self, "Analysis", f"Analysis complete! {len(new_register.threats)} new threats identified.")
+        QMessageBox.information(
+            self, 
+            "Analysis", 
+            f"Full Analysis complete! {len(new_register.threats)} total threats identified across all segments."
+        )
 
     def _on_analysis_failed(self, error_msg: str) -> None:
         """Handle analysis failure with concise error reporting."""
-        if hasattr(self._threat_panel, "_btn_run"):
-            self._threat_panel._btn_run.setEnabled(True)
-        if hasattr(self._full_threat_ledger, "_btn_run"):
-            self._full_threat_ledger._btn_run.setEnabled(True)
+        if hasattr(self._stride_threat_ledger, "_btn_run"):
+            self._stride_threat_ledger._btn_run.setEnabled(True)
+        if hasattr(self._linddun_threat_ledger, "_btn_run"):
+            self._linddun_threat_ledger._btn_run.setEnabled(True)
+            
+        if "cancelled by user" in error_msg.lower():
+            self.statusBar().showMessage("Analysis cancelled.")
+            return
+            
         self.statusBar().showMessage("Analysis failed.")
         self._show_concise_error("Analysis Error", "The AI analysis failed:", error_msg)
 
     def _show_concise_error(self, title: str, prefix: str, error_msg: str) -> None:
-        """Sanitize and display a concise version of technical AI/API errors, writing full details to log."""
+        """Categorize and display a user-friendly version of technical AI/API errors."""
         config = AIConfig.load()
-        safe_error_msg = str(error_msg)
-        if config.api_key and len(config.api_key) > 8:
-            safe_error_msg = safe_error_msg.replace(config.api_key, "YOUR-API-KEY-IS-HIDDEN")
-            
+        msg = str(error_msg).lower()
+        
+        # 1. Categorization & Helpful Guidance
+        explanation = ""
+        if "timeout" in msg or "deadline" in msg or "timed out" in msg:
+            explanation = (
+                "🕒 **Request Timeout**\n\nThe AI provider took too long to respond. This usually happens "
+                "with very large architecture diagrams or slow network connections.\n\n"
+                "**Try:** Increase the 'Request Timeout' (e.g. to 120s) in AI Settings."
+            )
+        elif "connection" in msg or "connect_error" in msg or "reached" in msg:
+            explanation = (
+                "🔌 **Connection Failed**\n\nThreatPilot could not connect to the AI server.\n\n"
+                "**Try:** Check your internet connection. If using Ollama, ensure 'ollama serve' is running."
+            )
+        elif "model" in msg and ("not found" in msg or "404" in msg):
+            explanation = (
+                f"🤖 **Model Not Found**\n\nThe model '{config.model_name}' was not recognized by {config.provider_type}.\n\n"
+                "**Try:** Check the Model Name in AI Settings. Ensure it's exactly as required (e.g. 'gemini-1.5-flash')."
+            )
+        elif "api_key" in msg or "401" in msg or "unauthorized" in msg or "invalid" in msg:
+            explanation = (
+                "🔑 **Authentication Failed**\n\nThe AI provider rejected your API key or credentials.\n\n"
+                "**Try:** Verify your API Key in AI Settings. Ensure there are no leading/trailing spaces."
+            )
+        elif "quota" in msg or "429" in msg or "rate" in msg:
+            explanation = (
+                "⏳ **Rate Limit Exceeded**\n\nYou have sent too many requests in a short period.\n\n"
+                "**Try:** Wait 60 seconds before trying again, or upgrade your AI provider tier."
+            )
+        else:
+            # Fallback for complex/unknown errors
+            short_technical = (error_msg[:200] + "...") if len(error_msg) > 200 else error_msg
+            explanation = (
+                "❓ **Unexpected AI Error**\n\nAn unhandled error occurred during analysis.\n\n"
+                f"**Technical Details:** {short_technical}"
+            )
+
+        # 2. Security: Ensure the API key never appears in the UI dialog
+        if config.api_key and len(config.api_key) > 5:
+            explanation = explanation.replace(config.api_key, "[HIDDEN]")
+            error_msg = error_msg.replace(config.api_key, "[HIDDEN]")
+
+        # 3. Log the full technical error for support/debugging
         try:
             with Path("threatpilot_error.log").open("a", encoding="utf-8") as f:
-                f.write(f"\n[{datetime.now()}] {title} - {prefix}\n{safe_error_msg}\n")
+                f.write(f"\n--- Analysis Error [{datetime.now().isoformat()}] ---\n")
+                f.write(f"Context: {prefix}\n")
+                f.write(f"Raw Error: {error_msg}\n")
         except Exception:
             pass
             
-        generic_msg = "An error occurred during AI analysis. For security reasons, the full details have been masked.\nPlease check the threatpilot_error.log file in your working directory for the complete error trace."
-        QMessageBox.critical(self, title, f"{prefix}\n\n{generic_msg}")
+        QMessageBox.critical(self, title, f"{prefix}\n\n{explanation}")
 
 
     # ------------------------------------------------------------------
@@ -1163,10 +1439,12 @@ class MainWindow(QMainWindow):
             )
             self._worker_ai_vision.finished.connect(self._on_ai_detection_finished)
             self._worker_ai_vision.failed.connect(lambda msg: self._show_concise_error("AI Detection Failed", "Computer Vision detection failed:", msg))
-            self._worker_ai_vision.prompt_ready.connect(lambda p: self._properties_panel.append_log(sanitize_text(p), "PROMPT"))
-            self._worker_ai_vision.response_ready.connect(lambda r: self._properties_panel.append_log(sanitize_text(r), "RESPONSE"))
+            self._worker_ai_vision.prompt_ready.connect(lambda p: self.append_ai_log(p, "PROMPT"))
+            self._worker_ai_vision.response_ready.connect(lambda r: self.append_ai_log(r, "RESPONSE"))
 
-            self._properties_panel._tabs.setCurrentIndex(1) # Switch to Logs
+            self._central_tabs.setCurrentIndex(0) # Keep on Diagram
+            self._ai_log_dock.show() # Ensure log dock is visible
+            self._ai_log_dock.raise_()
             self._worker_ai_vision.start()
         else:
             QMessageBox.warning(self, "Detection", "Traditional Computer Vision detection is disabled as OpenCV has been removed. Please configure an AI Vision provider in AI Settings.")
@@ -1313,6 +1591,7 @@ class MainWindow(QMainWindow):
             
         dialog = EntitiesDialog(self._project, self._undo_stack, self)
         dialog.project_modified.connect(self._refresh_canvas_overlays)
+        dialog.project_modified.connect(self._on_project_modified)
         dialog.exec()
         
         # Reload visual overlays to reflect renamed/deleted entities
@@ -1325,7 +1604,7 @@ class MainWindow(QMainWindow):
             return
             
         dialog = DataFlowDialog(self._project, self._undo_stack, self)
-        dialog.project_modified.connect(self._refresh_canvas_overlays)
+        dialog.project_modified.connect(self._on_project_modified)
         dialog.exec()
         
         # Reload visual overlays to reflect flow changes
@@ -1396,4 +1675,57 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.warning(self, "Logs", "Log directory not found yet.")
 
+    def _on_undo_redo_happened(self, index: int) -> None:
+        """Refresh the UI to reflect state changes after an undo or redo action.
 
+        We snapshot _is_panel_editing SYNCHRONOUSLY here, before the finally-block
+        in _on_field_changed resets it. The captured value is then forwarded to the
+        deferred callback via closure, so set_item() is skipped when the user typed
+        the change (preserving keyboard focus) but runs normally for Ctrl+Z/Y.
+        """
+        panel_was_editing = (
+            hasattr(self, "_properties_panel")
+            and self._properties_panel._is_panel_editing
+        )
+        QTimer.singleShot(0, lambda: self._perform_undo_redo_refresh(skip_panel=panel_was_editing))
+
+    def _perform_undo_redo_refresh(self, skip_panel: bool = False) -> None:
+        """Execute the UI refresh deferred from indexChanged.
+
+        Args:
+            skip_panel: If True, skip rebuilding the Properties Panel widgets.
+                        Passed as True when the change came from within the panel
+                        itself (user typed), so keyboard focus is preserved.
+        """
+        self._on_project_modified()
+
+        if not skip_panel and hasattr(self, "_properties_panel"):
+            item = self._properties_panel._current_item
+            if item:
+                self._properties_panel.set_item(item)
+        if hasattr(self, "_threat_panel"):
+            self._threat_panel.refresh()
+        if hasattr(self, "_stride_threat_ledger"):
+            self._stride_threat_ledger.refresh()
+        if hasattr(self, "_linddun_threat_ledger"):
+            self._linddun_threat_ledger.refresh()
+        if hasattr(self, "_risk_assessment_panel"):
+            self._risk_assessment_panel.refresh()
+
+    def append_ai_log(self, text: str, category: str = "INFO") -> None:
+        """Add a timestamped entry to the AI Activity Log dock."""
+        time_str = datetime.now().strftime("%H:%M:%S")
+        is_dark = getattr(self, "_is_dark_theme", True)
+        
+        if is_dark:
+            color = "#58a6ff" if "PROMPT" in category else "#7ee787" if "RESPONSE" in category else "#8b949e"
+            time_color = "#484f58"
+        else:
+            color = "#0969da" if "PROMPT" in category else "#1a7f37" if "RESPONSE" in category else "#57606a"
+            time_color = "#8b949e"
+        
+        from threatpilot.utils.logger import sanitize_text
+        sanitized_text = sanitize_text(text)
+        log_entry = f"<span style='color: {time_color};'>[{time_str}]</span> <b style='color: {color};'>{category}</b>: {sanitized_text}<br>"
+        self._ai_log_view.append(log_entry)
+        self._ai_log_view.verticalScrollBar().setValue(self._ai_log_view.verticalScrollBar().maximum())

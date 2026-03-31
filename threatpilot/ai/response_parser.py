@@ -6,6 +6,7 @@ handling various formatting artifacts such as markdown code blocks.
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 from typing import Any, Dict, List, Optional
@@ -189,7 +190,12 @@ def parse_threat_list(raw_response: str) -> List[Dict[str, Any]]:
             "name": "title",
             "mitigation": "mitigation",
             "recommended_mitigation": "mitigation",
-            "stride": "category"
+            "stride": "category",
+            "mitre_technique_id": "mitre_attack_id",
+            "mitre_id": "mitre_attack_id",
+            "attack_id": "mitre_attack_id",
+            "mitre_technique": "mitre_attack_technique",
+            "attack_technique": "mitre_attack_technique"
         }
         for k_ai, k_model in mapping.items():
             if k_ai in item and k_model not in item:
@@ -224,3 +230,103 @@ def parse_threat_list(raw_response: str) -> List[Dict[str, Any]]:
             logging.getLogger(__name__).warning(f"Skipping malformed AI threat: {exc}")
             
     return valid_threats
+
+
+# ---------------------------------------------------------------------------
+# XAI Reasoning – unified converter
+# ---------------------------------------------------------------------------
+_XAI_SECTION_MAP = {
+    "attack_vector":            "### 1. Attack Vector",
+    "architectural_root_cause": "### 2. Architectural Root Cause",
+    "risk_rationalization":     "### 3. Risk Rationalization",
+    "framework_alignment":      "### 4. Framework Alignment",
+}
+
+
+def convert_reasoning_to_markdown(raw: str, markdown: bool = True) -> str:
+    """Convert a raw AI reasoning string to display-ready Markdown or Plaintext.
+
+    Handles four possible formats:
+    1. Already well-formed Markdown (pass-through).
+    2. JSON object string  – parsed via ``json.loads``.
+    3. Python dict literal  – parsed via ``ast.literal_eval``.
+    4. Mixed-quote dict string – extracted via positional regex.
+
+    Args:
+        raw: The raw input string from the AI.
+        markdown: If False, strips '###' markers for Excel/plaintext use.
+    """
+    if not raw or raw == "Reasoning not yet generated.":
+        return raw
+
+    # Strip "Technical Reasoning" header
+    text = re.sub(r"^Technical Reasoning\s*[:\-]?\s*\n+", "", raw.strip(), flags=re.IGNORECASE).strip()
+
+    # Only attempt dict parsing when the text looks like a dict/json literal
+    brace_match = re.search(r"\{[\s\S]+\}", text)
+    if not brace_match:
+        return text  # Plain text/MD – return as-is
+
+    candidate = brace_match.group(0)
+    data: dict | None = None
+
+    # Attempt 1: standard JSON
+    try:
+        data = json.loads(candidate)
+    except Exception:
+        pass
+
+    # Attempt 2: Python literal (handles single-quoted dicts)
+    if data is None:
+        try:
+            data = ast.literal_eval(candidate)
+        except Exception:
+            pass
+
+    # Attempt 3: positional regex extraction – immune to mixed-quote format
+    if data is None:
+        key_pat = re.compile(r"[\"\']([\w]+)[\"\']\s*:\s*", re.DOTALL)
+        matches = list(key_pat.finditer(candidate))
+        if matches:
+            result: dict = {}
+            for i, m in enumerate(matches):
+                key = m.group(1)
+                v_start = m.end()
+                v_end = matches[i + 1].start() if i + 1 < len(matches) else len(candidate)
+                raw_val = candidate[v_start:v_end].strip().rstrip(",").strip()
+                # Unwrap surrounding quote characters
+                if len(raw_val) >= 2 and raw_val[0] in ('"', "'"):
+                    q = raw_val[0]
+                    end_q = raw_val.rfind(q)
+                    raw_val = raw_val[1:end_q] if end_q > 0 else raw_val[1:]
+                result[key] = raw_val
+            if result:
+                data = result
+
+    if not isinstance(data, dict):
+        return text
+
+    # ---- Build Output --------------------------------------------------------
+    res = ""
+    # Render known sections in canonical order first
+    for key, heading in _XAI_SECTION_MAP.items():
+        if key in data:
+            val = data[key]
+            if not val: continue
+            
+            if isinstance(val, dict):
+                val = "\n".join(f"- {k}: {v}" for k, v in val.items())
+            elif isinstance(val, list):
+                val = "\n".join(f"- {item}" for item in val)
+            
+            h = heading if markdown else heading.replace("### ", "").strip()
+            res += f"{h}\n\n{val}\n\n"
+            
+    # Any extra keys
+    for key, val in data.items():
+        if key not in _XAI_SECTION_MAP:
+            h = key.replace('_', ' ').title()
+            if markdown: h = f"### {h}"
+            res += f"{h}\n\n{val}\n\n"
+            
+    return res.strip()

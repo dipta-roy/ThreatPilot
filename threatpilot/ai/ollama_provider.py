@@ -66,13 +66,26 @@ class OllamaProvider(AIProviderInterface):
                     f"{self.config.endpoint_url}/api/chat",
                     json=payload
                 )
+                
+                if response.status_code == 404:
+                    # Capture specific message if Ollama tells us the model is missing
+                    try:
+                        error_text = response.json().get("error", response.text)
+                    except Exception:
+                        error_text = response.text
+                    raise RuntimeError(f"Ollama Model Not Found (404): The model '{self.config.model_name}' is not downloaded. Run 'ollama pull {self.config.model_name}' in your terminal. Details: {error_text}")
+                
                 response.raise_for_status()
                 data = response.json()
                 text = str(data.get("message", {}).get("content", ""))
-                return text, {"usage": data} # Ollama usage is in the root response object
+                return text, {"usage": data}
 
+        except httpx.ConnectError:
+            raise IOError(f"Connection Failed: Could not reach Ollama at {self.config.endpoint_url}. Ensure 'ollama serve' is running.")
+        except httpx.TimeoutException:
+            raise IOError(f"Request Timeout: Ollama took too long to respond. You may need to increase the timeout in AI Settings.")
         except httpx.HTTPError as exc:
-            raise IOError(f"Could not reach Ollama at {self.config.endpoint_url}: {exc}")
+            raise RuntimeError(f"Ollama API Error: {exc}")
         except Exception as exc:
             raise RuntimeError(f"Ollama request failed: {exc}")
 
@@ -127,13 +140,26 @@ class OllamaProvider(AIProviderInterface):
                     f"{self.config.endpoint_url}/api/chat",
                     json=payload,
                 )
+                
+                if response.status_code == 404:
+                    # Model not found specifically
+                    try:
+                        error_text = response.json().get("error", response.text)
+                    except Exception:
+                        error_text = response.text
+                    raise RuntimeError(f"Ollama Vision Model Not Found (404): The vision model '{self.config.model_name}' is not downloaded. Run 'ollama pull {self.config.model_name}' in your terminal. Details: {error_text}")
+                
                 response.raise_for_status()
                 data = response.json()
                 text = str(data.get("message", {}).get("content", ""))
                 return text, {"usage": data}
 
+        except httpx.ConnectError:
+            raise IOError(f"Connection Failed: Could not reach Ollama at {self.config.endpoint_url}. Ensure 'ollama serve' is running.")
+        except httpx.TimeoutException:
+            raise IOError(f"Request Timeout: Ollama took too long to respond. You may need to increase the timeout in AI Settings.")
         except httpx.HTTPError as exc:
-            raise IOError(f"Could not reach Ollama at {self.config.endpoint_url}: {exc}")
+            raise RuntimeError(f"Ollama Vision API Error: {exc}")
         except Exception as exc:
             raise RuntimeError(f"Ollama vision request failed: {exc}")
 

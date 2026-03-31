@@ -51,9 +51,17 @@ class RiskEngine:
         # Default global templates maybe?
         self._templates: List[ThreatTemplate] = []
 
-    def add_template(self, template: ThreatTemplate) -> None:
-        """Registry a new reusable template."""
+    def add_template(self, template: ThreatTemplate, skip_duplicates: bool = True) -> bool:
+        """Register a new reusable template, skipping duplicates if requested."""
+        if skip_duplicates:
+            for existing in self._templates:
+                if (existing.category == template.category and 
+                    existing.title == template.title and 
+                    existing.description == template.description):
+                    return False
+        
         self._templates.append(template)
+        return True
 
     def get_templates(self) -> List[ThreatTemplate]:
         """Retrieve all currently defined templates."""

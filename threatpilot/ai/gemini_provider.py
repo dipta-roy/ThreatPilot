@@ -152,67 +152,59 @@ class GeminiProvider(AIProviderInterface):
             response = None
             try:
                 async with httpx.AsyncClient(timeout=self.config.timeout) as client:
-                    # Implement robust retry loop for 5xx Server Errors (like 503 Service Unavailable)
                     retries = 3
                     for attempt in range(retries):
                         logger.debug(f"Sending request to Gemini: {url}")
                         response = await client.post(url, json=payload, headers=headers)
                         
-                        # If the server is temporarily unavailable or overloaded, back off and retry
                         if response.status_code in [500, 502, 503, 504] and attempt < retries - 1:
-                            logger.warning(f"Gemini server error {response.status_code}. Retrying ({attempt+1}/{retries})...")
-                            await asyncio.sleep(2 ** attempt) # 1s, 2s, 4s...
+                            logger.warning(f"Gemini server error {response.status_code}. Retrying...")
+                            await asyncio.sleep(2 ** attempt)
                             continue
                             
-                        # If 404 or 400, the model might only be in the other version channel (Common for new models)
+                        # If a model isn't in v1, it might be in v1beta. 
+                        # We break this retry loop to allow falling back to the next URL.
                         if response.status_code in [400, 404]:
-                            try:
-                                error_data = response.json()
-                                error_details = error_data.get("error", {}).get("message", "")
-                                last_error = f"API error ({response.status_code}): {error_details}"
-                            except Exception:
-                                last_error = f"API returned {response.status_code}"
-                            
-                            logger.info(f"Gemini URL attempt failed with {response.status_code}: {last_error}")
-                            break # Break the retry loop to immediately fall back to v1beta
+                            last_error = f"HTTP {response.status_code} on {url}"
+                            break
                             
                         response.raise_for_status()
-                        break # Break retry loop on success (or non-retryable 4xx handled below)
-
-                    if response is not None and response.status_code in [400, 404]:
-                        continue # Fall back to next version in urls_to_try
                         
-                    data = response.json()
-                    logger.debug("Gemini response received successfully.")
-                    
-                    usage = data.get("usageMetadata", {})
-                    if "candidates" in data and len(data["candidates"]) > 0:
-                        candidate = data["candidates"][0]
-                        finish_reason = candidate.get("finishReason", "COMPLETED")
-                        parts = candidate.get("content", {}).get("parts", [])
-                        text = "".join(part.get("text", "") for part in parts if "text" in part)
-                        return text, {"usage": usage, "finish_reason": finish_reason}
-                    
-                    return "", {"usage": usage}
+                        # Parse success
+                        data = response.json()
+                        usage = data.get("usageMetadata", {})
+                        if "candidates" in data and len(data["candidates"]) > 0:
+                            candidate = data["candidates"][0]
+                            finish_reason = candidate.get("finishReason", "COMPLETED")
+                            parts = candidate.get("content", {}).get("parts", [])
+                            text = "".join(part.get("text", "") for part in parts if "text" in part)
+                            return text, {"usage": usage, "finish_reason": finish_reason}
+                        return "", {"usage": usage}
+
+                # If we broke because of 404/400, continue to next URL
+                if response is not None and response.status_code in [400, 404]:
+                    continue
 
             except httpx.HTTPError as exc:
-                last_error = str(exc)
-                if response is not None and getattr(response, "text", None):
-                    # Capture response body if available for better debugging
+                if response is not None:
                     try:
-                        error_msg = str(response.text)
-                        if error_msg.strip().startswith("{"):
-                            try:
-                                error_msg = response.json().get("error", {}).get("message", error_msg)
-                            except Exception:
-                                pass
-                        last_error = f"HTTP {response.status_code}: {error_msg}"
+                        error_msg = response.json().get("error", {}).get("message", response.text)
                     except Exception:
-                        pass
+                        error_msg = response.text
+                    
+                    if response.status_code == 404:
+                        last_error = f"Model Not Found (404): The model '{model}' was not recognized. {error_msg}"
+                    elif response.status_code == 401:
+                        last_error = f"Invalid API Key (401): The provided key was rejected by Google. {error_msg}"
+                    elif response.status_code == 429:
+                        last_error = f"Rate Limit Exceeded (429): Too many requests to Gemini. {error_msg}"
+                    else:
+                        last_error = f"HTTP {response.status_code}: {error_msg}"
+                else:
+                    last_error = f"Connection Failed: {type(exc).__name__} - {exc}"
                 
-                # If we have a response and it's not a generic retryable error, stop falling back
+                # If non-retryable response (and not 404/400 which we use for version fallback), stop.
                 if response is not None and response.status_code not in [400, 404, 500, 502, 503, 504]:
-                    # Non-retryable errors (like 401 Unauthorized, 403 Forbidden, 429 Rate Limit)
                     break
                 # If there's no response (network error like timeout), we'll try the next version anyway 
                 # or fail at the end of loop.

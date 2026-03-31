@@ -24,7 +24,7 @@ def main() -> None:
     app = QApplication(sys.argv)
     app.setApplicationName("ThreatPilot")
     app.setOrganizationName("Dipta Roy")
-    app.setApplicationVersion("1.0.0")
+    app.setApplicationVersion("1.1.0")
     
     # Set global application icon
     icon_path = Path(__file__).parent / "threatpilot" / "resources" / "app-icon.png"

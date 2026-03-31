@@ -44,10 +44,11 @@ class ThreatPanel(QWidget):
     # Construction
     # ------------------------------------------------------------------
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, filter_mode: str = "ALL") -> None:
         super().__init__(parent)
         self._register: Optional[ThreatRegister] = None
         self._category_items: Dict[STRIDECategory, QTreeWidgetItem] = {}
+        self._filter_mode = filter_mode.upper()
 
         self._setup_ui()
 
@@ -55,7 +56,8 @@ class ThreatPanel(QWidget):
         """Initialise tree widget and control buttons."""
         self.setObjectName("threat_panel")
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(8, 12, 8, 8)
+        layout.setSpacing(10)
 
         # Toolbar / Actions area
         toolbar_layout = QHBoxLayout()
@@ -150,10 +152,31 @@ class ThreatPanel(QWidget):
         header_font.setBold(True)
         is_dark = getattr(self, "_is_dark_theme", True)
         
+        # Determine which categories to show based on filter mode
+        STRIDE_ONLY = {
+            STRIDECategory.SPOOFING, STRIDECategory.TAMPERING, 
+            STRIDECategory.REPUDIATION, STRIDECategory.INFORMATION_DISCLOSURE, 
+            STRIDECategory.DENIAL_OF_SERVICE, STRIDECategory.ELEVATION_OF_PRIVILEGE
+        }
+        LINDDUN_ONLY = {
+            STRIDECategory.LINKABILITY, STRIDECategory.IDENTIFIABILITY, 
+            STRIDECategory.NON_REPUDIATION_PRIVACY, STRIDECategory.DETECTABILITY, 
+            STRIDECategory.DISCLOSURE_OF_INFORMATION, STRIDECategory.UNAWARENESS, 
+            STRIDECategory.NON_COMPLIANCE
+        }
+
         for cat in STRIDECategory:
-            # Uppercase header names for professional UI look
-            cat_item = QTreeWidgetItem(self._tree, [cat.name.upper(), cat.value])
+            # Filter categories by mode
+            if self._filter_mode == "STRIDE" and cat not in STRIDE_ONLY:
+                continue
+            if self._filter_mode == "LINDDUN" and cat not in LINDDUN_ONLY:
+                continue
+                
+            # Uppercase header names for professional UI look, with a placeholder count
+            base_name = cat.name.upper().replace("_PRIVACY", "")
+            cat_item = QTreeWidgetItem(self._tree, [f"[0] {base_name}", "", ""])
             cat_item.setFlags(cat_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            cat_item.setFirstColumnSpanned(True)  # Makes it a full width header row
             cat_item.setFont(0, header_font)
             
             # Apply distinctive section header styling
@@ -201,9 +224,6 @@ class ThreatPanel(QWidget):
                 is_dark = getattr(self, "_is_dark_theme", True)
                 if is_dark:
                     if sev_label == "CRITICAL":
-                        threat_item.setBackground(1, QColor("#7b1e1e"))
-                        threat_item.setForeground(1, QColor("white"))
-                    elif sev_label == "HIGH":
                         threat_item.setBackground(1, QColor("#cc0000"))
                         threat_item.setForeground(1, QColor("white"))
                     elif sev_label == "MEDIUM":
@@ -231,11 +251,23 @@ class ThreatPanel(QWidget):
                 # Visual state for accepted risks
                 if threat.is_accepted_risk:
                     threat_item.setForeground(1, Qt.GlobalColor.gray)
-                    threat_item.setText(1, f"[Accepted] {threat.title}")
+                    threat_item.setText(2, f"[Accepted] {threat.title}")
 
-        # Hide empty categories
-        for cat_item in self._category_items.values():
-            cat_item.setHidden(cat_item.childCount() == 0)
+        # Update category header text with the final count, and hide if empty
+        for cat in STRIDECategory:
+            cat_item = self._category_items.get(cat)
+            if not cat_item:
+                continue
+
+            count = cat_item.childCount()
+            if count > 0:
+                cat_item.setHidden(False)
+                # Prefix the count natively in the header
+                base_name = cat.name.upper().replace("_PRIVACY", "")
+                cat_item.setText(0, f"[{count}] {base_name}")
+            else:
+                # Hide empty category header
+                cat_item.setHidden(True)
 
     def _get_severity_label(self, score: float) -> str:
         """Map a numeric CVSS score to a qualitative severity label."""
@@ -254,8 +286,8 @@ class ThreatPanel(QWidget):
         if self._register is None:
             return
 
-        new_threat = Threat(category=STRIDECategory.TAMPERING)
-        self._register.add_threat(new_threat)
+        new_threat = Threat(title="New Identified Risk", category=STRIDECategory.TAMPERING)
+        self._register.add_threat(new_threat, skip_duplicates=False)
         self.refresh()
         
         # Select the new threat

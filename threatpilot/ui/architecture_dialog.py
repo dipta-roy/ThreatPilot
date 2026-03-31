@@ -20,8 +20,9 @@ from PySide6.QtWidgets import (
     QComboBox,
     QWidget,
     QLabel,
+    QApplication,
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QFont
 from threatpilot.core.project_manager import Project
 from threatpilot.core.domain_models import Component, Flow
@@ -36,9 +37,20 @@ class EntitiesDialog(QDialog):
     def __init__(self, project: Project, undo_stack=None, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Entities and Nodes")
-        self.resize(900, 600)
+        
+        # Responsive sizing: 80% of screen width
+        screen = QApplication.primaryScreen().availableGeometry()
+        width = int(screen.width() * 0.8)
+        height = int(screen.height() * 0.7)
+        self.resize(width, height)
+        
         self._project = project
         self._undo_stack = undo_stack
+        self._is_internal_edit = False
+        
+        if self._undo_stack:
+             self._undo_stack.indexChanged.connect(self._on_undo_redo_index_changed)
+             
         self._setup_ui()
         self._load_data()
 
@@ -53,11 +65,15 @@ class EntitiesDialog(QDialog):
         comp_header.setStyleSheet("color: #58a6ff; margin-bottom: 5px;")
         layout.addWidget(comp_header)
 
-        self._table = QTableWidget(0, 3)
+        self._table = QTableWidget(0, 7)
         self._table.setHorizontalHeaderLabels([
             "Entity Name",
-            "Element Classification",
-            "Asset Classification"
+            "Classification",
+            "Asset Category",
+            "Asset Type / OS",
+            "Asset Description",
+            "High Value?",
+            "Criticality Description"
         ])
 
         # Scroll settings
@@ -68,11 +84,16 @@ class EntitiesDialog(QDialog):
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         # Entity Name stretches to fill remaining space
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        self._table.setColumnWidth(0, 200)
 
         # Explicit widths for specific classifications
-        self._table.setColumnWidth(1, 250)
-        self._table.setColumnWidth(2, 250)
+        self._table.setColumnWidth(1, 150)
+        self._table.setColumnWidth(2, 150)
+        self._table.setColumnWidth(3, 150)
+        self._table.setColumnWidth(4, 300)
+        self._table.setColumnWidth(5, 100)
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
 
         self._table.setAlternatingRowColors(True)
         self._table.verticalHeader().setDefaultSectionSize(38)
@@ -125,15 +146,60 @@ class EntitiesDialog(QDialog):
             asset_combo.setProperty("row", row)
             asset_combo.currentTextChanged.connect(self._on_asset_classification_changed)
             self._table.setCellWidget(row, 2, asset_combo)
+
+            # Col 3: Type
+            type_item = QTableWidgetItem(comp.type)
+            self._table.setItem(row, 3, type_item)
+
+            # Col 4: Description
+            desc_item = QTableWidgetItem(comp.description)
+            self._table.setItem(row, 4, desc_item)
+
+            # Col 5: High Value?
+            hva_item = QTableWidgetItem()
+            hva_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            hva_item.setCheckState(Qt.CheckState.Checked if comp.is_high_value_asset else Qt.CheckState.Unchecked)
+            self._table.setItem(row, 5, hva_item)
+
+            # Col 6: Criticality
+            crit_item = QTableWidgetItem(comp.criticality_description)
+            self._table.setItem(row, 6, crit_item)
         self._table.blockSignals(False)
+
+    def _on_undo_redo_index_changed(self, index: int) -> None:
+        """Reload the table when an undo/redo takes place."""
+        if not self._is_internal_edit:
+            QTimer.singleShot(0, self._load_data)
 
     def _on_item_changed(self, item: QTableWidgetItem) -> None:
         row = item.row()
         name_item = self._table.item(row, 0)
         if name_item:
             comp = name_item.data(Qt.ItemDataRole.UserRole)
-            if comp and item.column() == 0:
-                comp.name = item.text().strip()
+            if comp:
+                field = ""
+                if item.column() == 0: field = "name"
+                elif item.column() == 3: field = "type"
+                elif item.column() == 4: field = "description"
+                elif item.column() == 5: field = "is_high_value_asset"
+                elif item.column() == 6: field = "criticality_description"
+                
+                if field:
+                    new_val = item.text().strip()
+                    if field == "is_high_value_asset":
+                        new_val = (item.checkState() == Qt.CheckState.Checked)
+
+                    old_val = getattr(comp, field)
+                    if new_val != old_val:
+                        if self._undo_stack:
+                            self._is_internal_edit = True
+                            cmd = undo_commands.PropertyUpdateCommand(comp, field, old_val, new_val)
+                            self._undo_stack.push(cmd)
+                            self._is_internal_edit = False
+                        else:
+                            setattr(comp, field, new_val)
+                        
+                        self.project_modified.emit()
 
     def _on_element_classification_changed(self, new_val: str) -> None:
         sender = self.sender()
@@ -141,7 +207,17 @@ class EntitiesDialog(QDialog):
         name_item = self._table.item(row, 0)
         if name_item:
             comp = name_item.data(Qt.ItemDataRole.UserRole)
-            if comp: comp.element_classification = new_val
+            if comp: 
+                old_val = comp.element_classification
+                if new_val != old_val:
+                    if self._undo_stack:
+                        self._is_internal_edit = True
+                        cmd = undo_commands.PropertyUpdateCommand(comp, "element_classification", old_val, new_val)
+                        self._undo_stack.push(cmd)
+                        self._is_internal_edit = False
+                    else:
+                        comp.element_classification = new_val
+                    self.project_modified.emit()
 
     def _on_asset_classification_changed(self, new_val: str) -> None:
         sender = self.sender()
@@ -149,7 +225,17 @@ class EntitiesDialog(QDialog):
         name_item = self._table.item(row, 0)
         if name_item:
             comp = name_item.data(Qt.ItemDataRole.UserRole)
-            if comp: comp.asset_classification = new_val
+            if comp: 
+                old_val = comp.asset_classification
+                if new_val != old_val:
+                    if self._undo_stack:
+                        self._is_internal_edit = True
+                        cmd = undo_commands.PropertyUpdateCommand(comp, "asset_classification", old_val, new_val)
+                        self._undo_stack.push(cmd)
+                        self._is_internal_edit = False
+                    else:
+                        comp.asset_classification = new_val
+                    self.project_modified.emit()
 
     def _on_delete_selected(self) -> None:
         row = self._table.currentRow()
@@ -188,6 +274,11 @@ class DataFlowDialog(QDialog):
         self.resize(1000, 600)
         self._project = project
         self._undo_stack = undo_stack
+        self._is_internal_edit = False
+        
+        if self._undo_stack:
+             self._undo_stack.indexChanged.connect(self._on_undo_redo_index_changed)
+
         self._setup_ui()
         self._load_data()
 
@@ -285,10 +376,30 @@ class DataFlowDialog(QDialog):
         return ""
 
     def _update_flow_source(self, flow, name):
-        flow.source_id = self._get_comp_id_by_name(name)
+        old_val = flow.source_id
+        new_val = self._get_comp_id_by_name(name)
+        if new_val != old_val:
+            if self._undo_stack:
+                self._is_internal_edit = True
+                cmd = undo_commands.PropertyUpdateCommand(flow, "source_id", old_val, new_val)
+                self._undo_stack.push(cmd)
+                self._is_internal_edit = False
+            else:
+                flow.source_id = new_val
+            self.project_modified.emit()
 
     def _update_flow_target(self, flow, name):
-        flow.target_id = self._get_comp_id_by_name(name)
+        old_val = flow.target_id
+        new_val = self._get_comp_id_by_name(name)
+        if new_val != old_val:
+            if self._undo_stack:
+                self._is_internal_edit = True
+                cmd = undo_commands.PropertyUpdateCommand(flow, "target_id", old_val, new_val)
+                self._undo_stack.push(cmd)
+                self._is_internal_edit = False
+            else:
+                flow.target_id = new_val
+            self.project_modified.emit()
 
     def _on_delete_selected_flow(self) -> None:
         row = self._flow_table.currentRow()
@@ -315,6 +426,11 @@ class DataFlowDialog(QDialog):
         self.project_modified.emit()
         self._load_data()
 
+    def _on_undo_redo_index_changed(self, index: int) -> None:
+        """Reload the table when an undo/redo takes place."""
+        if not self._is_internal_edit:
+            QTimer.singleShot(0, self._load_data)
+
     def _on_flow_item_changed(self, item: QTableWidgetItem) -> None:
         row = item.row()
         name_item = self._flow_table.item(row, 0)
@@ -322,10 +438,22 @@ class DataFlowDialog(QDialog):
         flow = name_item.data(Qt.ItemDataRole.UserRole)
         if not flow: return
 
-        if item.column() == 0:
-            flow.name = item.text().strip()
-        elif item.column() == 3:
-            flow.protocol = item.text().strip()
+        field = ""
+        if item.column() == 0: field = "name"
+        elif item.column() == 3: field = "protocol"
+
+        if field:
+            new_val = item.text().strip()
+            old_val = getattr(flow, field)
+            if new_val != old_val:
+                if self._undo_stack:
+                    self._is_internal_edit = True
+                    cmd = undo_commands.PropertyUpdateCommand(flow, field, old_val, new_val)
+                    self._undo_stack.push(cmd)
+                    self._is_internal_edit = False
+                else:
+                    setattr(flow, field, new_val)
+                self.project_modified.emit()
 
 
 # Backward compatibility alias

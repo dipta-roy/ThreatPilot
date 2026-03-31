@@ -4,7 +4,7 @@ ThreatPilot is an advanced AI-driven threat modeling application designed to hel
 
 ---
 
-## 🏗️ High-Level System Architecture
+## High-Level System Architecture
 
 The application follows a modular, layered architecture that separates presentation (UI) from core logic and AI integration.
 
@@ -46,7 +46,7 @@ graph TD
 
 ---
 
-## 📦 Core Layers and Components
+## Core Layers and Components
 
 ### 1. User Interface (UI) Layer
 The UI is built using Python and PySide6, providing a desktop-native experience for complex modeling tasks.
@@ -59,18 +59,18 @@ The UI is built using Python and PySide6, providing a desktop-native experience 
 ### 2. Core Engine
 Handles the underlying logic of threat modeling and state management.
 - **Domain Models**: Pydantic-based schemas for architectural elements (Entity, Process, Data Store, Flow).
-- **Threat Model**: Implements the STRIDE categorization and CVSS 3.1 scoring logic.
+- **Threat Model**: Implements both **STRIDE** (Security) and **LINDDUN** (Privacy) categorization, CVSS 3.1 scoring, and **MITRE ATT&CK** technique mapping.
 - **Project Manager**: Handles lifecycle of `.project.json` files, ensuring data persistence and integrity.
 - **Undo System**: Uses `QUndoStack` for multi-action undo/redo capabilities.
 
 ### 3. AI Analysis Engine
 A sophisticated pipeline that transforms architectural diagrams into structured security insights.
-- **Threat Analyzer**: The primary orchestrator that segments large architectures to fit within LLM context windows.
+- **Threat Analyzer**: The primary orchestrator that segments large architectures to fit within LLM context windows. It also includes an **XAI Reasoning engine** for generating deep technical justifications.
 - **AI Providers**: Pluggable interfaces for multiple backends:
     - **Google Gemini**: Secure integration using the `x-goog-api-key` header for enhanced privacy.
     - **Ollama**: Local AI execution for offline or private analysis (Supports Vision models like Qwen2.5-VL).
-- **Prompt Builder**: Dynamically builds multi-shot, instructional prompts containing DFD context, security posture, and strict output requirements, with metadata sanitization to prevent injection.
-- **Response Parser**: A resilient parser with partial-JSON recovery logic to extract structured threats even from truncated or imperfect LLM outputs.
+- **Prompt Builder**: Dynamically builds multi-shot, instructional prompts containing DFD context, security posture, and strict output requirements (including MITRE ATT&CK and LINDDUN context), with metadata sanitization to prevent injection.
+- **Response Parser**: A resilient parser with partial-JSON recovery logic to extract structured threats, mapping inconsistent AI keys to the unified `Threat` model.
 
 ### 4. Security & Data
 - **Project Files**: Projects are stored as structured JSON files.
@@ -79,26 +79,20 @@ A sophisticated pipeline that transforms architectural diagrams into structured 
 
 ---
 
-## 🛠️ Technology Stack
+## Technology Stack
 
 | Component | Technology |
 | :--- | :--- |
 | **Language** | Python 3.11+ |
 | **GUI Framework** | PySide6 (Qt 6) |
 | **Data Validation** | Pydantic v2 |
-<<<<<<< HEAD
 | **AI Integration** | Custom HTTPX-based providers (Gemini, Ollama) |
 | **Encryption** | Cryptography.io (Fernet, PBKDF2) |
 | **Export Formats** | Excel (OpenPyXL), Markdown, Diagram Images |
-=======
-| **AI Integration** | Ollama Local AI, Google Generative AI|
-| **Environment** | python-dotenv |
-| **Export Formats** | Excel (XLSX), Reports (Markdown/PDF) |
->>>>>>> e8d088a164bdc8952c0ea5c0e52e3f457e81399f
 
 ---
 
-## 🔄 Core Workflows
+## Core Workflows
 
 ### AI Analysis Pipeline
 1. **Extraction**: `DFDConverter` scans the Diagram Canvas and converts visual nodes/edges into a textual DFD representation.

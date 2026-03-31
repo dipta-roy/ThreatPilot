@@ -13,14 +13,24 @@ from pydantic import BaseModel, Field
 
 
 class STRIDECategory(str, Enum):
-    """The standard Microsoft STRIDE threat categories."""
+    """Broad classification for both Security (STRIDE) and Privacy (LINDDUN) threats."""
 
+    # STRIDE Security
     SPOOFING = "Spoofing"
     TAMPERING = "Tampering"
     REPUDIATION = "Repudiation"
     INFORMATION_DISCLOSURE = "Information Disclosure"
     DENIAL_OF_SERVICE = "Denial of Service"
     ELEVATION_OF_PRIVILEGE = "Elevation of Privilege"
+    
+    # LINDDUN Privacy
+    LINKABILITY = "Linkability"
+    IDENTIFIABILITY = "Identifiability"
+    NON_REPUDIATION_PRIVACY = "Non-repudiation"
+    DETECTABILITY = "Detectability"
+    DISCLOSURE_OF_INFORMATION = "Disclosure of Information"
+    UNAWARENESS = "Unawareness"
+    NON_COMPLIANCE = "Non-compliance"
 
 
 class Threat(BaseModel):
@@ -52,6 +62,9 @@ class Threat(BaseModel):
     affected_asset: str = ""
     cvss_score: float = 0.0
     cvss_vector: str = ""
+    mitre_attack_id: str = ""
+    mitre_attack_technique: str = ""
+    reasoning: str = ""
     source_dfd_node: Optional[str] = None
 
 
@@ -60,9 +73,24 @@ class ThreatRegister(BaseModel):
 
     threats: List[Threat] = Field(default_factory=list)
 
-    def add_threat(self, threat: Threat) -> None:
-        """Add a threat to the register."""
+    def add_threat(self, threat: Threat, skip_duplicates: bool = True) -> bool:
+        """Add a threat to the register.
+        
+        If skip_duplicates is True, the threat is only added if no identical 
+        threat (same title, description, and affected_components) exists.
+        
+        Returns:
+            True if the threat was added, False if it was skipped as a duplicate.
+        """
+        if skip_duplicates:
+            for existing in self.threats:
+                if (existing.title == threat.title and 
+                    existing.description == threat.description and 
+                    existing.affected_components == threat.affected_components):
+                    return False
+        
         self.threats.append(threat)
+        return True
 
     def remove_threat(self, threat_id: str) -> bool:
         """Remove a threat by its ID.

@@ -47,13 +47,14 @@ class ThreatAnalyzer:
     ) -> None:
         self.provider = provider
         self.prompt_config = prompt_config
-        self.builder = PromptBuilder(prompt_config)
+        self.builder = PromptBuilder(prompt_config, analysis_mode=provider.config.analysis_mode)
 
     async def analyze(
         self, 
         dfd: DFDModel, 
         system_name: str,
-        progress_callback: Optional[Callable] = None
+        progress_callback: Optional[Callable] = None,
+        result_callback: Optional[Callable[[ThreatRegister], None]] = None
     ) -> tuple[ThreatRegister, str, dict]:
         """Execute a full STRIDE analysis on the provided DFD.
 
@@ -108,21 +109,29 @@ class ThreatAnalyzer:
             
             # Merge
             for t in reg.threats:
-                is_duplicate = any(
-                    et.title == t.title and 
-                    et.affected_components == t.affected_components and
-                    et.description == t.description
-                    for et in all_threats.threats
-                )
-                if not is_duplicate:
-                    all_threats.add_threat(t)
+                all_threats.add_threat(t)
+            
+            # Emit partial result for incremental UI updates (H.1)
+            if result_callback:
+                result_callback(reg)
             
             full_raw_text.append(f"--- Segment {current_segment} Analysis ---\n{raw}")
             
-            # Aggregate usage
+            # Aggregate usage across different provider schemas (Gemini vs Ollama vs OpenAI)
             seg_usage = usage.get("usage", usage)
-            total_input += seg_usage.get("promptTokenCount", seg_usage.get("input_tokens", 0))
-            total_output += seg_usage.get("candidatesTokenCount", seg_usage.get("output_tokens", 0))
+            
+            # Input/Prompt Tokens
+            seg_in = seg_usage.get("promptTokenCount") or \
+                     seg_usage.get("prompt_tokens") or \
+                     seg_usage.get("prompt_eval_count") or 0
+            total_input += seg_in
+            
+            # Output/Completion Tokens
+            seg_out = seg_usage.get("candidatesTokenCount") or \
+                      seg_usage.get("completion_tokens") or \
+                      seg_usage.get("eval_count") or 0
+            total_output += seg_out
+            
             last_finish_reason = usage.get("finish_reason", last_finish_reason)
 
         # Return in the same format as _analyze_segment for consistent handling
@@ -199,14 +208,47 @@ class ThreatAnalyzer:
         self.provider.config.max_tokens = original_max
         raise last_error or RuntimeError("Analysis failed after maximum retries.")
 
+    async def analyze_reasoning(self, threat: Threat) -> str:
+        """Execute a separate AI call to generate deep technical reasoning for a specific threat."""
+        prompt = self.builder.build_reasoning_prompt(threat)
+        # Use a specialized system prompt for reasoning
+        system_prompt = (
+            "You are 'ThreatPilot XAI', a specialized security reasoning engine. "
+            "Your task is to provide a deep technical 'Why' for identified security or privacy threats. "
+            "Explain the architectural logic, attack path, and risk rationalization. "
+            "Do NOT identify new threats. Be precise, professional, and use markdown."
+        )
+        
+        try:
+            raw_response, _ = await self.provider.chat_complete(
+                prompt=prompt,
+                system_instructions=system_prompt
+            )
+            return str(raw_response or "AI Reasoning engine returned an empty response.")
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).error(f"XAI Reasoning failed: {exc}")
+            return f"Failed to generate reasoning: {str(exc)}"
+
     def _map_category(self, cat_str: str) -> STRIDECategory:
-        """Fuzzy map text categories from AI to the standard STRIDE enum."""
+        """Fuzzy map text categories from AI to the standard STRIDE/LINDDUN enum."""
         s = str(cat_str).lower().strip()
+        
+        # STRIDE Security
         if "spoofing" in s: return STRIDECategory.SPOOFING
         if "tampering" in s: return STRIDECategory.TAMPERING
         if "repudiation" in s: return STRIDECategory.REPUDIATION
-        if "disclosure" in s or "privacy" in s: return STRIDECategory.INFORMATION_DISCLOSURE
+        if "disclosure" in s or "information" in s: return STRIDECategory.INFORMATION_DISCLOSURE
         if "denial" in s or "dos" in s: return STRIDECategory.DENIAL_OF_SERVICE
         if "privilege" in s or "elevation" in s: return STRIDECategory.ELEVATION_OF_PRIVILEGE
         
+        # LINDDUN Privacy
+        if "linkability" in s: return STRIDECategory.LINKABILITY
+        if "identifiability" in s: return STRIDECategory.IDENTIFIABILITY
+        if "repudiation" in s and ("non" in s or "privacy" in s): return STRIDECategory.NON_REPUDIATION_PRIVACY
+        if "detectability" in s: return STRIDECategory.DETECTABILITY
+        if "disclosure" in s and "privacy" in s: return STRIDECategory.DISCLOSURE_OF_INFORMATION
+        if "unawareness" in s: return STRIDECategory.UNAWARENESS
+        if "compliance" in s: return STRIDECategory.NON_COMPLIANCE
+
         return STRIDECategory.INFORMATION_DISCLOSURE

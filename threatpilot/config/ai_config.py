@@ -31,12 +31,13 @@ class AIConfig(BaseModel):
 
     provider_type: str = "ollama"
     endpoint_url: str = "http://localhost:11434"
-    model_name: str = "qwen2.5vl:3b"
+    model_name: str = ""
     temperature: float = 0.7
     max_tokens: int = 8192
-    timeout: int = 120
+    timeout: int = 3600
     gemini_api_key: SecretStr = SecretStr("")
     autosave_interval: int = 5
+    analysis_mode: str = "STRIDE"  # STRIDE or LINDDUN
 
     model_config = ConfigDict(
         extra="ignore",
@@ -86,11 +87,12 @@ class AIConfig(BaseModel):
         config = cls(
             provider_type=get_opt("AI_PROVIDER_TYPE", "ollama"),
             endpoint_url=get_opt("AI_ENDPOINT_URL", "http://localhost:11434"),
-            model_name=get_opt("AI_MODEL_NAME", "qwen2.5vl:3b"),
+            model_name=get_opt("AI_MODEL_NAME", ""),
             temperature=float(get_opt("AI_TEMPERATURE", "0.7")),
             max_tokens=int(get_opt("AI_MAX_TOKENS", "8192")),
-            timeout=int(get_opt("AI_TIMEOUT", "120")),
+            timeout=int(get_opt("AI_TIMEOUT", "3600")),
             autosave_interval=int(get_opt("AUTOSAVE_INTERVAL", "5")),
+            analysis_mode=get_opt("AI_ANALYSIS_MODE", "STRIDE"),
             gemini_api_key=SecretStr(scrub_key(decrypt_api_key(get_opt("GEMINI_API_KEY", "")))),
         )
         
@@ -111,6 +113,7 @@ class AIConfig(BaseModel):
         dotenv.set_key(_ENV_FILE, "AI_MAX_TOKENS", str(self.max_tokens))
         dotenv.set_key(_ENV_FILE, "AI_TIMEOUT", str(self.timeout))
         dotenv.set_key(_ENV_FILE, "AUTOSAVE_INTERVAL", str(self.autosave_interval))
+        dotenv.set_key(_ENV_FILE, "AI_ANALYSIS_MODE", self.analysis_mode)
         
         # Only write non-empty keys
         api_key_str = self.gemini_api_key.get_secret_value()

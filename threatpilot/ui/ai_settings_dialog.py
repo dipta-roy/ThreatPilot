@@ -41,7 +41,7 @@ class AISettingsDialog(QDialog):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("AI Settings")
-        self.setFixedWidth(400)
+        self.setFixedWidth(550)
         
         # We work on a copy so we can cancel without mutation
         self._config = AIConfig.load()
@@ -49,8 +49,6 @@ class AISettingsDialog(QDialog):
         self._setup_ui()
         self._on_provider_changed(self._provider_type.currentText())
         
-        # Restore the user's custom model name that may have been temporarily 
-        # overwritten by the default provider switching logic during setup.
         if self._config.model_name:
             self._model_name.setCurrentText(self._config.model_name)
 
@@ -66,6 +64,12 @@ class AISettingsDialog(QDialog):
         self._provider_type.setCurrentText(self._config.provider_type)
         self._provider_type.currentTextChanged.connect(self._on_provider_changed)
         self._form.addRow("Provider Type:", self._provider_type)
+
+        # Analysis Mode (STRIDE vs LINDDUN)
+        self._analysis_mode = QComboBox()
+        self._analysis_mode.addItems(["STRIDE", "LINDDUN"])
+        self._analysis_mode.setCurrentText(self._config.analysis_mode)
+        self._form.addRow("Analysis Focus:", self._analysis_mode)
 
         # Endpoint URL
         self._endpoint_url = QLineEdit(self._config.endpoint_url)
@@ -95,7 +99,7 @@ class AISettingsDialog(QDialog):
 
         # Timeout
         self._timeout = QSpinBox()
-        self._timeout.setRange(1, 3600)
+        self._timeout.setRange(1, 86400)
         self._timeout.setValue(self._config.timeout)
         self._form.addRow("Timeout (sec):", self._timeout)
 
@@ -171,7 +175,7 @@ class AISettingsDialog(QDialog):
         # 2. Sensible Model Defaults
         model_defaults = {
             "gemini": "gemini-3.1-flash-lite-preview",
-            "ollama": "qwen2.5vl:3b"
+            "ollama": ""
         }
         
         endpoint_defaults = {
@@ -190,19 +194,22 @@ class AISettingsDialog(QDialog):
                 url = self._endpoint_url.text()
             
             try:
-                with httpx.Client(timeout=1.0) as client:
+                with httpx.Client(timeout=2.0) as client:
                     resp = client.get(f"{url}/api/tags")
                     resp.raise_for_status()
                     models = [m.get("name") for m in resp.json().get("models", [])]
                     if models:
                         self._model_name.addItems(models)
-                        self._model_name.setCurrentText(models[0])
+                        # Honor current config if it matches, otherwise use first available
+                        current = self._config.model_name
+                        if current in models:
+                            self._model_name.setCurrentText(current)
+                        else:
+                            self._model_name.setCurrentText(models[0])
                     else:
-                        self._model_name.addItem("No Models Detected")
-                        self._model_name.setCurrentText("No Models Detected")
+                        self._model_name.addItem("No Models Found")
             except Exception:
-                self._model_name.addItem("No Models Detected")
-                self._model_name.setCurrentText("No Models Detected")
+                self._model_name.addItem("No Connection")
         
         elif provider_type == "gemini":
             self._model_name.addItems([
@@ -250,4 +257,5 @@ class AISettingsDialog(QDialog):
         self._config.max_tokens = self._max_tokens.value()
         self._config.timeout = self._timeout.value()
         self._config.autosave_interval = self._autosave.value()
+        self._config.analysis_mode = self._analysis_mode.currentText()
         return self._config

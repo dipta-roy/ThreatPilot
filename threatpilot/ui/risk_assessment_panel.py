@@ -69,7 +69,7 @@ class RiskAssessmentPanel(QWidget):
 
         self._table = QTableWidget(0, 12)
         self._table.setHorizontalHeaderLabels([
-            "Risk ID",
+            "SL #",
             "Element / Component Name",
             "Asset / Component Name",
             "Threats",
@@ -278,7 +278,7 @@ class RiskAssessmentPanel(QWidget):
             return
             
         new_threat = Threat(title="New Identified Risk", category=STRIDECategory.TAMPERING)
-        self._project.threat_register.add_threat(new_threat)
+        self._project.threat_register.add_threat(new_threat, skip_duplicates=False)
         self.refresh()
         self._edit_threat(new_threat)
         self.threat_edited.emit()
@@ -301,6 +301,7 @@ class RiskAssessmentPanel(QWidget):
     def _on_filter_changed(self, text: str) -> None:
         """Filter the table rows based on the text."""
         text = text.lower()
+        visible_row_count = 1
         for row in range(self._table.rowCount()):
             match = False
             for col in range(self._table.columnCount()):
@@ -308,4 +309,8 @@ class RiskAssessmentPanel(QWidget):
                 if item and text in item.text().lower():
                     match = True
                     break
+            
             self._table.setRowHidden(row, not match)
+            if match:
+                self._table.item(row, 0).setText(str(visible_row_count))
+                visible_row_count += 1

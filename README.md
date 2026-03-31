@@ -14,7 +14,10 @@
 - **Zero-Dependency Detection**: Traditional Computer Vision (OpenCV) has been replaced by more accurate AI-driven detection, reducing application size by 80%.
 
 ### 2. Streamlined AI Threat Analysis
-- **Context-Aware Prompts**: Generates structured, industry-contextualized prompts for LLMs to perform detailed **STRIDE** analysis.
+- **Context-Aware Prompts**: Generates structured, industry-contextualized prompts for LLMs to perform detailed **STRIDE** or **LINDDUN** analysis.
+- **Multimodal Methodology**: Support for both traditional security threat modeling (STRIDE) and advanced privacy threat modeling (LINDDUN).
+- **MITRE ATT&CK® Mapping**: Automatically maps identified threats to specific MITRE ATT&CK techniques for better alignment with defensive operations.
+- **Explainable AI (XAI)**: Generate deep technical reasoning (Attack Vector, Root Cause, Risk Rationalization) for any identified threat to improve architect trust and validation.
 - **Optimized Provider Support**: Focused support for local **Ollama** instances (for privacy) and high-performance **Google Gemini** endpoints.
 - **Segmented Analysis**: Automatically handles large-scale architectures by segmenting diagrams into batches to respect model token limits while maintaining context.
 
@@ -95,3 +98,28 @@ ThreatPilot is built on a **Modular Domain-Driven Architecture**. Each core pack
 Detailed developer documentation: [Architecture Overview](./ARCHITECTURE.md).
 
 ---
+## Trust & Verification
+
+Download Code Verification Certificate: [Dipta Roy - Code Verification Certificate](https://github.com/dipta-roy/dipta-roy.github.io/blob/main/downloads/Code%20Verifying%20Certificates.zip).
+```
+- HOW TO TRUST
+
+1. Download certficate from above link.
+1. Right-click `Signed_By_Dipta_CodeSigningPublicKey.cer` → **Install Certificate**
+2. Select **Local Machine** (requires admin)
+3. Choose **Place all certificates in the following store**
+4. Click **Browse** → Select **Trusted Root Certification Authorities**
+5. Click **Next** → **Finish**
+
+- VERIFY APPLICATION AUTHENTICITY
+
+1. To confirm the application is genuine, right click on ThreatPilot-1.1.0-win64.msi and click on Properties.
+2. Go to the Digital Signatures tab.
+3. Select "Signed_By_Dipta" from the Embedded Signatures list, then choose Details.
+4. In the General tab, you should see the message "This digital signature is OK."
+```
+
+Once verified,
+```
+Run ThreatPilot-1.1.0-win64.msi and install the application.
+```

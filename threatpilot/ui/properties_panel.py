@@ -9,13 +9,15 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFormLayout,
     QLabel,
     QLineEdit,
+    QPushButton,
+    QProgressBar,
     QScrollArea,
     QTabWidget,
     QTextEdit,
@@ -26,6 +28,7 @@ from PySide6.QtWidgets import (
 from threatpilot.core.domain_models import Component, Flow, TrustBoundary
 from threatpilot.core.threat_model import Threat, STRIDECategory
 from threatpilot.ui.cvss_dialog import CVSSCalculatorDialog
+from threatpilot.ai.response_parser import convert_reasoning_to_markdown
 from threatpilot.utils.logger import sanitize_text
 
 
@@ -42,50 +45,51 @@ class PropertiesPanel(QWidget):
     """
 
     property_changed: Signal = Signal(object)  # One of Component, Flow, TrustBoundary
+    reasoning_requested: Signal = Signal(object)  # Threat
 
     # ------------------------------------------------------------------
     # Construction
     # ------------------------------------------------------------------
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, undo_stack: QUndoStack | None = None) -> None:
         super().__init__(parent)
         self._current_item: Any | None = None
+        self._undo_stack = undo_stack
+        
+        # Debounce timer for multiline edits (QTextEdit)
+        self._debounce_timer = QTimer(self)
+        self._debounce_timer.setSingleShot(True)
+        self._debounce_timer.setInterval(1000) # Wait 1s after last keystroke
+        self._debounce_timer.timeout.connect(self._on_debounced_timeout)
+        self._pending_field: str | None = None
+        self._pending_getter = None
+        # Guard: True while we are committing a change from within this panel
+        self._is_panel_editing: bool = False
 
         self._setup_ui()
 
     def _setup_ui(self) -> None:
-        """Initialise the layout with tabs for Properties and AI Logs."""
+        """Initialise the layout with the Properties form."""
         self.setObjectName("properties_container")
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(0, 0, 0, 0)
-
-        self._tabs = QTabWidget()
-        self._tabs.setObjectName("properties_tabs")
-        root_layout.addWidget(self._tabs)
-
-        # --- Tab 1: Properties ---
-        self._prop_widget = QWidget()
-        prop_layout = QVBoxLayout(self._prop_widget)
-        prop_layout.setContentsMargins(5, 5, 5, 5)
 
         # Title/Header
         self._header = QLabel("No item selected")
         self._header.setObjectName("property_header")
         self._header.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        prop_layout.addWidget(self._header)
+        root_layout.addWidget(self._header)
 
         # Scroll Area for the form
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.NoFrame)
-        prop_layout.addWidget(scroll)
+        root_layout.addWidget(scroll)
 
         self._container = QWidget()
         self._form_layout = QFormLayout(self._container)
         scroll.setWidget(self._container)
         
-        self._tabs.addTab(self._prop_widget, "Element Attributes")
-
         # Security Warning for generated content
         self._security_warning = QLabel(
             "⚠️ Security Advisory: All AI-generated mitigations and descriptions should be verified "
@@ -95,15 +99,7 @@ class PropertiesPanel(QWidget):
         self._security_warning.setStyleSheet("color: #d73a49; font-style: italic; font-size: 10px; margin: 4px;")
         self._security_warning.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._security_warning.setVisible(False)
-        prop_layout.addWidget(self._security_warning)
-
-        # --- Tab 2: AI Activity Logs ---
-        self._log_view = QTextEdit()
-        self._log_view.setReadOnly(True)
-        self._log_view.setObjectName("log_view")
-        self._log_view.setPlaceholderText("AI transaction logs will appear here during detection or analysis...")
-        
-        self._tabs.addTab(self._log_view, "AI Activity Logs")
+        root_layout.addWidget(self._security_warning)
 
     def set_theme(self, is_dark: bool) -> None:
         """Update the panel's internal state for theme changes."""
@@ -113,25 +109,7 @@ class PropertiesPanel(QWidget):
         if self._current_item:
             self.set_item(self._current_item)
 
-    def append_log(self, text: str, category: str = "INFO") -> None:
-        """Add a timestamped entry to the AI Activity Log tab."""
-        time_str = datetime.now().strftime("%H:%M:%S")
-        
-        is_dark = getattr(self, "_is_dark_theme", True)
-        
-        # Theme-aware log colors
-        if is_dark:
-            color = "#58a6ff" if "PROMPT" in category else "#7ee787" if "RESPONSE" in category else "#8b949e"
-            time_color = "#484f58"
-        else:
-            color = "#0969da" if "PROMPT" in category else "#1a7f37" if "RESPONSE" in category else "#57606a"
-            time_color = "#8b949e"
-        
-        sanitized_text = sanitize_text(text)
-        log_entry = f"<span style='color: {time_color};'>[{time_str}]</span> <b style='color: {color};'>{category}</b>: {sanitized_text}<br>"
-        self._log_view.append(log_entry)
-        # Scroll to bottom
-        self._log_view.verticalScrollBar().setValue(self._log_view.verticalScrollBar().maximum())
+
 
     # ------------------------------------------------------------------
     # Public API
@@ -151,7 +129,7 @@ class PropertiesPanel(QWidget):
             self._security_warning.setVisible(False)
             return
 
-        # Show warning if the item came from AI or is a Threat
+        # Show warning if it is a Threat
         from threatpilot.core.threat_model import Threat
         if isinstance(item, Threat):
             self._security_warning.setVisible(True)
@@ -199,16 +177,44 @@ class PropertiesPanel(QWidget):
             self._add_combo_row("Likelihood Score:", "likelihood", str(item.likelihood), ["1", "2", "3", "4", "5"])
             self._add_text_row("CVSS Score:", "cvss_score", str(item.cvss_score))
             self._add_text_row("CVSS Vector:", "cvss_vector", item.cvss_vector)
+            self._add_text_row("MITRE ATT&CK ID:", "mitre_attack_id", item.mitre_attack_id)
+            self._add_text_row("MITRE Technique:", "mitre_attack_technique", item.mitre_attack_technique)
             
             self._add_textarea_row("Affected Components:", "affected_components", item.affected_components)
             self._add_text_row("Affected Element:", "affected_element", item.affected_element)
             self._add_text_row("Affected Asset:", "affected_asset", item.affected_asset)
             self._add_checkbox_row("Accepted Risk:", "is_accepted_risk", item.is_accepted_risk)
             self._add_textarea_row("Acceptance Rationale:", "acceptance_justification", item.acceptance_justification)
+            
+            # --- Integrated XAI Section ---
+            self._add_readonly_textarea_row("XAI Reasoning:", "reasoning", item.reasoning or "Reasoning not yet generated.")
+            
+            self._btn_xai = QPushButton("Analyze Reasoning using XAI")
+            self._btn_xai.setCursor(Qt.CursorShape.PointingHandCursor)
+            self._btn_xai.setStyleSheet("background-color: #238636; color: white; font-weight: bold; padding: 8px; margin: 10px 0;")
+            self._btn_xai.clicked.connect(self._on_request_reasoning)
+            self._form_layout.addRow("", self._btn_xai)
+            
+            self._xai_progress = QProgressBar()
+            self._xai_progress.setRange(0, 0) # Indeterminate
+            self._xai_progress.setTextVisible(False)
+            self._xai_progress.setFixedHeight(4)
+            self._xai_progress.setVisible(False)
+            self._form_layout.addRow("", self._xai_progress)
+            
             self._add_readonly_row("Threat ID:", item.threat_id)
 
         else:
             self._header.setText(f"{type(item).__name__} Unknown")
+
+    def set_reasoning_progress(self, busy: bool) -> None:
+        """Update the UI state to reflect an active XAI reasoning pass."""
+        if hasattr(self, "_btn_xai"):
+            self._btn_xai.setEnabled(not busy)
+            self._btn_xai.setText("Analyzing Reasoning..." if busy else "Analyze Reasoning using XAI")
+        
+        if hasattr(self, "_xai_progress"):
+            self._xai_progress.setVisible(busy)
 
     # ------------------------------------------------------------------
     # Form Helpers
@@ -243,14 +249,37 @@ class PropertiesPanel(QWidget):
 
             edit.mousePressEvent = lambda e: launch_calc()
 
-        edit.textChanged.connect(lambda text: self._on_field_changed(field, text))
+        edit.editingFinished.connect(lambda: self._on_field_changed(field, edit.text()))
         self._form_layout.addRow(label, edit)
 
     def _add_textarea_row(self, label: str, field: str, value: str) -> None:
-        """Add a multiline text environment row."""
+        """Add a multiline text environment row with debounced updates."""
         edit = QTextEdit(str(value))
         edit.setFixedHeight(100)
-        edit.textChanged.connect(lambda: self._on_field_changed(field, edit.toPlainText()))
+        
+        def _on_text_changed():
+            self._pending_field = field
+            self._pending_getter = edit.toPlainText
+            self._debounce_timer.start()
+
+        edit.textChanged.connect(_on_text_changed)
+        self._form_layout.addRow(label, edit)
+
+    def _add_readonly_textarea_row(self, label: str, field: str, value: str) -> None:
+        """Add a multiline readonly text row (Markdown supported)."""
+        edit = QTextEdit()
+        edit.setReadOnly(True)
+
+        # Convert raw dict/JSON reasoning strings to readable Markdown paragraphs.
+        # This handles both newly generated and previously saved reasoning text.
+        if field == "reasoning":
+            value = convert_reasoning_to_markdown(value)
+            self._reasoning_view = edit
+
+        edit.setMarkdown(value)
+        edit.setFixedHeight(150)
+        edit.setObjectName(f"readonly_{field}")
+
         self._form_layout.addRow(label, edit)
 
     def _add_readonly_row(self, label: str, value: str) -> None:
@@ -281,6 +310,14 @@ class PropertiesPanel(QWidget):
     # Event Handlers
     # ------------------------------------------------------------------
 
+    def _on_request_reasoning(self) -> None:
+        """Inform the controller that reasoning analysis should be executed for the current threat."""
+        from threatpilot.core.threat_model import Threat
+        if isinstance(self._current_item, Threat):
+            self._btn_xai.setEnabled(False)
+            self._reasoning_view.setPlaceholderText("Analyzing Reasoning with AI... Please wait.")
+            self.reasoning_requested.emit(self._current_item)
+
     def _on_field_changed(self, field: str, value: Any) -> None:
         """Update the model object field and emit change signal with type awareness."""
         if self._current_item is not None:
@@ -294,10 +331,32 @@ class PropertiesPanel(QWidget):
             
             # Special case for STRIDE Category enum
             if field == "category":
+                # Ensure value is converted from string to enum member if needed
                 for cat in STRIDECategory:
                     if cat.value == value:
                         value = cat
                         break
 
-            setattr(self._current_item, field, value)
-            self.property_changed.emit(self._current_item)
+            # Use Undo-stack if present for seamless revision tracking
+            old_val = getattr(self._current_item, field)
+            if value != old_val:
+                self._is_panel_editing = True
+                try:
+                    if self._undo_stack:
+                        from threatpilot.ui import undo_commands
+                        cmd = undo_commands.PropertyUpdateCommand(self._current_item, field, old_val, value)
+                        self._undo_stack.push(cmd)
+                    else:
+                        setattr(self._current_item, field, value)
+                    
+                    self.property_changed.emit(self._current_item)
+                finally:
+                    self._is_panel_editing = False
+
+    def _on_debounced_timeout(self) -> None:
+        """Commit the pending field update after typing has stopped."""
+        if self._pending_field and self._pending_getter:
+            value = self._pending_getter()
+            self._on_field_changed(self._pending_field, value)
+            self._pending_field = None
+            self._pending_getter = None

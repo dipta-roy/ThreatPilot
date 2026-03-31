@@ -6,8 +6,6 @@ The ThreatPilot team takes the security of our application and its users serious
 
 **Please do not open a public issue for security vulnerabilities.**
 
-**Please report security issues responsibly.**
-
 - **Preferred**: Open a **private** security advisory on GitHub:  
   [https://github.com/dipta-roy/ThreatPilot/security/advisories/new](https://github.com/dipta-roy/ThreatPilot/security/advisories/new)
 
