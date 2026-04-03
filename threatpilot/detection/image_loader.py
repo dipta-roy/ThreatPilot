@@ -5,20 +5,14 @@ loading it into a ``QGraphicsScene`` for display on the diagram canvas.
 """
 
 from __future__ import annotations
-
 import shutil
 from pathlib import Path
-
 from PySide6.QtCore import Qt, QRectF
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import QGraphicsPixmapItem, QGraphicsScene, QGraphicsView
-
 from threatpilot.core.diagram_model import Diagram
 
-
-# Supported image extensions (lowercase, with leading dot)
 SUPPORTED_EXTENSIONS: frozenset[str] = frozenset({".png", ".jpg", ".jpeg"})
-
 
 def import_diagram_file(
     source_path: str | Path,
@@ -53,10 +47,9 @@ def import_diagram_file(
             f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
         )
 
-    # Build diagram metadata first so we can use the ID in the filename
     diagram = Diagram.create(
         original_name=src.name,
-        file_path="",  # will be set below
+        file_path="",
     )
 
     dest_name = f"{diagram.diagram_id}_{src.name}"
@@ -64,7 +57,6 @@ def import_diagram_file(
     diagrams_dir.mkdir(parents=True, exist_ok=True)
     dest = diagrams_dir / dest_name
 
-    # Read image dimensions and optionally resize if very large
     img = QImage(str(src))
     if not img.isNull():
         MAX_SIZE = 4096
@@ -82,12 +74,9 @@ def import_diagram_file(
         diagram.width = img.width()
         diagram.height = img.height()
     else:
-        # Fallback if QImage fails to read before copying (unlikely)
         shutil.copy2(str(src), str(dest))
 
-    # Store relative path (relative to project root)
     diagram.file_path = f"diagrams/{dest_name}"
-
     return diagram
 
 
@@ -126,6 +115,6 @@ def load_diagram_to_scene(
     scene.setSceneRect(QRectF(pixmap.rect()))
 
     if view is not None:
-        view.fitInView(scene.sceneRect(), mode=1)  # Qt.KeepAspectRatio
+        view.fitInView(scene.sceneRect(), mode=1)
 
     return item

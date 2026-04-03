@@ -9,12 +9,10 @@ Provides the primary PySide6 QMainWindow with:
 """
 
 from __future__ import annotations
-
 import asyncio
 from datetime import datetime
 from pathlib import Path
-
-from PySide6.QtCore import Qt, QSize, QTimer, QUrl, QThread, Signal, QRectF, QPointF
+from PySide6.QtCore import Qt, QSize, QTimer, QUrl, QThread, Signal, QRectF, QPointF, QBuffer, QIODevice
 from PySide6.QtGui import QAction, QKeySequence, QFont, QPixmap, QImage, QIcon, QUndoStack, QUndoCommand, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
@@ -36,7 +34,6 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QTextEdit,
 )
-
 from threatpilot.core.diagram_model import Diagram
 from threatpilot.core.threat_model import Threat
 from threatpilot.core.project_manager import (
@@ -69,8 +66,6 @@ from threatpilot.ai.response_parser import extract_json
 from threatpilot.config.ai_config import AIConfig
 from threatpilot.utils.logger import setup_logging, LOG_DIR, sanitize_text
 
-
-
 class AnalysisWorker(QThread):
     """Background worker for running AI analysis without blocking the UI.
     
@@ -78,12 +73,12 @@ class AnalysisWorker(QThread):
         finished: Emitted when analysis completes successfully.
         failed: Emitted when an error occurs.
     """
-    finished = Signal(object)  # ThreatRegister
-    failed = Signal(str)      # Error message
+    finished = Signal(object)
+    failed = Signal(str)
     partial_result_ready = Signal(object)
     prompt_ready = Signal(str)
     response_ready = Signal(str)
-    request_segment_continuation = Signal(int, int) # (current, total)
+    request_segment_continuation = Signal(int, int)
 
     def __init__(self, provider, prompt_config, dfd, system_name, parent=None):
         super().__init__(parent)
@@ -92,7 +87,6 @@ class AnalysisWorker(QThread):
         self.dfd = dfd
         self.system_name = system_name
         
-        # Continuation flow
         import threading
         self._continue_event = threading.Event()
         self._should_continue_result = True
@@ -113,11 +107,9 @@ class AnalysisWorker(QThread):
             async def progress_cb(current, total):
                 self._continue_event.clear()
                 self.request_segment_continuation.emit(current, total)
-                # Block the worker thread until UI signals back
                 self._continue_event.wait()
                 return self._should_continue_result
 
-            # Execute the multi-segment logic (H.1)
             register, raw_resp, usage = loop.run_until_complete(
                 analyzer.analyze(
                     self.dfd, 
@@ -127,21 +119,17 @@ class AnalysisWorker(QThread):
                 )
             )
             
-            # Handle cancellation prior to segmentation
             if "Analysis cancelled by user" in raw_resp:
                 self.failed.emit("Analysis cancelled by user.")
                 return
                 
-            # Log the prompt only if we actually ran the analysis
             system_p = analyzer.builder.build_system_prompt()
             user_p = analyzer.builder.build_user_prompt(self.dfd, self.system_name)
             self.prompt_ready.emit(f"SYSTEM: {system_p}\n\nUSER: {user_p}")
             
-            # Log the raw response and usage
             self.response_ready.emit(raw_resp)
             if usage:
                 u = usage.get("usage", usage)
-                # Universal token mapping (Gemini, Ollama, OpenAI)
                 in_t = u.get('promptTokenCount') or u.get('prompt_tokens') or u.get('prompt_eval_count') or 0
                 out_t = u.get('candidatesTokenCount') or u.get('completion_tokens') or u.get('eval_count') or 0
                 total_t = u.get('totalTokenCount') or u.get('total_tokens') or (in_t + out_t)
@@ -155,10 +143,6 @@ class AnalysisWorker(QThread):
             self.failed.emit(str(exc))
         finally:
             loop.close()
-
-
-
-
 
 class AIVisionWorker(QThread):
     """Background worker for multimodal AI architecture detection.
@@ -185,7 +169,17 @@ class AIVisionWorker(QThread):
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
-            image_bytes = Path(self.image_path).read_bytes()
+            img = QImage(self.image_path)
+            if img.isNull():
+                raise FileNotFoundError(f"Selected image file at {self.image_path} could not be loaded.")
+            
+            if img.width() > 1024 or img.height() > 1024:
+                img = img.scaled(1024, 1024, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            
+            buffer = QBuffer()
+            buffer.open(QIODevice.WriteOnly)
+            img.save(buffer, "PNG")
+            image_bytes = bytes(buffer.data())
 
             builder = PromptBuilder(self.prompt_config)
             prompt = builder.build_vision_detection_prompt(self.system_name)
@@ -208,8 +202,6 @@ class AIVisionWorker(QThread):
             if data:
                 self.finished.emit(data)
             else:
-                # Try a last-ditch effort for very messy responses:
-                # Look for ANYTHING that looks like a list or dict if the standard extract failed
                 self.failed.emit("Failed to parse AI response. Check the Logs tab for details on the raw output structure.")
         except Exception as exc:
             self.failed.emit(str(exc))
@@ -219,7 +211,7 @@ class AIVisionWorker(QThread):
 
 class ReasoningWorker(QThread):
     """Background worker for deep technical reasoning (XAI)."""
-    finished = Signal(str, object)  # Reasoning text, Threat object
+    finished = Signal(str, object)
     failed = Signal(str)
 
     def __init__(self, provider, prompt_config, threat, analysis_mode, parent=None):
@@ -236,7 +228,6 @@ class ReasoningWorker(QThread):
             asyncio.set_event_loop(loop)
             
             analyzer = ThreatAnalyzer(self.provider, self.prompt_config)
-            # Ensure analyzer is in the same mode as the UI
             analyzer.builder.analysis_mode = self.analysis_mode
             
             reasoning = loop.run_until_complete(analyzer.analyze_reasoning(self.threat))
@@ -283,18 +274,12 @@ class MainWindow(QMainWindow):
     File | Edit | AI | View | Export
     """
 
-    # ------------------------------------------------------------------
-    # Construction
-    # ------------------------------------------------------------------
-
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
 
-        # Runtime state
         self._project: Project | None = None
         self._current_diagram: Diagram | None = None
 
-        # Undo/Redo System (Must come before _setup_menu_bar)
         self._undo_stack = QUndoStack(self)
         self._undo_action = self._undo_stack.createUndoAction(self, "&Undo")
         self._redo_action = self._undo_stack.createRedoAction(self, "&Redo")
@@ -309,21 +294,11 @@ class MainWindow(QMainWindow):
         self._setup_status_bar()
         self._connect_actions()
         
-        # Connect Undo/Redo signals to refresh the UI automatically
         self._undo_stack.indexChanged.connect(self._on_undo_redo_happened)
         
-        # Add undo/redo to the Edit menu (which is set up in _setup_menu_bar)
-        # We'll need to reference it there.
-        
-        # Theme State
-        self._is_dark_theme = True
-        
-        # Load and apply global modern dark-theme stylesheet
+        self._is_dark_theme = False
         self._load_stylesheet()
-        
         self._load_recent_project()
-        
-        # Setup auto-save timer based on configuration (default 5 min)
         config = AIConfig.load()
         self._autosave_timer = QTimer(self)
         self._autosave_timer.timeout.connect(self._on_autosave)
@@ -332,20 +307,16 @@ class MainWindow(QMainWindow):
     def _load_stylesheet(self) -> None:
         """Apply a professional dark or light theme across the entire application."""
         theme_file = "style.qss" if self._is_dark_theme else "style_light.qss"
-        # Use absolute path relative to this file
         resource_dir = Path(__file__).parent.parent / "resources"
         style_path = resource_dir / theme_file
         if style_path.exists():
             from PySide6.QtWidgets import QApplication
             QApplication.instance().setStyleSheet(style_path.read_text())
         else:
-            # Fallback for dark theme if light is missing
             fallback_path = resource_dir / "style.qss"
             if fallback_path.exists():
                 from PySide6.QtWidgets import QApplication
                 QApplication.instance().setStyleSheet(fallback_path.read_text())
-                
-        # Sync components with theme
         if hasattr(self, "_risk_assessment_panel"):
             self._risk_assessment_panel.set_theme(self._is_dark_theme)
         if hasattr(self, "_threat_panel"):
@@ -364,9 +335,15 @@ class MainWindow(QMainWindow):
         theme_name = "Dark" if self._is_dark_theme else "Light"
         self.statusBar().showMessage(f"Theme switched to {theme_name}")
 
+    def _on_toggle_full_screen(self) -> None:
+        """Toggle between full screen and maximized window states."""
+        if self.isFullScreen():
+            self.showMaximized()
+        else:
+            self.showFullScreen()
+
     def _load_recent_project(self) -> None:
         """Attempt to automatically reload the last opened project on startup."""
-        # Get project root and path to recent project tracker
         project_root = Path(__file__).parent.parent.parent
         recent_file = project_root / ".threatpilot_recent"
         if recent_file.exists():
@@ -375,10 +352,7 @@ class MainWindow(QMainWindow):
                 try:
                     self._open_project_from_path(path)
                 except Exception:
-                    pass # Silently fail and boot empty if the recent project was deleted or corrupted
-    # ------------------------------------------------------------------
-    # Window chrome
-    # ------------------------------------------------------------------
+                    pass
 
     def _setup_window(self) -> None:
         """Configure the top-level window properties."""
@@ -401,43 +375,29 @@ class MainWindow(QMainWindow):
                 title += f" [{self._current_diagram.original_name}]"
         self.setWindowTitle(title)
 
-    # ------------------------------------------------------------------
-    # Central widget – Diagram Canvas
-    # ------------------------------------------------------------------
-
     def _setup_central_widget(self) -> None:
         """Initialise central workspace with tabbed navigation for diagrams and reports."""
         self._central_tabs = QTabWidget()
         self._central_tabs.setObjectName("central_tabs_container")
-        self._central_tabs.setDocumentMode(True)  # cleaner tab look
+        self._central_tabs.setDocumentMode(True)
         
-        # Tab 1: Diagram Workspace
         self._canvas = DiagramCanvas(self)
         self._central_tabs.addTab(self._canvas, "System Architecture")
         
-        # Tab 2: STRIDE Threats
         from threatpilot.ui.threat_panel import ThreatPanel
         self._stride_threat_ledger = ThreatPanel(self, filter_mode="STRIDE")
         self._central_tabs.addTab(self._stride_threat_ledger, "STRIDE Security")
-
-        # Tab 3: LINDDUN Threats
         self._linddun_threat_ledger = ThreatPanel(self, filter_mode="LINDDUN")
         self._central_tabs.addTab(self._linddun_threat_ledger, "LINDDUN Privacy")
 
-        # Tab 3: Detailed Risk Assessment
         self._risk_assessment_panel = RiskAssessmentPanel(self)
         self._risk_assessment_panel.threat_edited.connect(self._on_save_project)
         self._central_tabs.addTab(self._risk_assessment_panel, "Risk Assessment")
         
         self.setCentralWidget(self._central_tabs)
 
-    # ------------------------------------------------------------------
-    # Dock widgets
-    # ------------------------------------------------------------------
-
     def _setup_docks(self) -> None:
         """Create and position the three dock panels."""
-        # --- Right Stack 1: Properties Panel ---
         self._properties_panel = PropertiesPanel(self, undo_stack=self._undo_stack)
         self._properties_panel.property_changed.connect(
             lambda obj: self._on_project_modified(obj, refresh_properties=False)
@@ -446,7 +406,6 @@ class MainWindow(QMainWindow):
         
         def _sync_labels(obj):
             if isinstance(obj, Threat):
-                # Defer ledger refreshes so they don't interrupt typing focus
                 QTimer.singleShot(0, self._threat_panel.refresh)
                 QTimer.singleShot(0, self._stride_threat_ledger.refresh)
                 QTimer.singleShot(0, self._linddun_threat_ledger.refresh)
@@ -458,7 +417,6 @@ class MainWindow(QMainWindow):
             min_width=320,
         )
 
-        # --- Left: Project Explorer ---
         self._project_explorer = ProjectExplorer(self)
         self._project_explorer.diagram_activated.connect(self._on_diagram_activated)
         self._project_explorer.diagram_deleted.connect(self._on_diagram_deleted)
@@ -471,7 +429,6 @@ class MainWindow(QMainWindow):
             min_width=220,
         )
 
-        # --- Right Stack 2: Threat Entry List (Compact) ---
         self._threat_panel = ThreatPanel(self)
         self._threat_panel.threat_selected.connect(self._properties_panel.set_item)
         self._threat_panel.threat_added.connect(self._on_save_project)
@@ -485,7 +442,6 @@ class MainWindow(QMainWindow):
         )
         self._threat_panel_dock.setVisible(False)
         
-        # Synchronise the methodology ledgers in central view too
         self._threat_panel.threat_selected.connect(self._properties_panel.set_item)
         self._stride_threat_ledger.threat_selected.connect(self._properties_panel.set_item)
         self._linddun_threat_ledger.threat_selected.connect(self._properties_panel.set_item)
@@ -498,7 +454,6 @@ class MainWindow(QMainWindow):
         self._linddun_threat_ledger.threat_added.connect(self._on_save_project)
         self._linddun_threat_ledger.threat_removed.connect(self._on_save_project)
 
-        # --- Bottom Dock: AI Activity Log ---
         self._ai_log_view = QTextEdit()
         self._ai_log_view.setReadOnly(True)
         self._ai_log_view.setObjectName("ai_log_view")
@@ -547,15 +502,10 @@ class MainWindow(QMainWindow):
         self.addDockWidget(area, dock)
         return dock
 
-    # ------------------------------------------------------------------
-    # Menu bar
-    # ------------------------------------------------------------------
-
     def _setup_menu_bar(self) -> None:
         """Build the application menu bar with File, Edit, AI, View, Export."""
         menu_bar = self.menuBar()
 
-        # --- File menu ---
         file_menu = menu_bar.addMenu("&File")
 
         self._action_new_project = QAction("&New Project...", self)
@@ -585,13 +535,11 @@ class MainWindow(QMainWindow):
         self._action_exit.triggered.connect(self.close)
         file_menu.addAction(self._action_exit)
 
-        # --- Edit menu ---
         edit_menu = menu_bar.addMenu("&Edit")
         edit_menu.addAction(self._undo_action)
         edit_menu.addAction(self._redo_action)
         edit_menu.addSeparator()
         
-        # Standalone Architecture Actions (No longer in menu but used by Toolbar/Shortcuts)
         self._action_detect_objects = QAction("&Detect Entities", self)
         self._action_detect_objects.setShortcut(QKeySequence("Ctrl+D"))
 
@@ -600,7 +548,6 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(self._action_detect_objects)
         edit_menu.addAction(self._action_edit_components)
 
-        # --- Intelligence menu (formerly AI) ---
         intel_menu = menu_bar.addMenu("&Intelligence")
 
         self._action_run_analysis = QAction("&Run Security Analysis", self)
@@ -615,10 +562,8 @@ class MainWindow(QMainWindow):
         self._action_prompt_config = QAction("&Business Context & Policy...", self)
         intel_menu.addAction(self._action_prompt_config)
 
-        # --- View menu ---
         view_menu = menu_bar.addMenu("&View")
         
-        # Workspace layout toggles
         self._action_toggle_explorer = self._project_explorer_dock.toggleViewAction()
         self._action_toggle_explorer.setText("Project &Map")
         view_menu.addAction(self._action_toggle_explorer)
@@ -647,7 +592,11 @@ class MainWindow(QMainWindow):
         self._action_toggle_theme.setShortcut(QKeySequence("Ctrl+T"))
         view_menu.addAction(self._action_toggle_theme)
 
-        # --- Reporting menu (formerly Export) ---
+        self._action_toggle_full_screen = QAction("Toggle &Full Screen", self)
+        self._action_toggle_full_screen.setShortcut(QKeySequence("F11"))
+        self._action_toggle_full_screen.triggered.connect(self._on_toggle_full_screen)
+        view_menu.addAction(self._action_toggle_full_screen)
+
         report_menu = menu_bar.addMenu("&Reporting")
 
         self._action_export_excel = QAction("Generate &Risk Matrix (Excel)...", self)
@@ -661,7 +610,6 @@ class MainWindow(QMainWindow):
         self._action_export_diagram = QAction("Export &Annotated Diagram (Image)...", self)
         report_menu.addAction(self._action_export_diagram)
 
-        # --- Help menu ---
         help_menu = menu_bar.addMenu("&Help")
         
         self._action_quickstart = QAction("&Quick Start Wizard...", self)
@@ -675,13 +623,6 @@ class MainWindow(QMainWindow):
         self._action_about = QAction("&About ThreatPilot...", self)
         help_menu.addAction(self._action_about)
 
-        # Menu actions are connected below in _connect_actions for centralization.
-
-
-    # ------------------------------------------------------------------
-    # Toolbar
-    # ------------------------------------------------------------------
-
     def _setup_toolbar(self) -> None:
         """Create a clean, result-oriented master toolbar."""
         toolbar = QToolBar("Performance Controls", self)
@@ -689,34 +630,19 @@ class MainWindow(QMainWindow):
         toolbar.setIconSize(QSize(24, 24))
         toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.addToolBar(toolbar)
-
-        # 1. Capture & Detection (The "Build" Phase)
         toolbar.addAction(self._action_import_diagram)
-        
         toolbar.addAction(self._action_detect_objects)
-        
         toolbar.addSeparator()
-
-        # 2. Security Analysis (The "Analyze" Phase)
         run_act = toolbar.addAction("Analyze Threats")
         run_act.setObjectName("btn_run_analysis")
         run_act.triggered.connect(self._on_run_analysis)
-        
         toolbar.addSeparator()
-
-    # ------------------------------------------------------------------
-    # Status bar
-    # ------------------------------------------------------------------
 
     def _setup_status_bar(self) -> None:
         """Create and configure the status bar."""
         status_bar = QStatusBar(self)
         self.setStatusBar(status_bar)
         status_bar.showMessage("Ready")
-
-    # ------------------------------------------------------------------
-    # Signal / slot wiring
-    # ------------------------------------------------------------------
 
     def _connect_actions(self) -> None:
         """Connect menu / toolbar actions to their handler slots."""
@@ -738,10 +664,6 @@ class MainWindow(QMainWindow):
         self._action_toggle_theme.triggered.connect(self._on_toggle_theme)
         self._action_quickstart.triggered.connect(self._on_quick_start)
         self._action_open_logs.triggered.connect(self._on_open_logs)
-
-    # ------------------------------------------------------------------
-    # Slots – File actions
-    # ------------------------------------------------------------------
 
     def _on_new_project(self) -> None:
         """Create a new project via dialog."""
@@ -771,7 +693,6 @@ class MainWindow(QMainWindow):
                 f"Project '{self._project.project_name}' created."
             )
             
-            # Save to recent
             project_root = Path(__file__).parent.parent.parent
             recent_file = project_root / ".threatpilot_recent"
             recent_file.write_text(str(self._project.project_path))
@@ -794,7 +715,6 @@ class MainWindow(QMainWindow):
         self._canvas.clear_diagram()
         self._update_title()
         
-        # Clear recent info
         project_root = Path(__file__).parent.parent.parent
         recent_file = project_root / ".threatpilot_recent"
         if recent_file.exists():
@@ -827,7 +747,6 @@ class MainWindow(QMainWindow):
         self._canvas.clear_diagram()
         self._update_title()
 
-        # If the project has diagrams, display the first one by default
         if self._project.diagrams:
             self._on_diagram_activated(self._project.diagrams[0])
 
@@ -835,7 +754,6 @@ class MainWindow(QMainWindow):
             f"Project '{self._project.project_name}' loaded."
         )
         
-        # Save to recent
         project_root = Path(__file__).parent.parent.parent
         recent_file = project_root / ".threatpilot_recent"
         recent_file.write_text(str(directory))
@@ -890,10 +808,6 @@ class MainWindow(QMainWindow):
             self._update_title()
             self.statusBar().showMessage(f"Deleted diagram: {diagram.original_name}")
 
-    # ------------------------------------------------------------------
-    # Slots – Diagram import
-    # ------------------------------------------------------------------
-
     def _on_import_diagram(self) -> None:
         """Import a PNG / JPG diagram into the current project."""
         if self._project is None:
@@ -917,7 +831,6 @@ class MainWindow(QMainWindow):
             self._project_explorer.refresh()
             self._current_diagram = diagram
             
-            # Load pixmap and display via DiagramCanvas (bypassing internal Qt cache)
             image_path = Path(self._project.project_path) / diagram.file_path
             image = QImage(str(image_path))
             pixmap = QPixmap.fromImage(image)
@@ -939,11 +852,10 @@ class MainWindow(QMainWindow):
         if not self._project:
             return
 
-        self._central_tabs.setCurrentIndex(0)  # Switch to Diagram tab
+        self._central_tabs.setCurrentIndex(0)
         self._current_diagram = diagram
         image_path = Path(self._project.project_path) / diagram.file_path
         
-        # Load via QImage buffer to bypass QPixmap internal path caching
         image = QImage(str(image_path))
         pixmap = QPixmap.fromImage(image)
         if not pixmap.isNull():
@@ -952,17 +864,12 @@ class MainWindow(QMainWindow):
         
         self.statusBar().showMessage(f"Showing diagram: {diagram.original_name}")
 
-    # ------------------------------------------------------------------
-    # Slots – AI actions
-    # ------------------------------------------------------------------
-
     def _on_ai_settings(self) -> None:
         """Edit the project's AI provider configuration."""
         dialog = AISettingsDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             config = dialog.get_config()
             config.save()
-            # Update auto-save timer immediately
             self._autosave_timer.setInterval(config.autosave_interval * 60000)
             self.statusBar().showMessage(f"Settings updated (Auto-save: {config.autosave_interval} min).")
 
@@ -992,10 +899,10 @@ class MainWindow(QMainWindow):
         elif action == "action_edit_flows":
             self._on_edit_flows()
         elif action == "action_view_threats":
-            self._central_tabs.setCurrentIndex(1)  # Focus STRIDE tab by default
+            self._central_tabs.setCurrentIndex(1)
             self._stride_threat_ledger.clear_filter()
             self._linddun_threat_ledger.clear_filter()
-            self._threat_panel_dock.show()         # Also show the side summary
+            self._threat_panel_dock.show()
             self._threat_panel_dock.raise_()
         elif action == "action_view_risk_matrix" and self._project:
             from threatpilot.ui.risk_matrix_dialog import RiskMatrixDialog
@@ -1009,17 +916,13 @@ class MainWindow(QMainWindow):
         if not self._project:
             return
 
-        # 1. Convert Current Architectural State to DFD
         dfd = convert_to_dfd(self._project.components, self._project.flows)
         if not dfd.nodes:
             QMessageBox.warning(self, "Analysis", "No components detected to analyze. Please add or detect components first.")
             return
-
-        # 2. Create AI Provider via Factory
         try:
             config = AIConfig.load()
             
-            # Privacy Acknowledgement (Finding H.3)
             if config.provider_type == "gemini":
                 reply = QMessageBox.warning(
                     self, 
@@ -1041,7 +944,6 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "AI Error", f"Could not create AI provider:\n{exc}")
             return
 
-        # 3. Launch Background Worker with Progress Dialog
         self._progress = QProgressDialog("Analyzing system architecture...", "Cancel", 0, 0, self)
         self._progress.setWindowTitle("AI Threat Analysis")
         self._progress.setWindowModality(Qt.WindowModality.WindowModal)
@@ -1085,7 +987,6 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Analyzing threat reasoning with AI...")
         self._properties_panel.set_reasoning_progress(True)
         
-        # We need a reference to keep worker alive
         self._reasoning_worker = ReasoningWorker(
             provider, 
             self._project.prompt_config, 
@@ -1115,7 +1016,6 @@ class MainWindow(QMainWindow):
                         val = "\n".join(f"- **{k}**: {v}" for k, v in val.items())
                     elif isinstance(val, list):
                         val = "\n".join(f"- {item}" for item in val)
-                    # Blank line between heading and paragraph for proper Markdown rendering
                     md += f"{heading}\n\n{val}\n\n"
             if not md:
                 for k, v in data.items():
@@ -1138,10 +1038,8 @@ class MainWindow(QMainWindow):
                 val_start = match.end()
                 val_end = keys_found[i + 1].start() if i + 1 < len(keys_found) else len(text)
                 raw_val = text[val_start:val_end].strip().rstrip(",").strip()
-                # Unwrap surrounding quote characters
                 if len(raw_val) >= 2 and raw_val[0] in ('"', "'"):
                     q = raw_val[0]
-                    # Find the *last* occurrence of the same quote to close the string
                     end_idx = raw_val.rfind(q)
                     if end_idx > 0:
                         raw_val = raw_val[1:end_idx]
@@ -1149,7 +1047,6 @@ class MainWindow(QMainWindow):
             return result if result else None
 
         raw = reasoning.strip()
-        # Strip any "Technical Reasoning" prefix label (with optional colon/dash)
         raw = re.sub(r"^Technical Reasoning\s*[:\-]?\s*\n+", "", raw, flags=re.IGNORECASE).strip()
 
         processed_markdown = raw
@@ -1157,18 +1054,15 @@ class MainWindow(QMainWindow):
         if brace_match:
             candidate = brace_match.group(0)
             data = None
-            # Attempt 1: standard JSON
             try:
                 data = json.loads(candidate)
             except Exception:
                 pass
-            # Attempt 2: Python literal (handles single-quoted dicts)
             if data is None:
                 try:
                     data = ast.literal_eval(candidate)
                 except Exception:
                     pass
-            # Attempt 3: regex extraction (handles mixed-quote AI output)
             if data is None:
                 data = _regex_extract_dict(candidate)
             if isinstance(data, dict):
@@ -1188,16 +1082,16 @@ class MainWindow(QMainWindow):
     def _on_partial_analysis_result(self, partial_register) -> None:
         """Merge intermediate results from a single segment while analysis continues."""
         if not self._project: return
-        
-        # Merge threats from this segment incrementally
         for t in partial_register.threats:
             self._project.threat_register.add_threat(t)
             
-        # Refresh UI
         self._threat_panel.refresh()
         self._stride_threat_ledger.refresh()
         self._linddun_threat_ledger.refresh()
         self._risk_assessment_panel.refresh()
+        
+        total_threats = len(self._project.threat_register.threats)
+        self.statusBar().showMessage(f"Analysis update: Project now has {total_threats} identified risks.")
         self.statusBar().showMessage(f"Incremental update: {len(partial_register.threats)} threats added from segment.")
 
     def _on_request_continuation(self, current, total):
@@ -1229,23 +1123,29 @@ class MainWindow(QMainWindow):
             self._stride_threat_ledger._btn_run.setEnabled(True)
         if hasattr(self._linddun_threat_ledger, "_btn_run"):
             self._linddun_threat_ledger._btn_run.setEnabled(True)
-        self.statusBar().showMessage("Analysis complete.")
-        
-        # Final merge (everything already partially merged, but this ensures final sync if needed)
-        # We calculate the total unique threats identified in this whole RUN (new_register)
-        # compared to what was there BEFORE the run started.
-        # But for simpler logic, we show how many they AI found total.
-        
+
+        if not self._project:
+            return
+
+        added = 0
+        for t in new_register.threats:
+            if self._project.threat_register.add_threat(t):
+                added += 1
+
+        total = len(self._project.threat_register.threats)
+        self.statusBar().showMessage(f"Analysis complete: {added} new threats added ({total} total in register).")
+
         self._threat_panel.refresh()
         self._stride_threat_ledger.refresh()
         self._linddun_threat_ledger.refresh()
         self._risk_assessment_panel.refresh()
-        
+
         save_project(self._project)
         QMessageBox.information(
-            self, 
-            "Analysis", 
-            f"Full Analysis complete! {len(new_register.threats)} total threats identified across all segments."
+            self,
+            "Analysis Complete",
+            f"{added} new threats identified and added to the register.\n"
+            f"Total risks in project: {total}"
         )
 
     def _on_analysis_failed(self, error_msg: str) -> None:
@@ -1267,7 +1167,6 @@ class MainWindow(QMainWindow):
         config = AIConfig.load()
         msg = str(error_msg).lower()
         
-        # 1. Categorization & Helpful Guidance
         explanation = ""
         if "timeout" in msg or "deadline" in msg or "timed out" in msg:
             explanation = (
@@ -1296,19 +1195,15 @@ class MainWindow(QMainWindow):
                 "**Try:** Wait 60 seconds before trying again, or upgrade your AI provider tier."
             )
         else:
-            # Fallback for complex/unknown errors
             short_technical = (error_msg[:200] + "...") if len(error_msg) > 200 else error_msg
             explanation = (
                 "❓ **Unexpected AI Error**\n\nAn unhandled error occurred during analysis.\n\n"
                 f"**Technical Details:** {short_technical}"
             )
 
-        # 2. Security: Ensure the API key never appears in the UI dialog
         if config.api_key and len(config.api_key) > 5:
             explanation = explanation.replace(config.api_key, "[HIDDEN]")
             error_msg = error_msg.replace(config.api_key, "[HIDDEN]")
-
-        # 3. Log the full technical error for support/debugging
         try:
             with Path("threatpilot_error.log").open("a", encoding="utf-8") as f:
                 f.write(f"\n--- Analysis Error [{datetime.now().isoformat()}] ---\n")
@@ -1319,18 +1214,9 @@ class MainWindow(QMainWindow):
             
         QMessageBox.critical(self, title, f"{prefix}\n\n{explanation}")
 
-
-    # ------------------------------------------------------------------
-    # Slots – View actions
-    # ------------------------------------------------------------------
-
     def _on_fit_diagram(self) -> None:
         """Fit the diagram image to the canvas viewport."""
         self._canvas.fit_to_screen()
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
 
     def _update_title(self) -> None:
         """Update the window title to reflect the current project."""
@@ -1338,10 +1224,6 @@ class MainWindow(QMainWindow):
             self.setWindowTitle(f"ThreatPilot - {self._project.project_name}")
         else:
             self.setWindowTitle("ThreatPilot")
-
-    # ------------------------------------------------------------------
-    # Public accessors (for future requirement modules)
-    # ------------------------------------------------------------------
 
     @property
     def project(self) -> Project | None:
@@ -1372,10 +1254,6 @@ class MainWindow(QMainWindow):
     def properties_panel_dock(self) -> QDockWidget:
         """Return the Properties Panel dock widget."""
         return self._properties_panel_dock
-
-    # ------------------------------------------------------------------
-    # Slots – Export actions
-    # ------------------------------------------------------------------
 
     def _on_export_excel(self) -> None:
         """Export the current threat register to a Microsoft Excel file."""
@@ -1413,13 +1291,11 @@ class MainWindow(QMainWindow):
 
         self.statusBar().showMessage("Running computer vision detection...")
         
-        # Determine if we can use AI Vision (Gemini / Claude / Ollama)
         from threatpilot.config.ai_config import AIConfig
         config = AIConfig.load()
         prov_type = config.provider_type.lower()
         model_name = config.model_name.lower()
         
-        # Determine if the selected model is vision-capable
         is_vision_model = (
             "llava" in model_name or 
             "vl" in model_name or 
@@ -1442,8 +1318,8 @@ class MainWindow(QMainWindow):
             self._worker_ai_vision.prompt_ready.connect(lambda p: self.append_ai_log(p, "PROMPT"))
             self._worker_ai_vision.response_ready.connect(lambda r: self.append_ai_log(r, "RESPONSE"))
 
-            self._central_tabs.setCurrentIndex(0) # Keep on Diagram
-            self._ai_log_dock.show() # Ensure log dock is visible
+            self._central_tabs.setCurrentIndex(0) 
+            self._ai_log_dock.show() 
             self._ai_log_dock.raise_()
             self._worker_ai_vision.start()
         else:
@@ -1458,12 +1334,10 @@ class MainWindow(QMainWindow):
         self._project.flows.clear()
         self._project.boundaries.clear()
 
-        # Short key mappings support
         comp_list = data.get("c", data.get("components", []))
         flow_list = data.get("f", data.get("flows", []))
         
-        # Get actual image dimensions to scale from 0-1000 normalized range
-        img_w, img_h = 1920, 1080 # Default
+        img_w, img_h = 1920, 1080 
         if self._current_diagram:
              image_path = Path(self._project.project_path) / self._current_diagram.file_path
              pix = QPixmap(str(image_path))
@@ -1471,7 +1345,6 @@ class MainWindow(QMainWindow):
                  img_w, img_h = pix.width(), pix.height()
 
         for dc in comp_list:
-            # Default to 0,0 if bounding box is excluded from prompt
             bbox = dc.get("b", dc.get("bounding_box", [0, 0, 100, 100]))
             if not isinstance(bbox, list) or len(bbox) < 4:
                 bbox = [0, 0, 100, 100]
@@ -1492,7 +1365,6 @@ class MainWindow(QMainWindow):
                  )
                  self._project.boundaries.append(b)
             else:
-                # Short keys for classifications
                 element_cls = dc.get("ec", dc.get("element_classification"))
                 if not element_cls:
                      element_cls = "Process" if "service" in low_type else "DataStore" if "store" in low_type else "Entity"
@@ -1510,7 +1382,6 @@ class MainWindow(QMainWindow):
                 )
                 self._project.components.append(c)
 
-        # Process Flows
         for df in flow_list:
             bbox = df.get("b", df.get("bounding_box", [0, 0, 10, 10]))
             if not isinstance(bbox, list) or len(bbox) < 4:
@@ -1522,16 +1393,13 @@ class MainWindow(QMainWindow):
             src_name = df.get("s", df.get("source", "")).strip()
             dst_name = df.get("d", df.get("target", "")).strip()
             
-            # Lookup IDs by name – fuzzy matching (normalized, case-insensitive)
             def _find_comp_id(search_name: str) -> str:
                 if not search_name:
                     return ""
                 normalized = search_name.strip().lower()
-                # Pass 1: Exact match (case-insensitive)
                 for comp in self._project.components:
                     if comp.name.strip().lower() == normalized:
                         return comp.component_id
-                # Pass 2: Substring containment (handles partial AI labels)
                 for comp in self._project.components:
                     comp_norm = comp.name.strip().lower()
                     if normalized in comp_norm or comp_norm in normalized:
@@ -1558,8 +1426,6 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"AI Detection complete: {len(self._project.components)} components found.")
         QMessageBox.information(self, "AI Vision", f"AI Vision successfully detected {len(self._project.components)} components and {len(self._project.flows)} flows.")
 
-
-
     def _refresh_canvas_overlays(self) -> None:
         """Clear and redraw all detected objects as visual overlays on the image."""
         if not self._project:
@@ -1567,17 +1433,13 @@ class MainWindow(QMainWindow):
 
         self._canvas.clear_overlays()
 
-        # Draw boundaries
         for b in self._project.boundaries:
             rect = QRectF(b.x, b.y, b.width, b.height)
             self._canvas.add_trust_boundary(rect, label=b.name, data=b)
-
-        # Draw components
         for c in self._project.components:
             rect = QRectF(c.x, c.y, c.width, c.height)
             self._canvas.add_component_box(rect, label=c.name, data=c)
 
-        # Draw flow vectors
         for f in self._project.flows:
             if f.start_x or f.start_y or f.end_x or f.end_y:
                 start = QPointF(f.start_x, f.start_y)
@@ -1594,7 +1456,6 @@ class MainWindow(QMainWindow):
         dialog.project_modified.connect(self._on_project_modified)
         dialog.exec()
         
-        # Reload visual overlays to reflect renamed/deleted entities
         self._refresh_canvas_overlays()
         save_project(self._project)
 
@@ -1606,8 +1467,6 @@ class MainWindow(QMainWindow):
         dialog = DataFlowDialog(self._project, self._undo_stack, self)
         dialog.project_modified.connect(self._on_project_modified)
         dialog.exec()
-        
-        # Reload visual overlays to reflect flow changes
         self._refresh_canvas_overlays()
         save_project(self._project)
 
@@ -1660,12 +1519,12 @@ class MainWindow(QMainWindow):
 
     def _on_about(self) -> None:
         """Show the About dialog with project metadata."""
-        dialog = AboutDialog(self)
+        dialog = AboutDialog(self, is_dark=self._is_dark_theme)
         dialog.exec()
 
     def _on_quick_start(self) -> None:
         """Launch the Quick Start Wizard for new users."""
-        wizard = QuickStartWizard(self)
+        wizard = QuickStartWizard(self, is_dark=self._is_dark_theme)
         wizard.exec()
 
     def _on_open_logs(self) -> None:

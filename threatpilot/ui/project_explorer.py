@@ -9,10 +9,8 @@ Supports diagram management: rename, double-click to view.
 """
 
 from __future__ import annotations
-
 from pathlib import Path
 from typing import cast
-
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import (
@@ -24,13 +22,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-
 from threatpilot.core.diagram_model import Diagram
 from threatpilot.core.project_manager import Project
 from threatpilot.utils.logger import get_logger
 
 logger = get_logger(__name__)
-
 
 class ProjectExplorer(QWidget):
     """Tree view explorer for ThreatPilot projects.
@@ -40,14 +36,10 @@ class ProjectExplorer(QWidget):
             to be displayed. Carries the ``Diagram`` object.
     """
 
-    diagram_activated: Signal = Signal(object)  # Diagram
-    diagram_deleted: Signal = Signal(object)    # Diagram
-    tool_activated: Signal = Signal(str)        # Action string
+    diagram_activated: Signal = Signal(object)
+    diagram_deleted: Signal = Signal(object)
+    tool_activated: Signal = Signal(str)
     project_modified: Signal = Signal()
-
-    # ------------------------------------------------------------------
-    # Construction
-    # ------------------------------------------------------------------
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -68,10 +60,6 @@ class ProjectExplorer(QWidget):
 
         layout.addWidget(self._tree)
 
-    # ------------------------------------------------------------------
-    # Project lifecycle
-    # ------------------------------------------------------------------
-
     def set_project(self, project: Project | None) -> None:
         """Update the explorer to display the given project.
 
@@ -87,26 +75,18 @@ class ProjectExplorer(QWidget):
         if not self._project:
             return
 
-        # --- Root Project Item ---
         root = QTreeWidgetItem(self._tree, [self._project.project_name])
-        # root.setIcon(0, QIcon.fromTheme("project-development")) # optional
         root.setExpanded(True)
-
-        # --- Environment & Context ---
         bc_item = QTreeWidgetItem(root, ["Business Context"])
         bc_item.setData(0, Qt.ItemDataRole.UserRole, "action_prompt_config")
 
-        # --- Diagrams Folder ---
         self._diagrams_root = QTreeWidgetItem(root, ["Diagrams"])
-        # self._diagrams_root.setIcon(0, QIcon.fromTheme("folder-images"))
         self._diagrams_root.setExpanded(True)
 
         for diag in self._project.diagrams:
             item = QTreeWidgetItem(self._diagrams_root, [diag.original_name])
             item.setData(0, Qt.ItemDataRole.UserRole, diag)
-            # item.setIcon(0, QIcon.fromTheme("image-x-generic"))
 
-        # --- Architecture Folder ---
         arch_root = QTreeWidgetItem(root, ["Architecture"])
         arch_root.setExpanded(True)
         i0 = QTreeWidgetItem(arch_root, ["Entities and Nodes"])
@@ -114,7 +94,6 @@ class ProjectExplorer(QWidget):
         i0b = QTreeWidgetItem(arch_root, ["Data Flow"])
         i0b.setData(0, Qt.ItemDataRole.UserRole, "action_edit_flows")
 
-        # --- Analysis Folder ---
         analysis_root = QTreeWidgetItem(root, ["Analysis"])
         analysis_root.setExpanded(True)
         i1 = QTreeWidgetItem(analysis_root, ["Threat Register"])
@@ -122,15 +101,10 @@ class ProjectExplorer(QWidget):
         i2 = QTreeWidgetItem(analysis_root, ["Risk Matrix"])
         i2.setData(0, Qt.ItemDataRole.UserRole, "action_view_risk_matrix")
 
-        # --- Configuration Folder ---
         config_root = QTreeWidgetItem(root, ["Configuration"])
         config_root.setExpanded(True)
         i3 = QTreeWidgetItem(config_root, ["AI Settings"])
         i3.setData(0, Qt.ItemDataRole.UserRole, "action_ai_settings")
-
-    # ------------------------------------------------------------------
-    # Event Handlers
-    # ------------------------------------------------------------------
 
     def _on_item_clicked(self, item: QTreeWidgetItem, column: int) -> None:
         """Handle single click on a tree item."""
@@ -162,10 +136,6 @@ class ProjectExplorer(QWidget):
 
         menu.exec(self._tree.mapToGlobal(pos))
 
-    # ------------------------------------------------------------------
-    # Actions
-    # ------------------------------------------------------------------
-
     def _rename_diagram(self, item: QTreeWidgetItem) -> None:
         """Rename a diagram entry."""
         diag = cast(Diagram, item.data(0, Qt.ItemDataRole.UserRole))
@@ -178,9 +148,6 @@ class ProjectExplorer(QWidget):
             diag.original_name = new_name.strip()
             item.setText(0, diag.original_name)
             self.project_modified.emit()
-            
-            # Note: We typically need to save the project after this metadata change
-            # but that is usually handled by the owner Main Window.
 
     def _delete_diagram(self, item: QTreeWidgetItem) -> None:
         """Remove a diagram from the project."""
@@ -195,7 +162,6 @@ class ProjectExplorer(QWidget):
         
         if reply == QMessageBox.StandardButton.Yes:
             if self._project and diag in self._project.diagrams:
-                # Physically delete the file
                 full_path = Path(self._project.project_path) / diag.file_path
                 if full_path.exists():
                     try:

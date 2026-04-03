@@ -4,9 +4,7 @@ Contains the ``PromptConfig`` model for structured and free-text prompt customis
 """
 
 from __future__ import annotations
-
 from pydantic import BaseModel
-
 
 class PromptConfig(BaseModel):
     """Configuration for prompt generation.

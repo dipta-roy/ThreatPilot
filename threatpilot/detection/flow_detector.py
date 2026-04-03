@@ -5,12 +5,8 @@ within arch diagrams and determine their approximate direction.
 """
 
 from __future__ import annotations
-
-# import cv2
-# import numpy as np
 from pathlib import Path
 from pydantic import BaseModel
-
 
 class DetectedFlow(BaseModel):
     """Represents a data flow detected in a diagram.
@@ -31,7 +27,6 @@ class DetectedFlow(BaseModel):
     label: str = "HTTPS"
     confidence: float = 1.0
 
-
 def detect_flows(image_path: str | Path) -> list[DetectedFlow]:
     """Identify data-flow lines/arrows in an image using OpenCV.
 
@@ -50,19 +45,15 @@ def detect_flows(image_path: str | Path) -> list[DetectedFlow]:
     """
     raise RuntimeError("Traditional Computer Vision (OpenCV) has been removed to reduce bundle size. Please use AI-driven detection instead.")
 
-    # Pre-processing
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
     
-    # Canny Edge detection
     edges = cv2.Canny(blurred, 50, 150, apertureSize=3)
 
-    # Probabilistic Hough Line Transform
-    # Parameters: (image, rho, theta, threshold, minLineLength, maxLineGap)
     lines = cv2.HoughLinesP(
         edges, 1, np.pi / 180,
         threshold=50,
-        minLineLength=60, # Increased from 40 to ignore noise
+        minLineLength=60,
         maxLineGap=15
     )
 
@@ -72,12 +63,9 @@ def detect_flows(image_path: str | Path) -> list[DetectedFlow]:
         for line in lines:
             x1, y1, x2, y2 = line[0]
             
-            # Simple heuristic: ignore extremely short artifacts
             dist = np.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
-            if dist < 60: # Increased from 30
+            if dist < 60:
                 continue
-
-            # Crude deduplication to prevent 50 overlapping lines for a single arrow
             is_dup = False
             for r in results:
                 if (abs(r.start_x - x1) < 25 and abs(r.start_y - y1) < 25) or (abs(r.end_x - x2) < 25 and abs(r.end_y - y2) < 25):
@@ -92,7 +80,7 @@ def detect_flows(image_path: str | Path) -> list[DetectedFlow]:
                 start_y=int(y1),
                 end_x=int(x2),
                 end_y=int(y2),
-                label="HTTPS",  # Default per requirement REQ-010
+                label="HTTPS",
                 confidence=0.8
             ))
 

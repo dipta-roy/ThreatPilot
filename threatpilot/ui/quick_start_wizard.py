@@ -15,53 +15,76 @@ from PySide6.QtWidgets import (
 class QuickStartWizard(QWizard):
     """Guide the user through their first session with ThreatPilot."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, is_dark: bool = True):
         super().__init__(parent)
         self.setWindowTitle("ThreatPilot Quick Start")
         self.setWizardStyle(QWizard.WizardStyle.ClassicStyle)
-        
-        # Nuclear option: Force dark palette and stylesheet regardless of parent state
-        from PySide6.QtGui import QPalette, QColor
-        palette = self.palette()
-        palette.setColor(QPalette.ColorRole.Window, QColor("#0d1117"))
-        palette.setColor(QPalette.ColorRole.WindowText, QColor("#ffffff"))
-        palette.setColor(QPalette.ColorRole.Base, QColor("#0d1117"))
-        palette.setColor(QPalette.ColorRole.Text, QColor("#ffffff"))
-        palette.setColor(QPalette.ColorRole.Button, QColor("#21262d"))
-        palette.setColor(QPalette.ColorRole.ButtonText, QColor("#ffffff"))
-        self.setPalette(palette)
-        
-        self.setStyleSheet("""
-            QWizard, QWizardPage, QWidget { 
-                background-color: #0d1117; 
-                color: #ffffff; 
-            }
-            QLabel { 
-                background-color: transparent; 
-                color: #ffffff; 
-                font-size: 13px;
-            }
-            QPushButton { 
-                background-color: #21262d; 
-                color: #ffffff; 
-                border: 1px solid #30363d; 
-                padding: 6px 20px;
-                border-radius: 4px;
-            }
-        """)
+        self._apply_theme(is_dark)
 
-        # Re-Add Pages (Ensuring they are populated)
         self.addPage(WelcomePage(self))
         self.addPage(ProjectPage(self))
         self.addPage(AIAnalysisPage(self))
         self.addPage(FinalPage(self))
-        
-        # Style individual pages (final visibility guarantee)
-        for pid in self.pageIds():
-            page = self.page(pid)
-            page.setStyleSheet("background-color: #0d1117; color: #ffffff;")
 
         self.resize(600, 450)
+
+    def _apply_theme(self, is_dark: bool) -> None:
+        """Apply a dark or light palette and stylesheet to the wizard."""
+        from PySide6.QtGui import QPalette, QColor
+        palette = self.palette()
+
+        if is_dark:
+            bg      = QColor("#0d1117")
+            fg      = QColor("#e6edf3")
+            btn_bg  = QColor("#21262d")
+            btn_fg  = QColor("#e6edf3")
+            border  = "#30363d"
+            lbl_style = (
+                "background-color: transparent; color: #e6edf3; font-size: 13px;"
+            )
+            btn_style = (
+                f"background-color: #21262d; color: #e6edf3; "
+                f"border: 1px solid {border}; padding: 6px 20px; border-radius: 4px;"
+            )
+            widget_bg = "#0d1117"
+            widget_fg = "#e6edf3"
+        else:
+            bg      = QColor("#ffffff")
+            fg      = QColor("#1f2328")
+            btn_bg  = QColor("#f6f8fa")
+            btn_fg  = QColor("#1f2328")
+            border  = "#d0d7de"
+            lbl_style = (
+                "background-color: transparent; color: #1f2328; font-size: 13px;"
+            )
+            btn_style = (
+                f"background-color: #f6f8fa; color: #1f2328; "
+                f"border: 1px solid {border}; padding: 6px 20px; border-radius: 4px;"
+            )
+            widget_bg = "#ffffff"
+            widget_fg = "#1f2328"
+
+        palette.setColor(QPalette.ColorRole.Window, bg)
+        palette.setColor(QPalette.ColorRole.WindowText, fg)
+        palette.setColor(QPalette.ColorRole.Base, bg)
+        palette.setColor(QPalette.ColorRole.Text, fg)
+        palette.setColor(QPalette.ColorRole.Button, btn_bg)
+        palette.setColor(QPalette.ColorRole.ButtonText, btn_fg)
+        self.setPalette(palette)
+
+        self.setStyleSheet(f"""
+            QWizard, QWizardPage, QWidget {{
+                background-color: {widget_bg};
+                color: {widget_fg};
+            }}
+            QLabel {{
+                {lbl_style}
+            }}
+            QPushButton {{
+                {btn_style}
+            }}
+        """)
+
 
 class WelcomePage(QWizardPage):
     def __init__(self, parent=None):
@@ -84,14 +107,7 @@ class ProjectPage(QWizardPage):
         super().__init__(parent)
         self.setTitle("1. Create a Project")
         layout = QVBoxLayout(self)
-        
         img_label = QLabel()
-        # project_root = Path(__file__).parent.parent.parent
-        # image_path = project_root / "threatpilot" / "resources" / "app-icon.png"
-        # image = QPixmap(str(image_path)).scaledToHeight(64, Qt.TransformationMode.SmoothTransformation)
-        # img_label.setPixmap(image)
-        # layout.addWidget(img_label, alignment=Qt.AlignmentFlag.AlignCenter)
-        
         desc = QLabel(
             "Every assessment starts with a **Project**. Projects store architectural diagrams, "
             "detected entities, and the resulting Threat Register.\n\n"
@@ -107,7 +123,7 @@ class AIAnalysisPage(QWizardPage):
         layout = QVBoxLayout(self)
         
         desc = QLabel(
-            "ThreatPilot uses powerful AI providers (like Gemini, Claude, or local Ollama) "
+            "ThreatPilot uses powerful AI providers (like Gemini or local Ollama) "
             "to automatically identify security risks based on your architectural design.\n\n"
             "Make sure to configure your **AI Settings** under the **Intelligence** menu."
         )

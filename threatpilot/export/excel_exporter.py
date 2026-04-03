@@ -4,7 +4,6 @@ from typing import List, Optional
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.drawing.image import Image
-
 from threatpilot.core.project_manager import Project
 from threatpilot.core.threat_model import Threat
 from threatpilot.risk.cvss_calculator import get_cvss_severity
@@ -20,18 +19,15 @@ def export_to_excel(project: Project, output_path: str | Path) -> None:
         if not val:
             return ""
         str_val = str(val).strip()
-        # OWASP recommendation: Escape =, +, -, @, \t, \r, and `
         if str_val.startswith(('=', '+', '-', '@', '\t', '\r', '`')):
             return f" '{str_val}" 
         return str_val
 
     wb = Workbook()
     
-    # --- TAB 1: System Description ---
     ws_desc = wb.active
     ws_desc.title = "System Description"
     header_font = Font(bold=True)
-    
     ws_desc.append(["Field", "Value"])
     ws_desc["A1"].font = header_font
     ws_desc["B1"].font = header_font
@@ -46,7 +42,6 @@ def export_to_excel(project: Project, output_path: str | Path) -> None:
     for row in desc_rows:
         ws_desc.append(row)
 
-    # --- TAB 2: Architecture Diagram ---
     ws_diag = wb.create_sheet("Architecture Diagram")
     if project.diagrams:
         try:
@@ -63,13 +58,11 @@ def export_to_excel(project: Project, output_path: str | Path) -> None:
     else:
         ws_diag["B2"] = "No architecture diagram provided."
 
-    # --- TAB 3: System Elements ---
     ws_elem = wb.create_sheet("System Elements")
     ws_elem.append(["Element Name", "Classification", "Description"])
     for cell in ws_elem[1]: cell.font = header_font
     
     for c in project.components:
-         # Use actual description if provided, otherwise fallback to system default (X.1)
          raw_desc = c.description.strip() if c.description else ""
          final_desc = raw_desc if raw_desc else f"Detected {c.element_classification} in architecture blueprint."
          
@@ -79,13 +72,11 @@ def export_to_excel(project: Project, output_path: str | Path) -> None:
              sanitize_excel(final_desc)
          ])
 
-    # --- TAB 4: System Assets ---
     ws_asset = wb.create_sheet("System Assets")
     ws_asset.append(["Asset Name", "Asset Classification", "Description"])
     for cell in ws_asset[1]: cell.font = header_font
     
     for c in project.components:
-         # Use actual description if provided, otherwise fallback to system default (X.1)
          raw_desc = c.description.strip() if c.description else ""
          final_desc = raw_desc if raw_desc else f"Identified {c.asset_classification} asset for security analysis."
          
@@ -95,20 +86,36 @@ def export_to_excel(project: Project, output_path: str | Path) -> None:
              sanitize_excel(final_desc)
          ])
 
-    # --- TAB 5: STRIDE Threats ---
-    ws_stride = wb.create_sheet("STRIDE Threats")
+    ws_stride = wb.create_sheet("STRIDE Security")
     ws_stride.append(["Category", "Threat Title", "Description"])
     for cell in ws_stride[1]: cell.font = header_font
     
+    stride_cats = ["Spoofing", "Tampering", "Repudiation", "Information Disclosure", "Denial of Service", "Elevation of Privilege"]
+    
     for t in project.threat_register.threats:
          cat_val = t.category.value if hasattr(t.category, 'value') else str(t.category)
-         ws_stride.append([
-             sanitize_excel(cat_val),
-             sanitize_excel(t.title),
-             sanitize_excel(t.description)
-         ])
+         if cat_val in stride_cats:
+             ws_stride.append([
+                 sanitize_excel(cat_val),
+                 sanitize_excel(t.title),
+                 sanitize_excel(t.description)
+             ])
 
-    # --- TAB 6: Vulnerabilities ---
+    ws_linddun = wb.create_sheet("LINDDUN Privacy")
+    ws_linddun.append(["Category", "Threat Title", "Description"])
+    for cell in ws_linddun[1]: cell.font = header_font
+    
+    linddun_cats = ["Linkability", "Identifiability", "Non-repudiation", "Detectability", "Disclosure of Information", "Unawareness", "Non-compliance"]
+    
+    for t in project.threat_register.threats:
+         cat_val = t.category.value if hasattr(t.category, 'value') else str(t.category)
+         if cat_val in linddun_cats:
+             ws_linddun.append([
+                 sanitize_excel(cat_val),
+                 sanitize_excel(t.title),
+                 sanitize_excel(t.description)
+             ])
+
     ws_vuln = wb.create_sheet("Vulnerabilities")
     ws_vuln.append(["Threat Source", "Vulnerabilities"])
     for cell in ws_vuln[1]: cell.font = header_font
@@ -120,7 +127,6 @@ def export_to_excel(project: Project, output_path: str | Path) -> None:
                  sanitize_excel(t.vulnerabilities)
              ])
 
-    # --- TAB 7: Risk Assessment ---
     ws_risk = wb.create_sheet("Risk Assessment")
     headers_risk = [
         "Risk ID", "Element Name", "Asset Name", 
@@ -141,8 +147,6 @@ def export_to_excel(project: Project, output_path: str | Path) -> None:
     for i, t in enumerate(project.threat_register.threats):
         severity_label = get_cvss_severity(t.cvss_score)
         severity_full = f"{severity_label} ({t.cvss_score})"
-        
-        # Use element and asset name if they are set, otherwise fall back to affected_components (matching UI)
         elem_name = t.affected_element or t.affected_components or "N/A"
         asset_name = t.affected_asset or t.affected_components or "N/A"
         
@@ -163,7 +167,6 @@ def export_to_excel(project: Project, output_path: str | Path) -> None:
             sanitize_excel(convert_reasoning_to_markdown(t.reasoning or "N/A", markdown=False))
         ])
         
-        # Style Severity cell (Col J - index 10)
         row_idx = ws_risk.max_row
         cell = ws_risk.cell(row=row_idx, column=10)
         u_val = severity_label.upper()
@@ -176,7 +179,6 @@ def export_to_excel(project: Project, output_path: str | Path) -> None:
         elif "LOW" in u_val:
             cell.fill = fill_low; cell.font = black_font
 
-    # --- TAB 8: Visual Risk Matrix ---
     ws_matrix = wb.create_sheet("Visual Risk Matrix")
     ws_matrix["A1"] = "Likelihood \ Impact"
     ws_matrix["A1"].font = header_font
@@ -192,7 +194,6 @@ def export_to_excel(project: Project, output_path: str | Path) -> None:
     for i, label in enumerate(likelihood_labels):
         ws_matrix.cell(row=i+2, column=1, value=label).font = header_font
 
-    # Build 5x5 Counts
     matrix_counts = {}
     for t in project.threat_register.threats:
         impact_score = 1
@@ -223,7 +224,6 @@ def export_to_excel(project: Project, output_path: str | Path) -> None:
             cell.fill = PatternFill(start_color=bg, end_color=bg, fill_type="solid")
             cell.font = Font(color=ft, bold=True if count > 0 else False)
 
-    # Column Widths Auto-Adjust
     for ws in wb.worksheets:
          if ws.title == "Visual Risk Matrix":
              ws.column_dimensions["A"].width = 18

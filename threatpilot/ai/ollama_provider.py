@@ -5,24 +5,20 @@ instance via its REST API (defaulting to port 11434).
 """
 
 from __future__ import annotations
-
 import base64
 import json
 from typing import Any, Dict, List, Optional
-
 import httpx
 from threatpilot.ai.ai_provider_interface import AIProviderInterface
 from threatpilot.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-
 class OllamaProvider(AIProviderInterface):
     """Local Ollama instance provider.
 
     Expects the Ollama server to be running (e.g. ``ollama serve``).
     """
-
     async def chat_complete(
         self,
         prompt: str,
@@ -48,7 +44,6 @@ class OllamaProvider(AIProviderInterface):
             messages.append({"role": "system", "content": system_instructions})
         messages.append({"role": "user", "content": prompt})
 
-        # Configuration from AIConfig
         payload = {
             "model": self.config.model_name,
             "messages": messages,
@@ -68,7 +63,6 @@ class OllamaProvider(AIProviderInterface):
                 )
                 
                 if response.status_code == 404:
-                    # Capture specific message if Ollama tells us the model is missing
                     try:
                         error_text = response.json().get("error", response.text)
                     except Exception:
@@ -84,6 +78,16 @@ class OllamaProvider(AIProviderInterface):
             raise IOError(f"Connection Failed: Could not reach Ollama at {self.config.endpoint_url}. Ensure 'ollama serve' is running.")
         except httpx.TimeoutException:
             raise IOError(f"Request Timeout: Ollama took too long to respond. You may need to increase the timeout in AI Settings.")
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 500:
+                hint = (
+                    "\n\nHINT: A 500 Internal Server Error in Ollama usually means:\n"
+                    "1. Out of Memory (OOM): Try closing other apps.\n"
+                    "2. Context Window: The request might be too large for the model's current configuration.\n"
+                    "3. Model Crash: Try restarting the Ollama service."
+                )
+                raise RuntimeError(f"Ollama API Error (500): {exc}{hint}")
+            raise RuntimeError(f"Ollama API Error: {exc}")
         except httpx.HTTPError as exc:
             raise RuntimeError(f"Ollama API Error: {exc}")
         except Exception as exc:
@@ -114,14 +118,15 @@ class OllamaProvider(AIProviderInterface):
         """
         b64_image = base64.b64encode(image_bytes).decode("utf-8")
 
-        messages: List[Dict[str, Any]] = []
+        full_content = prompt
         if system_instructions:
-            messages.append({"role": "system", "content": system_instructions})
-        messages.append({
+            full_content = f"INSTRUCTIONS:\n{system_instructions}\n\nUSER REQUEST:\n{prompt}"
+            
+        messages = [{
             "role": "user",
-            "content": prompt,
+            "content": full_content,
             "images": [b64_image],
-        })
+        }]
 
         payload = {
             "model": self.config.model_name,
@@ -129,7 +134,8 @@ class OllamaProvider(AIProviderInterface):
             "stream": False,
             "options": {
                 "temperature": self.config.temperature,
-                "num_predict": self.config.max_tokens,
+                "num_predict": self.config.max_tokens or 4096,
+                "num_ctx": 4096,
                 **kwargs,
             },
         }
@@ -141,8 +147,18 @@ class OllamaProvider(AIProviderInterface):
                     json=payload,
                 )
                 
+                if response.status_code >= 500:
+                    try:
+                        error_data = response.json()
+                        error_msg = error_data.get("error", "")
+                        if "out of memory" in error_msg.lower():
+                            raise RuntimeError(f"Ollama Out Of Memory: The model '{self.config.model_name}' exceeded available VRAM. Try a smaller model (llava:7b) or close other GPU-intensive apps.")
+                        if error_msg:
+                            raise RuntimeError(f"Ollama Server Failure: {error_msg}")
+                    except (ValueError, TypeError, json.JSONDecodeError):
+                        pass
+
                 if response.status_code == 404:
-                    # Model not found specifically
                     try:
                         error_text = response.json().get("error", response.text)
                     except Exception:
@@ -158,6 +174,17 @@ class OllamaProvider(AIProviderInterface):
             raise IOError(f"Connection Failed: Could not reach Ollama at {self.config.endpoint_url}. Ensure 'ollama serve' is running.")
         except httpx.TimeoutException:
             raise IOError(f"Request Timeout: Ollama took too long to respond. You may need to increase the timeout in AI Settings.")
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 500:
+                hint = (
+                    "\n\nDIAGNOSTIC HINTS:\n"
+                    "1. Model Type: Ensure you are using a VISION model (llava, qwen2-vl). "
+                    "Sending images to models like 'qwen2.5:72b' (non-vision) will crash Ollama with a 500 error.\n"
+                    "2. VRAM: Images require significant EXTRA memory. Try closing browsers or secondary monitors.\n"
+                    "3. Model Swap: Try 'ollama pull moondream:latest' (very lightweight) to verify if vision logic is working."
+                )
+                raise RuntimeError(f"Ollama Vision API Error (500): {exc}{hint}")
+            raise RuntimeError(f"Ollama Vision API Error: {exc}")
         except httpx.HTTPError as exc:
             raise RuntimeError(f"Ollama Vision API Error: {exc}")
         except Exception as exc:
@@ -166,7 +193,6 @@ class OllamaProvider(AIProviderInterface):
     def is_available(self) -> bool:
         """Test if Ollama is running and accessible."""
         try:
-            # Use httpx (consistent with the rest of your AI providers)
             with httpx.Client(timeout=5.0) as client:
                 response = client.get("http://localhost:11434/api/tags")
                 response.raise_for_status()
@@ -174,6 +200,5 @@ class OllamaProvider(AIProviderInterface):
         except (httpx.ConnectError, httpx.TimeoutException, httpx.RequestError):
             return False
         except Exception as e:
-            # Log the real error but don't expose technical details to user
             logger.error(f"Ollama connection test failed: {e}")
             return False

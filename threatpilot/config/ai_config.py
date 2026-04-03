@@ -4,17 +4,14 @@ Contains the ``AIConfig`` model representing AI provider settings.
 """
 
 from __future__ import annotations
-
 import os
 from pathlib import Path
 from pydantic import BaseModel, ConfigDict, SecretStr
 import dotenv
-
 from threatpilot.utils.crypto_utils import encrypt_api_key, decrypt_api_key
 from threatpilot.utils.logger import add_secret_to_redaction
 
 _ENV_FILE = Path(__file__).resolve().parent.parent.parent / "config.env"
-
 
 class AIConfig(BaseModel):
     """Configuration for the AI provider used by the application.
@@ -37,7 +34,7 @@ class AIConfig(BaseModel):
     timeout: int = 3600
     gemini_api_key: SecretStr = SecretStr("")
     autosave_interval: int = 5
-    analysis_mode: str = "STRIDE"  # STRIDE or LINDDUN
+    analysis_mode: str = "STRIDE"
 
     model_config = ConfigDict(
         extra="ignore",
@@ -71,7 +68,6 @@ class AIConfig(BaseModel):
             val = os.getenv(key, default)
             if not val:
                 return default
-            # Strip both double and single quotes which can be added by dotenv.set_key
             if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
                 val = val[1:-1]
             return val.strip().replace("\n", "").replace("\r", "")
@@ -79,7 +75,6 @@ class AIConfig(BaseModel):
         def scrub_key(key: str) -> str:
             if not key: return ""
             clean = key.replace("\n", "").replace("\r", "").strip()
-            # If the user accidentally pasted a traceback as a key, treat it as empty
             if clean.lower().startswith("traceback"):
                  return ""
             return clean
@@ -96,12 +91,9 @@ class AIConfig(BaseModel):
             gemini_api_key=SecretStr(scrub_key(decrypt_api_key(get_opt("GEMINI_API_KEY", "")))),
         )
         
-        # Register keys for log redaction
         add_secret_to_redaction(config.gemini_api_key)
         
         return config
-
-
 
     def save(self) -> None:
         """Save configuration to config.env, encrypting API keys."""
@@ -115,7 +107,6 @@ class AIConfig(BaseModel):
         dotenv.set_key(_ENV_FILE, "AUTOSAVE_INTERVAL", str(self.autosave_interval))
         dotenv.set_key(_ENV_FILE, "AI_ANALYSIS_MODE", self.analysis_mode)
         
-        # Only write non-empty keys
         api_key_str = self.gemini_api_key.get_secret_value()
         if api_key_str:
             dotenv.set_key(_ENV_FILE, "GEMINI_API_KEY", encrypt_api_key(api_key_str))

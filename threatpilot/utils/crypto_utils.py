@@ -15,17 +15,12 @@ import os
 
 SERVICE_NAME = "ThreatPilot"
 KEY_ID = "MasterEncryptionKey"
-SALT = b"\x89\x1e(\xca\x0c\x84W\x8e\x9c\xd8\x8f\x8e\xe6\xcf\x80\xb0" # Fixed salt for machine-bound key
+SALT = b"\x89\x1e(\xca\x0c\x84W\x8e\x9c\xd8\x8f\x8e\xe6\xcf\x80\xb0"
 
 def _get_or_create_master_key() -> str:
     """Retrieve or derive the master key from OS vault (H.2)."""
-    # 1. First, check for a user-provided passphrase in Environment Variables (Finding H.2)
-    # This takes precedence and ensures entropy is not just local.
     source_entropy = os.environ.get("THREATPILOT_MASTER_KEY")
     is_user_provided = bool(source_entropy)
-
-    # 2. If a passphrase is provided, we MUST derive the key from it directly
-    # and NOT use a cached key from the keyring (which might be from a different passphrase).
     if is_user_provided:
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
@@ -36,11 +31,9 @@ def _get_or_create_master_key() -> str:
         derived_key = base64.urlsafe_b64encode(kdf.derive(str(source_entropy).encode('utf-8')))
         return derived_key.decode('utf-8')
 
-    # 3. Fallback to cached key or machine-bound random if no environment variable provided
     raw_key = keyring.get_password(SERVICE_NAME, KEY_ID)
     
     if not raw_key:
-        # Fallback to random local machine-bound entropy
         source_entropy = os.urandom(32).hex()
 
         kdf = PBKDF2HMAC(
@@ -52,7 +45,6 @@ def _get_or_create_master_key() -> str:
         derived_key = base64.urlsafe_b64encode(kdf.derive(str(source_entropy).encode('utf-8')))
         raw_key = derived_key.decode('utf-8')
         
-        # Persist the machine-bound random key for usability
         keyring.set_password(SERVICE_NAME, KEY_ID, raw_key)
         
     return raw_key
@@ -78,5 +70,4 @@ def decrypt_api_key(encrypted_key: str) -> str:
         decrypted_bytes = f.decrypt(encrypted_key.encode('utf-8'))
         return decrypted_bytes.decode('utf-8')
     except Exception:
-        # If decryption fails (e.g. key changed or data corrupted), return empty
         return ""

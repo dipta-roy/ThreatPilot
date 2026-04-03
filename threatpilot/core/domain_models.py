@@ -5,11 +5,9 @@ represent the final structure of the analyzed system.
 """
 
 from __future__ import annotations
-
 import uuid
 from typing import Any
 from pydantic import BaseModel, Field
-
 
 class Component(BaseModel):
     """A logical or physical component in the arch diagram."""
@@ -27,7 +25,6 @@ class Component(BaseModel):
     width: float = 100.0
     height: float = 100.0
 
-
 class Flow(BaseModel):
     """A data flow between two components."""
 
@@ -41,7 +38,6 @@ class Flow(BaseModel):
     start_y: float = 0.0
     end_x: float = 0.0
     end_y: float = 0.0
-
 
 class TrustBoundary(BaseModel):
     """A trust boundary encompassing multiple components."""

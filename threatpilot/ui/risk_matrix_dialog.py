@@ -5,7 +5,6 @@ and Impact (derived from CVSS). Supports clicking cells to drill down.
 """
 
 from __future__ import annotations
-
 from typing import List, Dict
 from PySide6.QtWidgets import (
     QDialog,
@@ -20,9 +19,9 @@ from PySide6.QtWidgets import (
     QPushButton,
     QDialogButtonBox,
 )
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, QModelIndex
 from PySide6.QtGui import QColor, QFont
-
+from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem
 from threatpilot.core.threat_model import Threat, ThreatRegister
 
 
@@ -43,8 +42,6 @@ class RiskMatrixDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(15)
-
-        # Header
         header = QLabel("Visual Risk Heat Map")
         header.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
         header.setStyleSheet("color: #58a6ff;")
@@ -53,26 +50,18 @@ class RiskMatrixDialog(QDialog):
         desc = QLabel("Threats are plotted by Likelihood (AI identified) vs. Impact (CVSS-derived).")
         desc.setStyleSheet("color: #8b949e;")
         layout.addWidget(desc)
-
-        # Main horizontal split
         main_h = QHBoxLayout()
-        
-        # 1. Left: The Heatmap
         self._matrix = QTableWidget(5, 5)
         self._matrix.setObjectName("risk_heatmap")
         self._matrix.setMinimumSize(450, 450)
         self._matrix.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._matrix.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        # Use a custom delegate that paints item.background(), bypassing QSS
-        from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem
-        from PySide6.QtCore import QModelIndex
-        
+
         class HeatmapDelegate(QStyledItemDelegate):
             def paint(self, painter, option, index):
                 bg = index.data(Qt.ItemDataRole.BackgroundRole)
                 if bg:
                     painter.fillRect(option.rect, bg)
-                # Draw text
                 painter.save()
                 fg = index.data(Qt.ItemDataRole.ForegroundRole)
                 if fg:
@@ -84,20 +73,13 @@ class RiskMatrixDialog(QDialog):
                 painter.restore()
         
         self._matrix.setItemDelegate(HeatmapDelegate(self._matrix))
-        
-        # Headers
         self._matrix.setVerticalHeaderLabels(["Certain (5)", "Likely (4)", "Possible (3)", "Unlikely (2)", "Rare (1)"])
         self._matrix.setHorizontalHeaderLabels(["Low (1)", "Minor (2)", "Mid (3)", "Major (4)", "Crit (5)"])
-        
-        # Styling headers
         vh = self._matrix.verticalHeader()
         hh = self._matrix.horizontalHeader()
         vh.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         hh.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        
         main_h.addWidget(self._matrix, 3)
-
-        # 2. Right: Drill-down List (theme-aware)
         self._side_panel = QFrame()
         self._side_panel.setFrameShape(QFrame.Shape.StyledPanel)
         if self._is_dark_theme:
@@ -127,16 +109,11 @@ class RiskMatrixDialog(QDialog):
         self._threat_table.verticalHeader().setVisible(False)
         self._threat_table.itemDoubleClicked.connect(self._on_threat_double_clicked)
         side_layout.addWidget(self._threat_table)
-        
         main_h.addWidget(self._side_panel, 2)
-        
         layout.addLayout(main_h)
-
-        # Close button
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         btns.rejected.connect(self.reject)
         layout.addWidget(btns)
-
         self._matrix.cellClicked.connect(self._on_cell_clicked)
 
     def _on_threat_double_clicked(self, item: QTableWidgetItem) -> None:
@@ -164,18 +141,17 @@ class RiskMatrixDialog(QDialog):
         risk_score = likelihood * impact
         
         if self._is_dark_theme:
-            if risk_score >= 15: return QColor("#8b0000") # Critical Deep Red
-            if risk_score >= 10: return QColor("#d73a49") # Major Red
-            if risk_score >= 6:  return QColor("#d29922") # Warning Orange/Yellow
-            if risk_score >= 3:  return QColor("#30363d") # Mid
-            return QColor("#238636") # Low Green
+            if risk_score >= 15: return QColor("#8b0000")
+            if risk_score >= 10: return QColor("#d73a49")
+            if risk_score >= 6:  return QColor("#d29922")
+            if risk_score >= 3:  return QColor("#30363d")
+            return QColor("#238636")
         else:
-            # Light Mode High-Contrast Colors
-            if risk_score >= 15: return QColor("#cf222e") # Bright Red
-            if risk_score >= 10: return QColor("#ffcccc") # Lighter Red
-            if risk_score >= 6:  return QColor("#fff8c5") # Soft Yellow
-            if risk_score >= 3:  return QColor("#ddf4ff") # Light Blue/Mid
-            return QColor("#dafbe1") # Pale Green
+            if risk_score >= 15: return QColor("#cf222e")
+            if risk_score >= 10: return QColor("#ffcccc")
+            if risk_score >= 6:  return QColor("#fff8c5")
+            if risk_score >= 3:  return QColor("#ddf4ff")
+            return QColor("#dafbe1")
 
     def _populate_matrix(self) -> None:
         """Group threats into matrix cells and update counts."""
@@ -184,55 +160,37 @@ class RiskMatrixDialog(QDialog):
         for t in self._threats:
             impact = self._get_impact_score(t.cvss_score)
             likelihood = t.likelihood
-            
-            # Map to table indices
-            # Likelihood 5 -> row 0, Likelihood 1 -> row 4
-            # Impact 1 -> col 0, Impact 5 -> col 4
             row = 5 - likelihood
             col = impact - 1
-            
             key = (row, col)
             if key not in self._data: self._data[key] = []
             self._data[key].append(t)
 
-        # Clear and draw cells
         for r in range(5):
             for c in range(5):
                 threats_in_cell = self._data.get((r, c), [])
                 count = len(threats_in_cell)
-                
                 item = QTableWidgetItem(str(count) if count > 0 else "")
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                
-                # Sizing and bolding
                 font = QFont()
                 font.setBold(True)
                 item.setFont(font)
-                
-                # Apply heat color
                 bg = self._get_cell_color(r, c)
                 item.setBackground(bg)
-                
                 if self._is_dark_theme:
                     if count > 0:
                         item.setForeground(QColor("white"))
                     else:
-                        item.setForeground(QColor("#484f58")) # subtle zero
+                        item.setForeground(QColor("#484f58"))
                 else:
                     if count > 0:
-                        # For very dark cells in light theme (Critical/Certain), use white text
-                        if r + c <= 2: # Top left-ish are higher risk (Likelihood rank 5, Impact rank 5 is 0,4)
-                            # Actually top right is higher.
-                            # Row 0 is Likelihood 5. Col 4 is Impact 5.
-                            # Row 4 is Likelihood 1. Col 0 is Impact 1.
+                        if r + c <= 2: 
                             pass
-                        
-                        # Simplest: dark text for everything in light theme except maybe most critical
                         item.setForeground(QColor("#1a7f37") if (r >= 4 and c <= 0) else QColor("#1a1a1a"))
-                        if r == 0 and c == 4: # Critical
+                        if r == 0 and c == 4: 
                             item.setForeground(QColor("white"))
                     else:
-                        item.setForeground(QColor("#cccccc")) # subtle zero light
+                        item.setForeground(QColor("#cccccc"))
                 
                 self._matrix.setItem(r, c, item)
 
@@ -264,12 +222,9 @@ class RiskMatrixDialog(QDialog):
         from threatpilot.ui.threat_edit_dialog import ThreatEditDialog
         dialog = ThreatEditDialog(threat, component_names=self._component_names, parent=self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            # Re-populate to reflect changes (e.g. if likelihood/impact changed)
             self._populate_matrix()
-            # Find the new cell if likelihood/impact changed
             impact = self._get_impact_score(threat.cvss_score)
             new_row = 5 - threat.likelihood
             new_col = impact - 1
             self._on_cell_clicked(new_row, new_col)
-            # Select the cell visually
             self._matrix.setCurrentCell(new_row, new_col)

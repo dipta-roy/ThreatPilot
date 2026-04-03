@@ -5,12 +5,9 @@ local Ollama or external REST APIs).
 """
 
 from __future__ import annotations
-
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
-
 from threatpilot.config.ai_config import AIConfig
-
 
 class AIProviderInterface(ABC):
     """Abstract base class for all AI backends.

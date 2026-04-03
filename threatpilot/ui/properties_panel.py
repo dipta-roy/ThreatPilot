@@ -5,10 +5,8 @@ currently selected architectural item (Component, Flow, or Trust Boundary).
 """
 
 from __future__ import annotations
-
 from datetime import datetime
 from typing import Any
-
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -24,13 +22,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-
 from threatpilot.core.domain_models import Component, Flow, TrustBoundary
 from threatpilot.core.threat_model import Threat, STRIDECategory
 from threatpilot.ui.cvss_dialog import CVSSCalculatorDialog
 from threatpilot.ai.response_parser import convert_reasoning_to_markdown
 from threatpilot.utils.logger import sanitize_text
-
 
 class PropertiesPanel(QWidget):
     """A dynamic property editor panel for project elements.
@@ -44,26 +40,20 @@ class PropertiesPanel(QWidget):
             modified item object.
     """
 
-    property_changed: Signal = Signal(object)  # One of Component, Flow, TrustBoundary
-    reasoning_requested: Signal = Signal(object)  # Threat
-
-    # ------------------------------------------------------------------
-    # Construction
-    # ------------------------------------------------------------------
+    property_changed: Signal = Signal(object)
+    reasoning_requested: Signal = Signal(object)
 
     def __init__(self, parent: QWidget | None = None, undo_stack: QUndoStack | None = None) -> None:
         super().__init__(parent)
         self._current_item: Any | None = None
         self._undo_stack = undo_stack
         
-        # Debounce timer for multiline edits (QTextEdit)
         self._debounce_timer = QTimer(self)
         self._debounce_timer.setSingleShot(True)
-        self._debounce_timer.setInterval(1000) # Wait 1s after last keystroke
+        self._debounce_timer.setInterval(1000)
         self._debounce_timer.timeout.connect(self._on_debounced_timeout)
         self._pending_field: str | None = None
         self._pending_getter = None
-        # Guard: True while we are committing a change from within this panel
         self._is_panel_editing: bool = False
 
         self._setup_ui()
@@ -74,13 +64,11 @@ class PropertiesPanel(QWidget):
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Title/Header
         self._header = QLabel("No item selected")
         self._header.setObjectName("property_header")
         self._header.setAlignment(Qt.AlignmentFlag.AlignLeft)
         root_layout.addWidget(self._header)
 
-        # Scroll Area for the form
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.NoFrame)
@@ -90,7 +78,6 @@ class PropertiesPanel(QWidget):
         self._form_layout = QFormLayout(self._container)
         scroll.setWidget(self._container)
         
-        # Security Warning for generated content
         self._security_warning = QLabel(
             "⚠️ Security Advisory: All AI-generated mitigations and descriptions should be verified "
             "by a security professional before implementation."
@@ -104,16 +91,8 @@ class PropertiesPanel(QWidget):
     def set_theme(self, is_dark: bool) -> None:
         """Update the panel's internal state for theme changes."""
         self._is_dark_theme = is_dark
-        # Refresh the current item to apply any object-name based styles if needed
-        # (Though most are handled by QSS or re-rendered on set_item)
         if self._current_item:
             self.set_item(self._current_item)
-
-
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
 
     def set_item(self, item: Any | None) -> None:
         """Load the properties of the given item into the panel.
@@ -129,14 +108,12 @@ class PropertiesPanel(QWidget):
             self._security_warning.setVisible(False)
             return
 
-        # Show warning if it is a Threat
         from threatpilot.core.threat_model import Threat
         if isinstance(item, Threat):
             self._security_warning.setVisible(True)
         else:
             self._security_warning.setVisible(False)
 
-        # Build dynamic form based on type
         if isinstance(item, Component):
             self._header.setText("Component Properties")
             self._add_text_row("Name:", "name", item.name)
@@ -186,7 +163,6 @@ class PropertiesPanel(QWidget):
             self._add_checkbox_row("Accepted Risk:", "is_accepted_risk", item.is_accepted_risk)
             self._add_textarea_row("Acceptance Rationale:", "acceptance_justification", item.acceptance_justification)
             
-            # --- Integrated XAI Section ---
             self._add_readonly_textarea_row("XAI Reasoning:", "reasoning", item.reasoning or "Reasoning not yet generated.")
             
             self._btn_xai = QPushButton("Analyze Reasoning using XAI")
@@ -196,7 +172,7 @@ class PropertiesPanel(QWidget):
             self._form_layout.addRow("", self._btn_xai)
             
             self._xai_progress = QProgressBar()
-            self._xai_progress.setRange(0, 0) # Indeterminate
+            self._xai_progress.setRange(0, 0)
             self._xai_progress.setTextVisible(False)
             self._xai_progress.setFixedHeight(4)
             self._xai_progress.setVisible(False)
@@ -216,10 +192,6 @@ class PropertiesPanel(QWidget):
         if hasattr(self, "_xai_progress"):
             self._xai_progress.setVisible(busy)
 
-    # ------------------------------------------------------------------
-    # Form Helpers
-    # ------------------------------------------------------------------
-
     def _clear_form(self) -> None:
         """Remove all rows from the layout."""
         while self._form_layout.rowCount() > 0:
@@ -229,7 +201,6 @@ class PropertiesPanel(QWidget):
         """Add an editable text row that updates the model on change."""
         edit = QLineEdit(str(value))
         
-        # Interactive CVSS Calculator trigger
         if field == "cvss_vector":
             edit.setReadOnly(True)
             edit.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -242,9 +213,7 @@ class PropertiesPanel(QWidget):
                     score, vector = dialog.get_result()
                     edit.setText(vector)
                     self._on_field_changed("cvss_vector", vector)
-                    # Manually update the score field too if we can find it
                     self._on_field_changed("cvss_score", score)
-                    # Refresh the whole panel to show the new numeric score
                     self.set_item(self._current_item)
 
             edit.mousePressEvent = lambda e: launch_calc()
@@ -270,8 +239,6 @@ class PropertiesPanel(QWidget):
         edit = QTextEdit()
         edit.setReadOnly(True)
 
-        # Convert raw dict/JSON reasoning strings to readable Markdown paragraphs.
-        # This handles both newly generated and previously saved reasoning text.
         if field == "reasoning":
             value = convert_reasoning_to_markdown(value)
             self._reasoning_view = edit
@@ -306,10 +273,6 @@ class PropertiesPanel(QWidget):
         cb.currentTextChanged.connect(lambda text: self._on_field_changed(field, text))
         self._form_layout.addRow(label, cb)
 
-    # ------------------------------------------------------------------
-    # Event Handlers
-    # ------------------------------------------------------------------
-
     def _on_request_reasoning(self) -> None:
         """Inform the controller that reasoning analysis should be executed for the current threat."""
         from threatpilot.core.threat_model import Threat
@@ -321,7 +284,11 @@ class PropertiesPanel(QWidget):
     def _on_field_changed(self, field: str, value: Any) -> None:
         """Update the model object field and emit change signal with type awareness."""
         if self._current_item is not None:
-            # Handle numeric type conversion for specific fields
+            try:
+                old_val = getattr(self._current_item, field)
+            except AttributeError:
+                return
+
             if field in ("cvss_score",):
                 try: value = float(value)
                 except ValueError: return
@@ -329,16 +296,16 @@ class PropertiesPanel(QWidget):
                 try: value = int(value)
                 except ValueError: return
             
-            # Special case for STRIDE Category enum
             if field == "category":
-                # Ensure value is converted from string to enum member if needed
                 for cat in STRIDECategory:
                     if cat.value == value:
                         value = cat
                         break
 
-            # Use Undo-stack if present for seamless revision tracking
-            old_val = getattr(self._current_item, field)
+            if field == "cvss_score":
+                value = round(float(value), 1)
+                old_val = round(float(old_val or 0.0), 1)
+
             if value != old_val:
                 self._is_panel_editing = True
                 try:

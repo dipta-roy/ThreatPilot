@@ -5,13 +5,10 @@ architecture diagram image.
 """
 
 from __future__ import annotations
-
 import uuid
 from datetime import datetime, timezone
 from typing import Any
-
 from pydantic import BaseModel
-
 
 class Diagram(BaseModel):
     """Metadata for a single imported architecture diagram.
@@ -33,10 +30,6 @@ class Diagram(BaseModel):
     width: int = 0
     height: int = 0
 
-    # ------------------------------------------------------------------
-    # Factory
-    # ------------------------------------------------------------------
-
     @classmethod
     def create(cls, original_name: str, file_path: str) -> Diagram:
         """Create a new ``Diagram`` instance with a generated ID and timestamp.
@@ -54,10 +47,6 @@ class Diagram(BaseModel):
             original_name=original_name,
             created_at=datetime.now(timezone.utc).isoformat(),
         )
-
-    # ------------------------------------------------------------------
-    # Serialisation
-    # ------------------------------------------------------------------
 
     def to_dict(self) -> dict[str, Any]:
         """Convert the diagram to a JSON-serialisable dictionary.

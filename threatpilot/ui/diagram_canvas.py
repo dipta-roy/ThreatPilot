@@ -8,10 +8,8 @@ Provides a feature-rich ``QGraphicsView`` subclass with:
 """
 
 from __future__ import annotations
-
 from enum import Enum, auto
 from typing import Any
-
 from PySide6.QtCore import Qt, QPointF, QRectF, QTimer, Signal
 from PySide6.QtGui import (
     QBrush,
@@ -38,20 +36,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-
-# ======================================================================
-# Constants
-# ======================================================================
-
 _ZOOM_IN_FACTOR: float = 1.15
 _ZOOM_OUT_FACTOR: float = 1.0 / _ZOOM_IN_FACTOR
 _MIN_ZOOM: float = 0.05
 _MAX_ZOOM: float = 20.0
-
-
-# ======================================================================
-# Overlay style enums
-# ======================================================================
 
 
 class OverlayKind(Enum):
@@ -61,19 +49,11 @@ class OverlayKind(Enum):
     FLOW_ARROW = auto()
     TRUST_BOUNDARY = auto()
 
-
-# Colour palette for overlays (semi-transparent)
 _OVERLAY_COLORS: dict[OverlayKind, QColor] = {
     OverlayKind.COMPONENT_BOX: QColor(100, 180, 255, 160),
     OverlayKind.FLOW_ARROW: QColor(255, 180, 60, 200),
     OverlayKind.TRUST_BOUNDARY: QColor(180, 100, 255, 100),
 }
-
-
-# ======================================================================
-# DiagramCanvas
-# ======================================================================
-
 
 class DiagramCanvas(QGraphicsView):
     """Interactive diagram canvas with zoom, pan, and overlay support.
@@ -85,12 +65,8 @@ class DiagramCanvas(QGraphicsView):
             Carries the current zoom factor as a float.
     """
 
-    item_selected: Signal = Signal(object)  # QGraphicsItem | None
+    item_selected: Signal = Signal(object)
     zoom_changed: Signal = Signal(float)
-
-    # ------------------------------------------------------------------
-    # Construction
-    # ------------------------------------------------------------------
 
     def __init__(self, parent: QWidget | None = None) -> None:
         self._scene = QGraphicsScene(parent)
@@ -103,10 +79,6 @@ class DiagramCanvas(QGraphicsView):
         self._pan_start: QPointF = QPointF()
 
         self._configure_view()
-
-    # ------------------------------------------------------------------
-    # View configuration
-    # ------------------------------------------------------------------
 
     def _configure_view(self) -> None:
         """Apply default rendering and interaction settings."""
@@ -127,8 +99,7 @@ class DiagramCanvas(QGraphicsView):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         
-        # Initial theme application (defaulting to dark if not specify)
-        self.set_theme(is_dark=True)
+        self.set_theme(is_dark=False)
 
     def set_theme(self, is_dark: bool) -> None:
         """Update canvas background and overlay contrast based on theme."""
@@ -139,14 +110,9 @@ class DiagramCanvas(QGraphicsView):
     def showEvent(self, event) -> None:
         """Ensure the diagram is fitted to screen once the window is shown."""
         super().showEvent(event)
-        # Delay slightly to ensure layout is truly stable
         QTimer.singleShot(100, self.fit_to_screen)
 
-    # ------------------------------------------------------------------
-    # Zoom
-    # ------------------------------------------------------------------
-
-    def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802
+    def wheelEvent(self, event: QWheelEvent) -> None:
         """Zoom in / out using the mouse wheel.
 
         The zoom is anchored under the cursor position.
@@ -192,11 +158,7 @@ class DiagramCanvas(QGraphicsView):
         """Return the current zoom factor."""
         return self._current_zoom
 
-    # ------------------------------------------------------------------
-    # Pan (middle-button or Ctrl+left-button)
-    # ------------------------------------------------------------------
-
-    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+    def mousePressEvent(self, event: QMouseEvent) -> None:
         """Begin panning on middle-button or Ctrl+left press."""
         if (
             event.button() == Qt.MouseButton.MiddleButton
@@ -212,7 +174,7 @@ class DiagramCanvas(QGraphicsView):
             return
         super().mousePressEvent(event)
 
-    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
         """Continue panning while the button is held."""
         if self._is_panning:
             delta = event.position() - self._pan_start
@@ -227,7 +189,7 @@ class DiagramCanvas(QGraphicsView):
             return
         super().mouseMoveEvent(event)
 
-    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         """End panning on button release."""
         if self._is_panning:
             self._is_panning = False
@@ -236,23 +198,14 @@ class DiagramCanvas(QGraphicsView):
             return
         super().mouseReleaseEvent(event)
 
-    # ------------------------------------------------------------------
-    # Fit to screen
-    # ------------------------------------------------------------------
-
     def fit_to_screen(self) -> None:
         """Fit the entire scene content to the viewport, keeping aspect ratio."""
         rect = self._scene.sceneRect()
         if rect.isNull() or rect.isEmpty():
             return
         self.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
-        # Recalculate current zoom from the resulting transform
         self._current_zoom = self.transform().m11()
         self.zoom_changed.emit(self._current_zoom)
-
-    # ------------------------------------------------------------------
-    # Diagram image
-    # ------------------------------------------------------------------
 
     def set_diagram_pixmap(self, pixmap: QPixmap) -> None:
         """Display a diagram image, replacing any previous one.
@@ -260,13 +213,12 @@ class DiagramCanvas(QGraphicsView):
         Args:
             pixmap: The ``QPixmap`` to display.
         """
-        # Remove previous diagram (keep overlays)
         if self._diagram_pixmap_item is not None:
             self._scene.removeItem(self._diagram_pixmap_item)
             self._diagram_pixmap_item = None
 
         self._diagram_pixmap_item = self._scene.addPixmap(pixmap)
-        self._diagram_pixmap_item.setZValue(-100)  # behind overlays
+        self._diagram_pixmap_item.setZValue(-100)
         self._scene.setSceneRect(QRectF(pixmap.rect()))
         self.fit_to_screen()
 
@@ -281,10 +233,6 @@ class DiagramCanvas(QGraphicsView):
     def diagram_pixmap_item(self) -> QGraphicsPixmapItem | None:
         """Return the current diagram pixmap item, or ``None``."""
         return self._diagram_pixmap_item
-
-    # ------------------------------------------------------------------
-    # Overlay management
-    # ------------------------------------------------------------------
 
     def add_component_box(
         self,
@@ -349,19 +297,15 @@ class DiagramCanvas(QGraphicsView):
         c = color or _OVERLAY_COLORS[OverlayKind.FLOW_ARROW]
         pen = QPen(c, 2)
 
-        # Build path: line + arrowhead
         path = QPainterPath()
         path.moveTo(start)
         path.lineTo(end)
-
-        # Arrowhead
         arrow_size = 10.0
         dx = end.x() - start.x()
         dy = end.y() - start.y()
         length = (dx * dx + dy * dy) ** 0.5
         if length > 0:
             ux, uy = dx / length, dy / length
-            # perpendicular
             px, py = -uy, ux
             tip = end
             left = QPointF(
@@ -418,7 +362,7 @@ class DiagramCanvas(QGraphicsView):
         brush = QBrush(QColor(c.red(), c.green(), c.blue(), 25))
 
         box = self._scene.addRect(rect, pen, brush)
-        box.setZValue(5)  # behind component boxes
+        box.setZValue(5)
         box.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
         if data is not None:
             box.setData(0, data)
@@ -443,10 +387,6 @@ class DiagramCanvas(QGraphicsView):
     def overlay_items(self) -> list[QGraphicsItem]:
         """Return the current list of overlay items."""
         return list(self._overlay_items)
-
-    # ------------------------------------------------------------------
-    # Scene accessor
-    # ------------------------------------------------------------------
 
     @property
     def graphics_scene(self) -> QGraphicsScene:

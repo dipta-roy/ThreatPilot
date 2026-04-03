@@ -5,12 +5,10 @@ configuration.
 """
 
 from __future__ import annotations
-
 from threatpilot.config.ai_config import AIConfig
 from threatpilot.ai.ai_provider_interface import AIProviderInterface
 from threatpilot.ai.ollama_provider import OllamaProvider
 from threatpilot.ai.gemini_provider import GeminiProvider
-
 
 def create_ai_provider(config: AIConfig) -> AIProviderInterface:
     """Instantiate the correct AI provider based on the type string.

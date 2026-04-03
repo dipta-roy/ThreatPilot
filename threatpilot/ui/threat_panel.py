@@ -5,7 +5,6 @@ Groups threats by STRIDE category and supports selection/editing.
 """
 
 from __future__ import annotations
-
 from typing import Dict, List, Optional
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
@@ -20,9 +19,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-
 from threatpilot.core.threat_model import STRIDECategory, Threat, ThreatRegister
-
 
 class ThreatPanel(QWidget):
     """Panel for viewing and managing identified threats.
@@ -35,14 +32,10 @@ class ThreatPanel(QWidget):
         run_analysis_requested: Emitted when the "Run Analysis" button is clicked.
     """
 
-    threat_selected: Signal = Signal(object)  # Threat
-    threat_added: Signal = Signal(object)     # Threat
-    threat_removed: Signal = Signal(str)      # Threat ID
+    threat_selected: Signal = Signal(object)
+    threat_added: Signal = Signal(object)
+    threat_removed: Signal = Signal(str)
     run_analysis_requested: Signal = Signal()
-
-    # ------------------------------------------------------------------
-    # Construction
-    # ------------------------------------------------------------------
 
     def __init__(self, parent: QWidget | None = None, filter_mode: str = "ALL") -> None:
         super().__init__(parent)
@@ -58,10 +51,7 @@ class ThreatPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 12, 8, 8)
         layout.setSpacing(10)
-
-        # Toolbar / Actions area
         toolbar_layout = QHBoxLayout()
-        
         self._search_input = QLineEdit()
         self._search_input.setPlaceholderText("Filter threats...")
         self._search_input.setFixedWidth(250)
@@ -88,7 +78,6 @@ class ThreatPanel(QWidget):
         toolbar_layout.addStretch()
         layout.addLayout(toolbar_layout)
 
-        # Start disabled (no project)
         self._btn_add.setEnabled(False)
         self._btn_delete.setEnabled(False)
 
@@ -104,22 +93,14 @@ class ThreatPanel(QWidget):
         self._tree.setIndentation(15)
         self._tree.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self._tree.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
-        
-        # Selection handling
         self._tree.itemClicked.connect(self._on_item_clicked)
-        
         layout.addWidget(self._tree)
-        
         self.setEnabled(False)
 
-    # ------------------------------------------------------------------
     def set_theme(self, is_dark: bool) -> None:
         """Update the panel's internal state for theme changes."""
         self._is_dark_theme = is_dark
         self.refresh()
-
-    # Public API
-    # ------------------------------------------------------------------
 
     def set_register(self, register: Optional[ThreatRegister]) -> None:
         """Load the threat list from the register into the tree."""
@@ -147,12 +128,10 @@ class ThreatPanel(QWidget):
         if self._register is None:
             return
 
-        # Prepare STRIDE category headers
         header_font = self._tree.font()
         header_font.setBold(True)
         is_dark = getattr(self, "_is_dark_theme", True)
         
-        # Determine which categories to show based on filter mode
         STRIDE_ONLY = {
             STRIDECategory.SPOOFING, STRIDECategory.TAMPERING, 
             STRIDECategory.REPUDIATION, STRIDECategory.INFORMATION_DISCLOSURE, 
@@ -166,25 +145,21 @@ class ThreatPanel(QWidget):
         }
 
         for cat in STRIDECategory:
-            # Filter categories by mode
             if self._filter_mode == "STRIDE" and cat not in STRIDE_ONLY:
                 continue
             if self._filter_mode == "LINDDUN" and cat not in LINDDUN_ONLY:
                 continue
                 
-            # Uppercase header names for professional UI look, with a placeholder count
             base_name = cat.name.upper().replace("_PRIVACY", "")
             cat_item = QTreeWidgetItem(self._tree, [f"[0] {base_name}", "", ""])
             cat_item.setFlags(cat_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
-            cat_item.setFirstColumnSpanned(True)  # Makes it a full width header row
+            cat_item.setFirstColumnSpanned(True)
             cat_item.setFont(0, header_font)
             
-            # Apply distinctive section header styling
             if is_dark:
-                # Deep slate background for category headers
                 for col in range(3):
                     cat_item.setBackground(col, QColor("#21262d"))
-                cat_item.setForeground(0, QColor("#58a6ff")) # Section brand color
+                cat_item.setForeground(0, QColor("#58a6ff"))
             else:
                 for col in range(3):
                     cat_item.setBackground(col, QColor("#f6f8fa"))
@@ -193,11 +168,9 @@ class ThreatPanel(QWidget):
             cat_item.setExpanded(True)
             self._category_items[cat] = cat_item
 
-        # Add threats to headers
         search_text = self._search_input.text().strip().lower()
 
         for threat in self._register.threats:
-            # Filtering logic
             if search_text:
                 sev_label = self._get_severity_label(threat.cvss_score).lower()
                 matches_search = (
@@ -211,20 +184,29 @@ class ThreatPanel(QWidget):
                 if not matches_search:
                     continue
 
-            parent = self._category_items.get(threat.category)
+            target_cat = threat.category
+            if isinstance(target_cat, str):
+                for member in STRIDECategory:
+                    if target_cat.lower() == member.value.lower():
+                        target_cat = member
+                        break
+                        
+            parent = self._category_items.get(target_cat)
             if parent:
                 sev_label = self._get_severity_label(threat.cvss_score)
                 threat_item = QTreeWidgetItem(parent, [
-                    threat.threat_id[:8],  # short ID
+                    threat.threat_id[:8],
                     sev_label,
                     threat.title
                 ])
                 
-                # Color code severity with theme-aware curated palettes
                 is_dark = getattr(self, "_is_dark_theme", True)
                 if is_dark:
                     if sev_label == "CRITICAL":
                         threat_item.setBackground(1, QColor("#cc0000"))
+                        threat_item.setForeground(1, QColor("white"))
+                    elif sev_label == "HIGH":
+                        threat_item.setBackground(1, QColor("#f97583"))
                         threat_item.setForeground(1, QColor("white"))
                     elif sev_label == "MEDIUM":
                         threat_item.setBackground(1, QColor("#e3b341"))
@@ -245,15 +227,12 @@ class ThreatPanel(QWidget):
                     elif sev_label == "LOW":
                         threat_item.setBackground(1, QColor("#ddf4ff"))
                         threat_item.setForeground(1, QColor("#0969da"))
-                # Store reference in user data
                 threat_item.setData(0, Qt.ItemDataRole.UserRole, threat)
 
-                # Visual state for accepted risks
                 if threat.is_accepted_risk:
                     threat_item.setForeground(1, Qt.GlobalColor.gray)
                     threat_item.setText(2, f"[Accepted] {threat.title}")
 
-        # Update category header text with the final count, and hide if empty
         for cat in STRIDECategory:
             cat_item = self._category_items.get(cat)
             if not cat_item:
@@ -262,11 +241,9 @@ class ThreatPanel(QWidget):
             count = cat_item.childCount()
             if count > 0:
                 cat_item.setHidden(False)
-                # Prefix the count natively in the header
                 base_name = cat.name.upper().replace("_PRIVACY", "")
                 cat_item.setText(0, f"[{count}] {base_name}")
             else:
-                # Hide empty category header
                 cat_item.setHidden(True)
 
     def _get_severity_label(self, score: float) -> str:
@@ -277,10 +254,6 @@ class ThreatPanel(QWidget):
         if score > 0:    return "LOW"
         return "NONE"
 
-    # ------------------------------------------------------------------
-    # Event Handlers
-    # ------------------------------------------------------------------
-
     def _on_add_threat(self) -> None:
         """Create a new manual threat and add it to the register."""
         if self._register is None:
@@ -290,7 +263,6 @@ class ThreatPanel(QWidget):
         self._register.add_threat(new_threat, skip_duplicates=False)
         self.refresh()
         
-        # Select the new threat
         self.threat_added.emit(new_threat)
         self.threat_selected.emit(new_threat)
 

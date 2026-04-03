@@ -5,7 +5,6 @@ using the 'gemini' model family with automated API version fallback.
 """
 
 from __future__ import annotations
-
 import asyncio
 import base64
 import httpx
@@ -13,13 +12,11 @@ import json
 import logging
 import socket
 from typing import Any, Dict, Optional
-
 from threatpilot.ai.ai_provider_interface import AIProviderInterface
 from threatpilot.config.ai_config import AIConfig
 from threatpilot.utils.logger import get_logger
 
 logger = get_logger(__name__)
-
 
 class GeminiProvider(AIProviderInterface):
     """Integrates with Google's Gemini models via REST API.
@@ -41,9 +38,6 @@ class GeminiProvider(AIProviderInterface):
         """Send a request to Gemini and return the choice text."""
         contents = [{"role": "user", "parts": [{"text": prompt}]}]
         
-        # For threat analysis, we need generous output budgets.
-        # gemini-2.5-flash uses "thinking" tokens that count AGAINST maxOutputTokens,
-        # so we must set a very high ceiling and constrain thinking separately.
         max_out = max(self.config.max_tokens, 16384)
         
         payload: Dict[str, Any] = {
@@ -57,15 +51,12 @@ class GeminiProvider(AIProviderInterface):
             }
         }
 
-        # For Gemini 2.x models, cap thinking tokens so the bulk of the budget
-        # goes to actual JSON output rather than internal reasoning.
         model_name = (self.config.model_name or "").lower()
         if "2.0" in model_name or "2-0" in model_name:
             payload["generationConfig"]["thinkingConfig"] = {
                 "thinkingBudget": 2048
             }
         
-        # Backward compatibility for any experimental versions
         elif "2.5" in model_name or "2-5" in model_name:
             payload["generationConfig"]["thinkingConfig"] = {
                 "thinkingBudget": 2048
@@ -115,7 +106,6 @@ class GeminiProvider(AIProviderInterface):
     async def _execute_with_fallback(self, payload: Dict[str, Any]) -> tuple[str, dict]:
         """Execute request with automated URL version fallback (v1 -> v1beta)."""
         model = (self.config.model_name or "gemini-3.1-flash-lite-preview").strip().replace("\n", "").replace("\r", "")
-        # Strip internal 'models/' prefix if user accidentally included it
         if model.lower().startswith("models/"):
             model = model[7:]
             
@@ -162,15 +152,12 @@ class GeminiProvider(AIProviderInterface):
                             await asyncio.sleep(2 ** attempt)
                             continue
                             
-                        # If a model isn't in v1, it might be in v1beta. 
-                        # We break this retry loop to allow falling back to the next URL.
                         if response.status_code in [400, 404]:
                             last_error = f"HTTP {response.status_code} on {url}"
                             break
                             
                         response.raise_for_status()
                         
-                        # Parse success
                         data = response.json()
                         usage = data.get("usageMetadata", {})
                         if "candidates" in data and len(data["candidates"]) > 0:
@@ -181,7 +168,6 @@ class GeminiProvider(AIProviderInterface):
                             return text, {"usage": usage, "finish_reason": finish_reason}
                         return "", {"usage": usage}
 
-                # If we broke because of 404/400, continue to next URL
                 if response is not None and response.status_code in [400, 404]:
                     continue
 
@@ -203,11 +189,8 @@ class GeminiProvider(AIProviderInterface):
                 else:
                     last_error = f"Connection Failed: {type(exc).__name__} - {exc}"
                 
-                # If non-retryable response (and not 404/400 which we use for version fallback), stop.
                 if response is not None and response.status_code not in [400, 404, 500, 502, 503, 504]:
                     break
-                # If there's no response (network error like timeout), we'll try the next version anyway 
-                # or fail at the end of loop.
 
         error_context = url if 'url' in locals() else 'unknown URL'
         error_msg = f"Gemini API request failed. Last attempted URL: {error_context}. Error: {last_error}"

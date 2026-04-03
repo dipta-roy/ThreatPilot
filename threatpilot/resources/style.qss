@@ -221,3 +221,28 @@ QLabel {
     font-weight: bold;
     color: #58a6ff;
 }
+
+/* 12. Checkboxes & Indicators */
+QCheckBox, QTableWidget::indicator, QListWidget::indicator, QTreeWidget::indicator {
+    background-color: transparent;
+    color: #c9d1d9;
+    spacing: 10px;
+}
+
+QCheckBox::indicator, QTableWidget::indicator, QListWidget::indicator, QTreeWidget::indicator {
+    width: 20px;
+    height: 20px;
+    border: 2px solid #8b949e;
+    border-radius: 4px;
+    background-color: #2d333b;
+}
+
+QCheckBox::indicator:unchecked:hover, QTableWidget::indicator:unchecked:hover {
+    border-color: #58a6ff;
+    background-color: #373e47;
+}
+
+QCheckBox::indicator:checked, QTableWidget::indicator:checked, QListWidget::indicator:checked, QTreeWidget::indicator:checked {
+    background-color: #1f6feb;
+    border: 2px solid #58a6ff;
+}

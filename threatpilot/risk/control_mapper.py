@@ -5,12 +5,9 @@ from established frameworks (NIST, OWASP, CIS, etc.).
 """
 
 from __future__ import annotations
-
 from typing import Dict, List, Optional
 from pydantic import BaseModel
-
 from threatpilot.core.threat_model import STRIDECategory
-
 
 class SecurityControl(BaseModel):
     """A standard security control recommended to mitigate a threat.
@@ -25,8 +22,6 @@ class SecurityControl(BaseModel):
     name: str
     description: str
 
-
-# A default library of standard STRIDE-to-control mappings
 DEFAULT_CONTROL_LIBRARY: Dict[STRIDECategory, List[SecurityControl]] = {
     STRIDECategory.SPOOFING: [
         SecurityControl(
@@ -86,7 +81,6 @@ DEFAULT_CONTROL_LIBRARY: Dict[STRIDECategory, List[SecurityControl]] = {
         )
     ]
 }
-
 
 def get_suggested_controls(category: STRIDECategory) -> List[SecurityControl]:
     """Retrieve standard security control suggestions for a STRIDE category.

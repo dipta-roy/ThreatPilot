@@ -3,10 +3,8 @@ import os
 import re
 from pathlib import Path
 
-# Increase recursion depth for deep dependency scanning (common with PySide6/cx_Freeze)
 sys.setrecursionlimit(10000)
 
-# Pre-import PySide6 modules to prevent cx_Freeze getattr crashes on Windows
 import PySide6.QtCore
 import PySide6.QtGui
 import PySide6.QtWidgets
@@ -14,7 +12,6 @@ import PySide6.QtNetwork
 
 from cx_Freeze import setup, Executable
 
-# 1. Convert PNG to ICO for the executable
 icon_png = Path("threatpilot/resources/app-icon.png")
 icon_ico = Path("threatpilot/resources/app-icon.ico")
 
@@ -29,7 +26,6 @@ if icon_png.exists() and not icon_ico.exists():
     except Exception as e:
         print(f"Error converting icon: {e}")
 
-# 2. Extract version from main.py for cx_Freeze MSI builder
 version_str = "1.0.0"
 main_path = Path("main.py")
 if main_path.exists():
@@ -37,7 +33,6 @@ if main_path.exists():
     m = re.search(r'app\.setApplicationVersion\("([^"]+)"\)', content)
     if m:
         raw_version = m.group(1)
-        # Convert e.g., "0.5-beta" to "0.5.0"
         numeric_only = re.sub(r'[^\d\.]', '', raw_version).strip('.')
         parts = numeric_only.split('.') if numeric_only else ['1', '0', '0']
         while len(parts) < 3:
@@ -46,7 +41,6 @@ if main_path.exists():
 
 print(f"Building MSI using parsed version: {version_str}")
 
-# Add necessary paths or packages
 build_exe_options = {
     "packages": [
         "os", "sys", "threatpilot", "threatpilot.ai", "threatpilot.ui", 
@@ -85,45 +79,43 @@ build_exe_options = {
 
 base = None
 if sys.platform == "win32":
-    base = "Win32GUI" # Build standard windowed executable, no console
+    base = "Win32GUI"
 
-# MSI configuration
 shortcut_table = [
-    ("DesktopShortcut",        # Shortcut
-     "DesktopFolder",          # Directory_
-     "ThreatPilot",            # Name
-     "TARGETDIR",              # Component_
-     "[TARGETDIR]ThreatPilot.exe",# Target
-     None,                     # Arguments
-     None,                     # Description
-     None,                     # Hotkey
-     None,                     # Icon
-     None,                     # IconIndex
-     None,                     # ShowCmd
-     'TARGETDIR'               # WkDir
+    ("DesktopShortcut",        
+     "DesktopFolder",          
+     "ThreatPilot",            
+     "TARGETDIR",              
+     "[TARGETDIR]ThreatPilot.exe",
+     None,                     
+     None,                     
+     None,                     
+     None,                     
+     None,                     
+     None,                     
+     'TARGETDIR'               
      ),
-    ("StartMenuShortcut",      # Shortcut
-     "ProgramMenuFolder",      # Directory_
-     "ThreatPilot",            # Name
-     "TARGETDIR",              # Component_
-     "[TARGETDIR]ThreatPilot.exe",# Target
-     None,                     # Arguments
-     None,                     # Description
-     None,                     # Hotkey
-     None,                     # Icon
-     None,                     # IconIndex
-     None,                     # ShowCmd
-     'TARGETDIR'               # WkDir
+    ("StartMenuShortcut",      
+     "ProgramMenuFolder",      
+     "ThreatPilot",            
+     "TARGETDIR",              
+     "[TARGETDIR]ThreatPilot.exe",
+     None,                     
+     None,                     
+     None,                     
+     None,                     
+     None,                     
+     None,                     
+     'TARGETDIR'               
      ),
 ]
 
-# MSI configuration
 bdist_msi_options = {
     "upgrade_code": "{A0B1C2D3-E4F5-6A7B-8C9D-0E1F2A3B4C5D}", 
     "add_to_path": True,
     "initial_target_dir": r"[LocalAppDataFolder]\ThreatPilot",
     "data": {"Shortcut": shortcut_table},
-    "all_users": False, # Allows installation without admin privileges
+    "all_users": False,
     "install_icon": str(icon_ico) if icon_ico.exists() else None,
 }
 
@@ -142,7 +134,7 @@ setup(
             base=base,
             target_name="ThreatPilot.exe",
             icon=str(icon_ico) if icon_ico.exists() else None,
-            uac_admin=False # Ensure the EXE itself doesn't trigger UAC prompt
+            uac_admin=False
         )
     ]
 )

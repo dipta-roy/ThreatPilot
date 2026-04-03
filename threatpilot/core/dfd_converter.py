@@ -5,21 +5,16 @@ a Data Flow Diagram (DFD) structure suitable for threat analysis.
 """
 
 from __future__ import annotations
-
 from enum import Enum
 from typing import List, Optional
 from pydantic import BaseModel, Field
-
 from threatpilot.core.domain_models import Component, Flow, TrustBoundary
-
 
 class DFDNodeType(str, Enum):
     """The standard DFD element types."""
-
     PROCESS = "Process"
     DATA_STORE = "DataStore"
     EXTERNAL_ENTITY = "ExternalEntity"
-
 
 class DFDNode(BaseModel):
     """A node in the Data Flow Diagram."""
@@ -30,9 +25,7 @@ class DFDNode(BaseModel):
     element_classification: str = ""
     asset_classification: str = ""
     description: str = ""
-    # Reference to original component if applicable
     component_id: Optional[str] = None
-
 
 class DFDEdge(BaseModel):
     """A directed edge in the Data Flow Diagram representing data-in-transit."""
@@ -42,16 +35,13 @@ class DFDEdge(BaseModel):
     source_id: str
     target_id: str
     protocol: str = "HTTPS"
-    # Reference to original flow if applicable
     flow_id: Optional[str] = None
-
 
 class DFDModel(BaseModel):
     """The complete DFD representation of the system."""
 
     nodes: List[DFDNode] = Field(default_factory=list)
     edges: List[DFDEdge] = Field(default_factory=list)
-
 
 def convert_to_dfd(
     components: List[Component],
@@ -60,7 +50,6 @@ def convert_to_dfd(
     """Map detected domain objects to a DFD structure with auto-linking."""
     dfd = DFDModel()
 
-    # Create nodes
     for comp in components:
         node = DFDNode(
             id=comp.component_id,
@@ -73,21 +62,17 @@ def convert_to_dfd(
         )
         dfd.nodes.append(node)
 
-    # Create edges with proximity-based auto-linking for unmapped flows
     for flow in flows:
         src_id = flow.source_id
         dst_id = flow.target_id
         
-        # Proximity auto-linker
-        # If IDs aren't set, find the component box that is closest to start/end points
         if not src_id or not dst_id:
             best_src = None
             best_dst = None
-            min_src_dist = 150.0  # Threshold
+            min_src_dist = 150.0  
             min_dst_dist = 150.0
             
             for c in components:
-                # Calc center
                 cx, cy = c.x + c.width/2, c.y + c.height/2
                 
                 if not src_id:

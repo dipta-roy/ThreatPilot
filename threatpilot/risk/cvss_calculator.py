@@ -14,27 +14,22 @@ from pydantic import BaseModel
 class CVSSMetrics(BaseModel):
     """Base metrics for CVSS v3.1."""
 
-    # Exploitability Metrics
-    attack_vector: str = "Network"       # N, A, L, P
-    attack_complexity: str = "Low"       # L, H
-    privileges_required: str = "None"     # N, L, H
-    user_interaction: str = "None"       # N, R
-    scope: str = "Unchanged"             # U, C
-
-    # Impact Metrics
-    confidentiality: str = "None"         # N, L, H
-    integrity: str = "None"               # N, L, H
-    availability: str = "None"            # N, L, H
+    attack_vector: str = "Network"
+    attack_complexity: str = "Low"
+    privileges_required: str = "None"
+    user_interaction: str = "None"
+    scope: str = "Unchanged"
+    confidentiality: str = "None"
+    integrity: str = "None"
+    availability: str = "None"
 
 
 def calculate_cvss_base_score(metrics: CVSSMetrics) -> float:
     """Calculate the Base CVSS v3.1 score of a threat."""
     
-    # Mapping metrics to numeric weights
     av_weights = {"Network": 0.85, "Adjacent": 0.62, "Local": 0.55, "Physical": 0.2}
     ac_weights = {"Low": 0.77, "High": 0.44}
     
-    # PR depends on Scope
     if metrics.scope == "Unchanged":
         pr_weights = {"None": 0.85, "Low": 0.62, "High": 0.27}
     else:
@@ -43,7 +38,6 @@ def calculate_cvss_base_score(metrics: CVSSMetrics) -> float:
     ui_weights = {"None": 0.85, "Required": 0.62}
     cia_weights = {"None": 0, "Low": 0.22, "High": 0.56}
 
-    # Calculations
     iss = 1 - (
         (1 - cia_weights.get(metrics.confidentiality, 0)) * 
         (1 - cia_weights.get(metrics.integrity, 0)) * 
@@ -71,9 +65,7 @@ def calculate_cvss_base_score(metrics: CVSSMetrics) -> float:
     else:
         score = min(1.08 * (impact + exploitability), 10.0)
 
-    # Return rounded to 1 decimal place (ceil as per CVSS spec)
     return math.ceil(score * 10) / 10.0
-
 
 def get_cvss_severity(score: float) -> str:
     """Return the CVSS v3.1 severity rating based on score."""

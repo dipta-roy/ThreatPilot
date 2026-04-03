@@ -5,25 +5,19 @@ during analysis and the ``ThreatRegister`` containing the full set.
 """
 
 from __future__ import annotations
-
 import uuid
 from enum import Enum
 from typing import List, Optional
 from pydantic import BaseModel, Field
 
-
 class STRIDECategory(str, Enum):
     """Broad classification for both Security (STRIDE) and Privacy (LINDDUN) threats."""
-
-    # STRIDE Security
     SPOOFING = "Spoofing"
     TAMPERING = "Tampering"
     REPUDIATION = "Repudiation"
     INFORMATION_DISCLOSURE = "Information Disclosure"
     DENIAL_OF_SERVICE = "Denial of Service"
     ELEVATION_OF_PRIVILEGE = "Elevation of Privilege"
-    
-    # LINDDUN Privacy
     LINKABILITY = "Linkability"
     IDENTIFIABILITY = "Identifiability"
     NON_REPUDIATION_PRIVACY = "Non-repudiation"
@@ -66,7 +60,6 @@ class Threat(BaseModel):
     mitre_attack_technique: str = ""
     reasoning: str = ""
     source_dfd_node: Optional[str] = None
-
 
 class ThreatRegister(BaseModel):
     """A collection of all threats for a project."""

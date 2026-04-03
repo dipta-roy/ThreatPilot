@@ -6,13 +6,10 @@ projects.
 """
 
 from __future__ import annotations
-
 import uuid
 from typing import List, Optional
 from pydantic import BaseModel, Field
-
 from threatpilot.core.threat_model import STRIDECategory, Threat
-
 
 class ThreatTemplate(BaseModel):
     """A reusable pattern for a security threat.
@@ -48,7 +45,6 @@ class RiskEngine:
     """Manages threat templates and risk-related logic for the application."""
 
     def __init__(self) -> None:
-        # Default global templates maybe?
         self._templates: List[ThreatTemplate] = []
 
     def add_template(self, template: ThreatTemplate, skip_duplicates: bool = True) -> bool:

@@ -5,7 +5,6 @@ including an interactive CVSS v3.1 calculator.
 """
 
 from __future__ import annotations
-
 from PySide6.QtWidgets import (
     QDialog,
     QVBoxLayout,
@@ -24,7 +23,6 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QStringListModel
 from PySide6.QtGui import QFont
-
 from threatpilot.core.threat_model import Threat, STRIDECategory
 from threatpilot.risk.cvss_calculator import (
     CVSSMetrics, 
@@ -32,7 +30,6 @@ from threatpilot.risk.cvss_calculator import (
     generate_cvss_vector, 
     parse_cvss_vector
 )
-
 
 class ThreatEditDialog(QDialog):
     """Dialog for editing threat details with integrated CVSS calculator."""
@@ -48,19 +45,14 @@ class ThreatEditDialog(QDialog):
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
-        
-        # Scroll Area for the form
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll_content = QWidget()
         self._main_form = QFormLayout(scroll_content)
         scroll.setWidget(scroll_content)
         layout.addWidget(scroll)
-
-        # --- General Information Section ---
         gen_group = QGroupBox("General Information")
         gen_layout = QFormLayout(gen_group)
-        
         self._title_input = QLineEdit()
         gen_layout.addRow("Title:", self._title_input)
 
@@ -79,7 +71,6 @@ class ThreatEditDialog(QDialog):
             self._affected_element_combo.addItems(sorted_names)
             self._affected_asset_combo.addItems(sorted_names)
             
-            # Add autocomplete for easier search
             for combo in [self._affected_element_combo, self._affected_asset_combo]:
                 completer = QCompleter(sorted_names)
                 completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
@@ -87,35 +78,24 @@ class ThreatEditDialog(QDialog):
                 combo.setCompleter(completer)
             
         gen_layout.addRow("Affected Element:", self._affected_element_combo)
-        gen_layout.addRow("Affected Asset:", self._affected_asset_combo)
-        
+        gen_layout.addRow("Affected Asset:", self._affected_asset_combo)      
         self._main_form.addRow(gen_group)
-
-        # --- Details Section ---
         details_group = QGroupBox("Threat Details")
         details_layout = QFormLayout(details_group)
-
         self._description_input = QTextEdit()
         self._description_input.setAcceptRichText(False)
         self._description_input.setMinimumHeight(80)
         details_layout.addRow("Description:", self._description_input)
-
         self._impact_input = QTextEdit()
         self._impact_input.setAcceptRichText(False)
         self._impact_input.setMinimumHeight(60)
         details_layout.addRow("Impact:", self._impact_input)
-
         self._likelihood_spin = QSpinBox()
         self._likelihood_spin.setRange(1, 5)
-        details_layout.addRow("Likelihood (1-5):", self._likelihood_spin)
-        
+        details_layout.addRow("Likelihood (1-5):", self._likelihood_spin)      
         self._main_form.addRow(details_group)
-
-        # --- CVSS v3.1 Calculator Section ---
         cvss_group = QGroupBox("CVSS v3.1 Base Metrics")
         cvss_layout = QFormLayout(cvss_group)
-
-        # Metrics Dropdowns
         self._cvss_combos = {}
         metrics_options = {
             "attack_vector": ["Network", "Adjacent", "Local", "Physical"],
@@ -135,22 +115,15 @@ class ThreatEditDialog(QDialog):
             label = attr.replace("_", " ").title()
             cvss_layout.addRow(f"{label}:", combo)
             self._cvss_combos[attr] = combo
-
-        # Results Display
         self._cvss_score_display = QLabel("0.0")
         self._cvss_score_display.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
         cvss_layout.addRow("Calculated Base Score:", self._cvss_score_display)
-
         self._cvss_vector_display = QLineEdit()
         self._cvss_vector_display.setReadOnly(True)
         cvss_layout.addRow("Vector String:", self._cvss_vector_display)
-
         self._main_form.addRow(cvss_group)
-
-        # --- Technical & Remediation ---
         remedy_group = QGroupBox("Technical Analysis & Remediation")
         remedy_layout = QFormLayout(remedy_group)
-
         self._vulnerabilities_input = QTextEdit()
         self._vulnerabilities_input.setAcceptRichText(False)
         self._vulnerabilities_input.setMinimumHeight(80)
@@ -160,10 +133,7 @@ class ThreatEditDialog(QDialog):
         self._mitigation_input.setAcceptRichText(False)
         self._mitigation_input.setMinimumHeight(80)
         remedy_layout.addRow("Recommended Mitigation:", self._mitigation_input)
-
         self._main_form.addRow(remedy_group)
-
-        # Buttons
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -183,11 +153,8 @@ class ThreatEditDialog(QDialog):
         self._description_input.setPlainText(self._threat.description)
         self._impact_input.setPlainText(self._threat.impact)
         self._likelihood_spin.setValue(self._threat.likelihood)
-        
         self._vulnerabilities_input.setPlainText(self._threat.vulnerabilities)
         self._mitigation_input.setPlainText(self._threat.mitigation)
-
-        # Load CVSS Metrics from vector
         if self._threat.cvss_vector:
             metrics = parse_cvss_vector(self._threat.cvss_vector)
             for attr, combo in self._cvss_combos.items():
@@ -206,11 +173,8 @@ class ThreatEditDialog(QDialog):
         
         score = calculate_cvss_base_score(metrics)
         vector = generate_cvss_vector(metrics)
-        
         self._cvss_score_display.setText(str(score))
         self._cvss_vector_display.setText(vector)
-        
-        # Color score by severity
         if score >= 9.0: color = "#ff4444"
         elif score >= 7.0: color = "#ff8800"
         elif score >= 4.0: color = "#ffbb33"
@@ -219,21 +183,15 @@ class ThreatEditDialog(QDialog):
         self._cvss_score_display.setStyleSheet(f"color: {color};")
 
     def accept(self) -> None:
-        # Save data back to threat object
         self._threat.title = self._title_input.text()
         self._threat.affected_element = self._affected_element_combo.currentText()
         self._threat.affected_asset = self._affected_asset_combo.currentText()
-        # Sync to legacy field for compatibility
         self._threat.affected_components = self._threat.affected_element
         self._threat.description = self._description_input.toPlainText()
         self._threat.impact = self._impact_input.toPlainText()
         self._threat.likelihood = self._likelihood_spin.value()
-        
-        # Save CVSS results
         self._threat.cvss_score = float(self._cvss_score_display.text())
         self._threat.cvss_vector = self._cvss_vector_display.text()
-        
         self._threat.vulnerabilities = self._vulnerabilities_input.toPlainText()
         self._threat.mitigation = self._mitigation_input.toPlainText()
-        
         super().accept()
