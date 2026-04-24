@@ -173,8 +173,8 @@ class AIVisionWorker(QThread):
             if img.isNull():
                 raise FileNotFoundError(f"Selected image file at {self.image_path} could not be loaded.")
             
-            if img.width() > 1024 or img.height() > 1024:
-                img = img.scaled(1024, 1024, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            if img.width() > 2048 or img.height() > 2048:
+                img = img.scaled(2048, 2048, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
             
             buffer = QBuffer()
             buffer.open(QIODevice.WriteOnly)
@@ -679,6 +679,9 @@ class MainWindow(QMainWindow):
         if not directory:
             return
 
+        if self._project:
+             self._on_close_project()
+
         try:
             self._project = create_project(name.strip(), parent_dir=directory)
             self._project_explorer.set_project(self._project)
@@ -705,20 +708,39 @@ class MainWindow(QMainWindow):
         if not self._project:
             return
             
+        # Terminate any running background workers
+        if hasattr(self, "_worker") and self._worker.isRunning():
+            self._worker.terminate()
+            self._worker.wait()
+        if hasattr(self, "_worker_ai_vision") and self._worker_ai_vision.isRunning():
+            self._worker_ai_vision.terminate()
+            self._worker_ai_vision.wait()
+        if hasattr(self, "_reasoning_worker") and self._reasoning_worker.isRunning():
+            self._reasoning_worker.terminate()
+            self._reasoning_worker.wait()
+
         self._project = None
+        self._current_diagram = None
+        
+        # Reset UI components
         self._project_explorer.set_project(None)
         self._threat_panel.set_register(None)
         self._stride_threat_ledger.set_register(None)
         self._linddun_threat_ledger.set_register(None)
         self._risk_assessment_panel.set_project(None)
-        self._current_diagram = None
+        self._properties_panel.set_item(None)
         self._canvas.clear_diagram()
+        self._undo_stack.clear()
+        self._ai_log_view.clear()
         self._update_title()
         
         project_root = Path(__file__).parent.parent.parent
         recent_file = project_root / ".threatpilot_recent"
         if recent_file.exists():
-            recent_file.unlink()
+            try:
+                recent_file.unlink()
+            except Exception:
+                pass
             
         self.statusBar().showMessage("Project closed.")
 
@@ -729,6 +751,9 @@ class MainWindow(QMainWindow):
         )
         if not directory:
             return
+
+        if self._project:
+            self._on_close_project()
 
         try:
             self._open_project_from_path(directory)
@@ -911,17 +936,21 @@ class MainWindow(QMainWindow):
             dialog = RiskMatrixDialog(self._project.threat_register.threats, component_names=component_names, is_dark=self._is_dark_theme, parent=self)
             dialog.exec()
 
-    def _on_run_analysis(self) -> None:
+    def _on_run_analysis(self, analysis_mode: str | None = None) -> None:
         """Trigger AI-driven threat analysis using the configured provider."""
         if not self._project:
             return
-
+        
+        mode = analysis_mode if analysis_mode and analysis_mode != "ALL" else None
+        
         dfd = convert_to_dfd(self._project.components, self._project.flows)
         if not dfd.nodes:
             QMessageBox.warning(self, "Analysis", "No components detected to analyze. Please add or detect components first.")
             return
         try:
             config = AIConfig.load()
+            if mode:
+                config.analysis_mode = mode
             
             if config.provider_type == "gemini":
                 reply = QMessageBox.warning(
@@ -961,7 +990,7 @@ class MainWindow(QMainWindow):
             dfd, 
             self._project.project_name
         )
-        self._worker.finished.connect(self._on_analysis_finished)
+        self._worker.finished.connect(lambda reg: self._on_analysis_finished(reg, self._project))
         self._worker.failed.connect(self._on_analysis_failed)
         self._worker.finished.connect(self._progress.close)
         self._worker.failed.connect(self._progress.close)
@@ -970,7 +999,7 @@ class MainWindow(QMainWindow):
         self._worker.prompt_ready.connect(lambda p: self.append_ai_log(p, "PROMPT"))
         self._worker.response_ready.connect(lambda r: self.append_ai_log(r, "RESPONSE"))
         self._worker.request_segment_continuation.connect(self._on_request_continuation)
-        self._worker.partial_result_ready.connect(self._on_partial_analysis_result)
+        self._worker.partial_result_ready.connect(lambda reg: self._on_partial_analysis_result(reg, self._project))
         
         self.append_ai_log("SECURITY WARNING: Logs may contain architectural details. Masking is active for identified API keys.", "SYSTEM")
         
@@ -993,12 +1022,15 @@ class MainWindow(QMainWindow):
             threat,
             config.analysis_mode
         )
-        self._reasoning_worker.finished.connect(self._on_reasoning_finished)
+        self._reasoning_worker.finished.connect(lambda res, t: self._on_reasoning_finished(res, t, self._project))
         self._reasoning_worker.failed.connect(self._on_reasoning_failed)
         self._reasoning_worker.start()
 
-    def _on_reasoning_finished(self, reasoning: str, threat: Threat) -> None:
+    def _on_reasoning_finished(self, reasoning: str, threat: Threat, origin_project: Project | None = None) -> None:
         """Update threat with reasoning, converting any dict/JSON to Markdown."""
+        if not self._project or (origin_project and self._project is not origin_project):
+            return
+            
         import json, ast, re
 
         def _dict_to_markdown(data: dict) -> str:
@@ -1079,9 +1111,11 @@ class MainWindow(QMainWindow):
         self._properties_panel.set_reasoning_progress(False)
         self._show_concise_error("Reasoning Error", "XAI Reasoning failed:", error_msg)
 
-    def _on_partial_analysis_result(self, partial_register) -> None:
+    def _on_partial_analysis_result(self, partial_register, origin_project: Project | None = None) -> None:
         """Merge intermediate results from a single segment while analysis continues."""
-        if not self._project: return
+        if not self._project or (origin_project and self._project is not origin_project): 
+            return
+            
         for t in partial_register.threats:
             self._project.threat_register.add_threat(t)
             
@@ -1117,14 +1151,14 @@ class MainWindow(QMainWindow):
         should_continue = (reply == QMessageBox.StandardButton.Yes)
         self._worker.continue_analysis(should_continue)
 
-    def _on_analysis_finished(self, new_register) -> None:
+    def _on_analysis_finished(self, new_register, origin_project: Project | None = None) -> None:
         """Merge new threats into the project and refresh UI."""
         if hasattr(self._stride_threat_ledger, "_btn_run"):
             self._stride_threat_ledger._btn_run.setEnabled(True)
         if hasattr(self._linddun_threat_ledger, "_btn_run"):
             self._linddun_threat_ledger._btn_run.setEnabled(True)
 
-        if not self._project:
+        if not self._project or (origin_project and self._project is not origin_project):
             return
 
         added = 0
@@ -1300,6 +1334,9 @@ class MainWindow(QMainWindow):
             "llava" in model_name or 
             "vl" in model_name or 
             "vision" in model_name or 
+            "gemma" in model_name or
+            "moondream" in model_name or
+            "minicpm" in model_name or
             prov_type == "gemini"
         )
         
@@ -1313,7 +1350,7 @@ class MainWindow(QMainWindow):
             self._worker_ai_vision = AIVisionWorker(
                 provider, str(image_path), self._project.project_name, self._project.prompt_config
             )
-            self._worker_ai_vision.finished.connect(self._on_ai_detection_finished)
+            self._worker_ai_vision.finished.connect(lambda data: self._on_ai_detection_finished(data, self._project))
             self._worker_ai_vision.failed.connect(lambda msg: self._show_concise_error("AI Detection Failed", "Computer Vision detection failed:", msg))
             self._worker_ai_vision.prompt_ready.connect(lambda p: self.append_ai_log(p, "PROMPT"))
             self._worker_ai_vision.response_ready.connect(lambda r: self.append_ai_log(r, "RESPONSE"))
@@ -1325,9 +1362,9 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.warning(self, "Detection", "Traditional Computer Vision detection is disabled as OpenCV has been removed. Please configure an AI Vision provider in AI Settings.")
 
-    def _on_ai_detection_finished(self, data: dict) -> None:
+    def _on_ai_detection_finished(self, data: dict, origin_project: Project | None = None) -> None:
         """Handle results from multimodal AI vision detection."""
-        if not self._project:
+        if not self._project or (origin_project and self._project is not origin_project):
              return
 
         self._project.components.clear()

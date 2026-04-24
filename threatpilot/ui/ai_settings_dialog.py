@@ -89,10 +89,6 @@ class AISettingsDialog(QDialog):
         self._provider_type.currentTextChanged.connect(self._on_provider_changed)
         self._form.addRow("Provider Type:", self._provider_type)
 
-        self._analysis_mode = QComboBox()
-        self._analysis_mode.addItems(["STRIDE", "LINDDUN"])
-        self._analysis_mode.setCurrentText(self._config.analysis_mode)
-        self._form.addRow("Analysis Focus:", self._analysis_mode)
         self._endpoint_url = QLineEdit(self._config.endpoint_url)
         self._form.addRow("Endpoint URL:", self._endpoint_url)
         self._model_name = QComboBox()
@@ -265,5 +261,4 @@ class AISettingsDialog(QDialog):
         self._config.max_tokens = self._max_tokens.value()
         self._config.timeout = self._timeout.value()
         self._config.autosave_interval = self._autosave.value()
-        self._config.analysis_mode = self._analysis_mode.currentText()
         return self._config

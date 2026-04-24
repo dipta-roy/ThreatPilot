@@ -35,7 +35,7 @@ class ThreatPanel(QWidget):
     threat_selected: Signal = Signal(object)
     threat_added: Signal = Signal(object)
     threat_removed: Signal = Signal(str)
-    run_analysis_requested: Signal = Signal()
+    run_analysis_requested: Signal = Signal(str)
 
     def __init__(self, parent: QWidget | None = None, filter_mode: str = "ALL") -> None:
         super().__init__(parent)
@@ -68,11 +68,17 @@ class ThreatPanel(QWidget):
         self._btn_delete.clicked.connect(self._on_delete_threat)
         toolbar_layout.addWidget(self._btn_delete)
         
-        self._btn_run = QPushButton("Run AI Analysis")
+        btn_text = "Run AI Analysis"
+        if self._filter_mode == "STRIDE":
+            btn_text = "Run STRIDE Analysis"
+        elif self._filter_mode == "LINDDUN":
+            btn_text = "Run LINDDUN Analysis"
+            
+        self._btn_run = QPushButton(btn_text)
         self._btn_run.setObjectName("btn_run_threat_analysis")
         self._btn_run.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_run.setStyleSheet("background-color: #238636; color: white; font-weight: bold;")
-        self._btn_run.clicked.connect(self.run_analysis_requested.emit)
+        self._btn_run.clicked.connect(lambda: self.run_analysis_requested.emit(self._filter_mode))
         toolbar_layout.addWidget(self._btn_run)
         
         toolbar_layout.addStretch()

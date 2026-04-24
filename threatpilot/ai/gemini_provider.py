@@ -91,7 +91,7 @@ class GeminiProvider(AIProviderInterface):
             "contents": contents,
             "generationConfig": {
                 "temperature": self.config.temperature,
-                "maxOutputTokens": self.config.max_tokens or 4096,
+                "maxOutputTokens": max(self.config.max_tokens, 16384),
                 "topP": 0.95,
                 "topK": 40,
                 "responseMimeType": "application/json"

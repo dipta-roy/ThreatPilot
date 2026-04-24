@@ -51,6 +51,7 @@ class OllamaProvider(AIProviderInterface):
             "options": {
                 "temperature": self.config.temperature,
                 "num_predict": self.config.max_tokens,
+                "num_ctx": 16384,
                 **kwargs
             }
         }
@@ -134,8 +135,8 @@ class OllamaProvider(AIProviderInterface):
             "stream": False,
             "options": {
                 "temperature": self.config.temperature,
-                "num_predict": self.config.max_tokens or 4096,
-                "num_ctx": 4096,
+                "num_predict": max(self.config.max_tokens, 16384),
+                "num_ctx": 16384,
                 **kwargs,
             },
         }
