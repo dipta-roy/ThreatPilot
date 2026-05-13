@@ -1,8 +1,6 @@
 """Architecture Editor Dialogs for ThreatPilot.
 
-Provides two separate dialogs:
-- EntitiesDialog: Manage architectural entities & nodes with classifications.
-- DataFlowDialog: Manage data flow connections, protocols, and mappings.
+Provides separate dialogs for managing architectural elements, assets, and data flows.
 """
 
 from __future__ import annotations
@@ -22,23 +20,23 @@ from PySide6.QtWidgets import (
     QApplication,
 )
 from PySide6.QtCore import Qt, Signal, QTimer
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QColor, QUndoCommand
 from threatpilot.core.project_manager import Project
-from threatpilot.core.domain_models import Component, Flow
+from threatpilot.core.domain_models import Component, Flow, TrustBoundary, ElementType, AssetType
 from threatpilot.ui import undo_commands
 
-class EntitiesDialog(QDialog):
-    """Dialog for editing architectural entities and nodes."""
+class ElementsDialog(QDialog):
+    """Dialog for editing architectural elements (Process, Data Store, etc.)."""
 
     project_modified = Signal()
 
     def __init__(self, project: Project, undo_stack=None, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Entities and Nodes")
+        self.setWindowTitle("System Elements")
         
         screen = QApplication.primaryScreen().availableGeometry()
-        width = int(screen.width() * 0.8)
-        height = int(screen.height() * 0.7)
+        width = int(screen.width() * 0.6)
+        height = int(screen.height() * 0.6)
         self.resize(width, height)
         self._project = project
         self._undo_stack = undo_stack
@@ -54,42 +52,37 @@ class EntitiesDialog(QDialog):
         layout.setSpacing(10)
 
         header_font = QFont("Segoe UI", 12, QFont.Weight.Bold)
-        comp_header = QLabel("Architectural Entities & Nodes")
+        comp_header = QLabel("System Elements (Process, Data Store, Entity)")
         comp_header.setFont(header_font)
         comp_header.setStyleSheet("color: #58a6ff; margin-bottom: 5px;")
         layout.addWidget(comp_header)
 
-        self._table = QTableWidget(0, 7)
+        self._table = QTableWidget(0, 6)
         self._table.setHorizontalHeaderLabels([
-            "Entity Name",
-            "Classification",
-            "Asset Category",
-            "Asset Type / OS",
-            "Asset Description",
-            "High Value?",
-            "Criticality Description"
+            "Element Name",
+            "Element Type",
+            "Trust Boundary",
+            "Technical Description",
+            "Out of Scope?",
+            "Justification / Remarks"
         ])
-        self._table.setHorizontalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
-        self._table.setVerticalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
-        self._table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
-        self._table.setColumnWidth(0, 200)
-        self._table.setColumnWidth(1, 150)
-        self._table.setColumnWidth(2, 150)
-        self._table.setColumnWidth(3, 150)
-        self._table.setColumnWidth(4, 300)
-        self._table.setColumnWidth(5, 100)
-        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
+        self._table.setColumnWidth(0, 180)
+        self._table.setColumnWidth(1, 120)
+        self._table.setColumnWidth(2, 180)
+        self._table.setColumnWidth(3, 200)
+        self._table.setColumnWidth(4, 90)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
         self._table.setAlternatingRowColors(True)
         self._table.verticalHeader().setDefaultSectionSize(38)
         self._table.itemChanged.connect(self._on_item_changed)
         layout.addWidget(self._table)
+        
         comp_btns = QHBoxLayout()
-        self._btn_add = QPushButton(" + Add New Component")
+        self._btn_add = QPushButton(" + Add New Element")
         self._btn_add.setMinimumHeight(35)
-        self._btn_add.clicked.connect(self._on_add_component)
+        self._btn_add.clicked.connect(self._on_add_element)
         comp_btns.addWidget(self._btn_add)
         self._btn_del_comp = QPushButton(" x Remove Selected")
         self._btn_del_comp.setMinimumHeight(35)
@@ -97,6 +90,7 @@ class EntitiesDialog(QDialog):
         comp_btns.addWidget(self._btn_del_comp)
         comp_btns.addStretch()
         layout.addLayout(comp_btns)
+        
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -109,34 +103,47 @@ class EntitiesDialog(QDialog):
             name_item = QTableWidgetItem(comp.name)
             name_item.setData(Qt.ItemDataRole.UserRole, comp)
             self._table.setItem(row, 0, name_item)
+            
             elem_combo = QComboBox()
-            elem_types = ["Entity", "Process", "DataStore", "DataFlow"]
+            elem_types = [e.value for e in ElementType]
             elem_combo.addItems(elem_types)
-            elem_combo.setCurrentText(comp.element_classification)
+            elem_combo.setCurrentText(comp.element_type.value)
             elem_combo.setProperty("row", row)
-            elem_combo.currentTextChanged.connect(self._on_element_classification_changed)
+            elem_combo.currentTextChanged.connect(self._on_element_type_changed)
             self._table.setCellWidget(row, 1, elem_combo)
-            asset_combo = QComboBox()
-            asset_types = ["Physical", "Informational"]
-            asset_combo.addItems(asset_types)
-            asset_combo.setCurrentText(comp.asset_classification)
-            asset_combo.setProperty("row", row)
-            asset_combo.currentTextChanged.connect(self._on_asset_classification_changed)
-            self._table.setCellWidget(row, 2, asset_combo)
-            type_item = QTableWidgetItem(comp.type)
-            self._table.setItem(row, 3, type_item)
+            
+            tb_combo = QComboBox()
+            tb_names = ["None (External)"] + [b.name for b in self._project.boundaries]
+            tb_combo.addItems(tb_names)
+            curr_tb_name = "None (External)"
+            if comp.trust_boundary_id:
+                tb = next((b for b in self._project.boundaries if b.boundary_id == comp.trust_boundary_id), None)
+                if tb: curr_tb_name = tb.name
+            tb_combo.setCurrentText(curr_tb_name)
+            tb_combo.setProperty("row", row)
+            tb_combo.currentTextChanged.connect(self._on_trust_boundary_changed)
+            self._table.setCellWidget(row, 2, tb_combo)
+            
             desc_item = QTableWidgetItem(comp.description)
-            self._table.setItem(row, 4, desc_item)
-            hva_item = QTableWidgetItem()
-            hva_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-            hva_item.setCheckState(Qt.CheckState.Checked if comp.is_high_value_asset else Qt.CheckState.Unchecked)
-            self._table.setItem(row, 5, hva_item)
-            crit_item = QTableWidgetItem(comp.criticality_description)
-            self._table.setItem(row, 6, crit_item)
+            self._table.setItem(row, 3, desc_item)
+            
+            oos_item = QTableWidgetItem()
+            oos_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            oos_item.setCheckState(Qt.CheckState.Checked if comp.is_out_of_scope else Qt.CheckState.Unchecked)
+            self._table.setItem(row, 4, oos_item)
+            
+            just_item = QTableWidgetItem(comp.out_of_scope_justification)
+            self._table.setItem(row, 5, just_item)
+            
+            if comp.is_out_of_scope:
+                for col in range(6):
+                    it = self._table.item(row, col)
+                    if it: it.setBackground(QColor("#2d333b") if QApplication.instance().styleSheet().count("style.qss") else QColor("#f6f8fa"))
+                    if it: it.setForeground(QColor("#8b949e"))
+            
         self._table.blockSignals(False)
 
     def _on_undo_redo_index_changed(self, index: int) -> None:
-        """Reload the table when an undo/redo takes place."""
         if not self._is_internal_edit:
             QTimer.singleShot(0, self._load_data)
 
@@ -148,16 +155,19 @@ class EntitiesDialog(QDialog):
             if comp:
                 field = ""
                 if item.column() == 0: field = "name"
-                elif item.column() == 3: field = "type"
-                elif item.column() == 4: field = "description"
-                elif item.column() == 5: field = "is_high_value_asset"
-                elif item.column() == 6: field = "criticality_description"
+                elif item.column() == 3: field = "description"
+                elif item.column() == 4: field = "is_out_of_scope"
+                elif item.column() == 5: field = "out_of_scope_justification"
                 
                 if field:
-                    new_val = item.text().strip()
-                    if field == "is_high_value_asset":
+                    if field == "is_out_of_scope":
                         new_val = (item.checkState() == Qt.CheckState.Checked)
-
+                        if new_val and not comp.out_of_scope_justification:
+                             # Auto-focus or remind to add justification
+                             item.setToolTip("Please add justification in the next column")
+                    else:
+                        new_val = item.text().strip()
+                        
                     old_val = getattr(comp, field)
                     if new_val != old_val:
                         if self._undo_stack:
@@ -168,42 +178,51 @@ class EntitiesDialog(QDialog):
                         else:
                             setattr(comp, field, new_val)
                         
+                        if field == "is_out_of_scope":
+                            self._load_data()
+                            
                         self.project_modified.emit()
 
-    def _on_element_classification_changed(self, new_val: str) -> None:
+    def _on_element_type_changed(self, new_val: str) -> None:
         sender = self.sender()
         row = sender.property("row")
         name_item = self._table.item(row, 0)
         if name_item:
             comp = name_item.data(Qt.ItemDataRole.UserRole)
             if comp: 
-                old_val = comp.element_classification
-                if new_val != old_val:
+                old_val = comp.element_type
+                new_enum_val = next((et for et in ElementType if et.value == new_val), ElementType.PROCESS)
+                if new_enum_val != old_val:
                     if self._undo_stack:
                         self._is_internal_edit = True
-                        cmd = undo_commands.PropertyUpdateCommand(comp, "element_classification", old_val, new_val)
+                        cmd = undo_commands.PropertyUpdateCommand(comp, "element_type", old_val, new_enum_val)
                         self._undo_stack.push(cmd)
                         self._is_internal_edit = False
                     else:
-                        comp.element_classification = new_val
+                        comp.element_type = new_enum_val
                     self.project_modified.emit()
 
-    def _on_asset_classification_changed(self, new_val: str) -> None:
+    def _on_trust_boundary_changed(self, new_val: str) -> None:
         sender = self.sender()
         row = sender.property("row")
         name_item = self._table.item(row, 0)
         if name_item:
             comp = name_item.data(Qt.ItemDataRole.UserRole)
             if comp: 
-                old_val = comp.asset_classification
-                if new_val != old_val:
+                old_val = comp.trust_boundary_id
+                new_tb_id = None
+                if new_val != "None (External)":
+                    tb = next((b for b in self._project.boundaries if b.name == new_val), None)
+                    if tb: new_tb_id = tb.boundary_id
+                
+                if new_tb_id != old_val:
                     if self._undo_stack:
                         self._is_internal_edit = True
-                        cmd = undo_commands.PropertyUpdateCommand(comp, "asset_classification", old_val, new_val)
+                        cmd = undo_commands.PropertyUpdateCommand(comp, "trust_boundary_id", old_val, new_tb_id)
                         self._undo_stack.push(cmd)
                         self._is_internal_edit = False
                     else:
-                        comp.asset_classification = new_val
+                        comp.trust_boundary_id = new_tb_id
                     self.project_modified.emit()
 
     def _on_delete_selected(self) -> None:
@@ -221,15 +240,219 @@ class EntitiesDialog(QDialog):
                 self.project_modified.emit()
                 self._load_data()
 
-    def _on_add_component(self) -> None:
-        new_comp = Component(name="New Component", x=100, y=100)
+    def _on_add_element(self) -> None:
+        from threatpilot.core.domain_models import Asset, AssetType
+        new_comp = Component(name="New Element", x=100, y=100)
+        new_asset = Asset(name="New Element", type=AssetType.PHYSICAL, description="Manually added element")
+        
         if self._undo_stack:
-            cmd = undo_commands.AddComponentCommand(self._project, new_comp)
-            self._undo_stack.push(cmd)
+            from threatpilot.ui.undo_commands import AddComponentCommand, AddAssetCommand
+            cmd_grp = QUndoCommand("Add Element & Mirror to Assets")
+            AddComponentCommand(self._project, new_comp).setParent(cmd_grp)
+            AddAssetCommand(self._project, new_asset).setParent(cmd_grp)
+            self._undo_stack.push(cmd_grp)
         else:
             self._project.components.append(new_comp)
+            self._project.assets.append(new_asset)
+            
         self.project_modified.emit()
         self._load_data()
+
+
+class AssetsDialog(QDialog):
+    """Dialog for editing standalone assets (Physical, Informational)."""
+
+    project_modified = Signal()
+
+    def __init__(self, project: Project, undo_stack=None, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("System Asset")
+        
+        screen = QApplication.primaryScreen().availableGeometry()
+        width = int(screen.width() * 0.7)
+        height = int(screen.height() * 0.6)
+        self.resize(width, height)
+        self._project = project
+        self._undo_stack = undo_stack
+        self._is_internal_edit = False
+        if self._undo_stack:
+             self._undo_stack.indexChanged.connect(self._on_undo_redo_index_changed)
+        self._setup_ui()
+        self._load_data()
+
+    def _setup_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(10)
+
+        header_font = QFont("Segoe UI", 12, QFont.Weight.Bold)
+        asset_header = QLabel("Security Assets (Data, Credentials, Hardware)")
+        asset_header.setFont(header_font)
+        asset_header.setStyleSheet("color: #e3b341; margin-bottom: 5px;")
+        layout.addWidget(asset_header)
+
+        self._table = QTableWidget(0, 6)
+        self._table.setHorizontalHeaderLabels([
+            "Asset Name",
+            "Asset Type",
+            "Criticality",
+            "Out of Scope?",
+            "Justification",
+            "Description"
+        ])
+        header = self._table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self._table.setColumnWidth(0, 200)
+        self._table.setColumnWidth(1, 140)
+        self._table.setColumnWidth(2, 120)
+        self._table.setColumnWidth(3, 100)
+        self._table.setColumnWidth(4, 250)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+        self._table.setAlternatingRowColors(True)
+        self._table.verticalHeader().setDefaultSectionSize(38)
+        self._table.itemChanged.connect(self._on_item_changed)
+        layout.addWidget(self._table)
+        
+        asset_btns = QHBoxLayout()
+        self._btn_add_asset = QPushButton(" + Add New Asset")
+        self._btn_add_asset.setMinimumHeight(35)
+        self._btn_add_asset.clicked.connect(self._on_add_asset)
+        asset_btns.addWidget(self._btn_add_asset)
+        
+        self._btn_del_asset = QPushButton(" x Remove Selected")
+        self._btn_del_asset.setMinimumHeight(35)
+        self._btn_del_asset.clicked.connect(self._on_delete_selected)
+        asset_btns.addWidget(self._btn_del_asset)
+        asset_btns.addStretch()
+        layout.addLayout(asset_btns)
+        
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _load_data(self) -> None:
+        from threatpilot.core.domain_models import Asset, AssetType
+        self._table.blockSignals(True)
+        self._table.setRowCount(0)
+        for row, asset in enumerate(self._project.assets):
+            self._table.insertRow(row)
+            name_item = QTableWidgetItem(asset.name)
+            name_item.setData(Qt.ItemDataRole.UserRole, asset)
+            self._table.setItem(row, 0, name_item)
+            
+            asset_combo = QComboBox()
+            asset_types = ["Physical", "Informational"]
+            asset_combo.addItems(asset_types)
+            asset_combo.setCurrentText(asset.type.value)
+            asset_combo.setProperty("row", row)
+            asset_combo.currentTextChanged.connect(self._on_asset_type_changed)
+            self._table.setCellWidget(row, 1, asset_combo)
+            
+            crit_item = QTableWidgetItem(asset.criticality)
+            self._table.setItem(row, 2, crit_item)
+            
+            oos_item = QTableWidgetItem()
+            oos_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            oos_item.setCheckState(Qt.CheckState.Checked if asset.is_out_of_scope else Qt.CheckState.Unchecked)
+            self._table.setItem(row, 3, oos_item)
+            
+            just_item = QTableWidgetItem(asset.out_of_scope_justification)
+            self._table.setItem(row, 4, just_item)
+            
+            desc_item = QTableWidgetItem(asset.description)
+            self._table.setItem(row, 5, desc_item)
+            
+            if asset.is_out_of_scope:
+                for col in range(6):
+                    it = self._table.item(row, col)
+                    if it: it.setBackground(QColor("#2d333b") if QApplication.instance().styleSheet().count("style.qss") else QColor("#f6f8fa"))
+                    if it: it.setForeground(QColor("#8b949e"))
+            
+        self._table.blockSignals(False)
+
+    def _on_undo_redo_index_changed(self, index: int) -> None:
+        if not self._is_internal_edit:
+            QTimer.singleShot(0, self._load_data)
+
+    def _on_item_changed(self, item: QTableWidgetItem) -> None:
+        row = item.row()
+        name_item = self._table.item(row, 0)
+        if name_item:
+            asset = name_item.data(Qt.ItemDataRole.UserRole)
+            if asset:
+                field = ""
+                if item.column() == 0: field = "name"
+                elif item.column() == 2: field = "criticality"
+                elif item.column() == 3: field = "is_out_of_scope"
+                elif item.column() == 4: field = "out_of_scope_justification"
+                elif item.column() == 5: field = "description"
+                
+                if field:
+                    if field == "is_out_of_scope":
+                        new_val = (item.checkState() == Qt.CheckState.Checked)
+                    else:
+                        new_val = item.text().strip()
+                        
+                    old_val = getattr(asset, field)
+                    if new_val != old_val:
+                        if self._undo_stack:
+                            self._is_internal_edit = True
+                            cmd = undo_commands.PropertyUpdateCommand(asset, field, old_val, new_val)
+                            self._undo_stack.push(cmd)
+                            self._is_internal_edit = False
+                        else:
+                            setattr(asset, field, new_val)
+                        
+                        if field == "is_out_of_scope":
+                            self._load_data()
+                            
+                        self.project_modified.emit()
+
+    def _on_asset_type_changed(self, new_val: str) -> None:
+        from threatpilot.core.domain_models import AssetType
+        sender = self.sender()
+        row = sender.property("row")
+        name_item = self._table.item(row, 0)
+        if name_item:
+            asset = name_item.data(Qt.ItemDataRole.UserRole)
+            if asset: 
+                old_val = asset.type
+                new_enum_val = AssetType.PHYSICAL if new_val == "Physical" else AssetType.INFORMATIONAL
+                if new_enum_val != old_val:
+                    if self._undo_stack:
+                        self._is_internal_edit = True
+                        cmd = undo_commands.PropertyUpdateCommand(asset, "type", old_val, new_enum_val)
+                        self._undo_stack.push(cmd)
+                        self._is_internal_edit = False
+                    else:
+                        asset.type = new_enum_val
+                    self.project_modified.emit()
+
+    def _on_add_asset(self) -> None:
+        from threatpilot.core.domain_models import Asset, AssetType
+        new_asset = Asset(name="New Asset", type=AssetType.INFORMATIONAL)
+        if self._undo_stack:
+            cmd = undo_commands.AddAssetCommand(self._project, new_asset)
+            self._undo_stack.push(cmd)
+        else:
+            self._project.assets.append(new_asset)
+        self.project_modified.emit()
+        self._load_data()
+
+    def _on_delete_selected(self) -> None:
+        row = self._table.currentRow()
+        if row >= 0:
+            name_item = self._table.item(row, 0)
+            asset = name_item.data(Qt.ItemDataRole.UserRole)
+            if asset:
+                if self._undo_stack:
+                    cmd = undo_commands.DeleteAssetCommand(self._project, asset)
+                    self._undo_stack.push(cmd)
+                else:
+                    if asset in self._project.assets:
+                        self._project.assets.remove(asset)
+                self.project_modified.emit()
+                self._load_data()
 
 
 class DataFlowDialog(QDialog):
@@ -260,17 +483,18 @@ class DataFlowDialog(QDialog):
         flow_header.setFont(header_font)
         flow_header.setStyleSheet("color: #58a6ff; margin-bottom: 5px;")
         layout.addWidget(flow_header)
-        self._flow_table = QTableWidget(0, 4)
-        self._flow_table.setHorizontalHeaderLabels(["Flow Alias", "Source Entity", "Destination Entity", "Protocol / Port"])
+        self._flow_table = QTableWidget(0, 5)
+        self._flow_table.setHorizontalHeaderLabels(["Flow Alias", "Source Element", "Destination Element", "Protocol / Port", "Bidirectional?"])
         self._flow_table.setHorizontalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
         self._flow_table.setVerticalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
         self._flow_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         header = self._flow_table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self._flow_table.setColumnWidth(1, 280)
-        self._flow_table.setColumnWidth(2, 280)
-        self._flow_table.setColumnWidth(3, 160)
+        self._flow_table.setColumnWidth(1, 250)
+        self._flow_table.setColumnWidth(2, 250)
+        self._flow_table.setColumnWidth(3, 140)
+        self._flow_table.setColumnWidth(4, 100)
         self._flow_table.setAlternatingRowColors(True)
         self._flow_table.verticalHeader().setDefaultSectionSize(38)
         layout.addWidget(self._flow_table)
@@ -313,6 +537,11 @@ class DataFlowDialog(QDialog):
             proto_item = QTableWidgetItem(flow.protocol)
             proto_item.setData(Qt.ItemDataRole.UserRole, flow)
             self._flow_table.setItem(row, 3, proto_item)
+            
+            bi_item = QTableWidgetItem()
+            bi_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            bi_item.setCheckState(Qt.CheckState.Checked if flow.is_bidirectional else Qt.CheckState.Unchecked)
+            self._flow_table.setItem(row, 4, bi_item)
 
         self._flow_table.itemChanged.connect(self._on_flow_item_changed)
         self._flow_table.blockSignals(False)
@@ -379,7 +608,6 @@ class DataFlowDialog(QDialog):
         self._load_data()
 
     def _on_undo_redo_index_changed(self, index: int) -> None:
-        """Reload the table when an undo/redo takes place."""
         if not self._is_internal_edit:
             QTimer.singleShot(0, self._load_data)
 
@@ -393,9 +621,13 @@ class DataFlowDialog(QDialog):
         field = ""
         if item.column() == 0: field = "name"
         elif item.column() == 3: field = "protocol"
+        elif item.column() == 4: field = "is_bidirectional"
 
         if field:
-            new_val = item.text().strip()
+            if field == "is_bidirectional":
+                new_val = (item.checkState() == Qt.CheckState.Checked)
+            else:
+                new_val = item.text().strip()
             old_val = getattr(flow, field)
             if new_val != old_val:
                 if self._undo_stack:
@@ -407,4 +639,188 @@ class DataFlowDialog(QDialog):
                     setattr(flow, field, new_val)
                 self.project_modified.emit()
 
-ArchitectureDialog = EntitiesDialog
+
+
+class TrustBoundaryDialog(QDialog):
+    """Dialog for managing trust boundaries (Zones, VPCs, Cloud, etc.) with nesting support."""
+
+    project_modified = Signal()
+
+    def __init__(self, project: Project, undo_stack=None, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("System Trust Boundaries")
+        self.resize(900, 500)
+        self._project = project
+        self._undo_stack = undo_stack
+        self._is_internal_edit = False
+        
+        if self._undo_stack:
+             self._undo_stack.indexChanged.connect(self._on_undo_redo_index_changed)
+
+        self._setup_ui()
+        self._load_data()
+
+    def _setup_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(10)
+
+        header_font = QFont("Segoe UI", 12, QFont.Weight.Bold)
+        tb_header = QLabel("Trust Boundaries & Security Zones (Nesting Supported)")
+        tb_header.setFont(header_font)
+        tb_header.setStyleSheet("color: #7ee787; margin-bottom: 5px;")
+        layout.addWidget(tb_header)
+
+        self._table = QTableWidget(0, 4)
+        self._table.setHorizontalHeaderLabels([
+            "Boundary Name",
+            "Boundary Type",
+            "Parent Boundary",
+            "Description"
+        ])
+        header = self._table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self._table.setColumnWidth(0, 180)
+        self._table.setColumnWidth(1, 120)
+        self._table.setColumnWidth(2, 200)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self._table.setAlternatingRowColors(True)
+        self._table.verticalHeader().setDefaultSectionSize(38)
+        self._table.itemChanged.connect(self._on_item_changed)
+        layout.addWidget(self._table)
+        
+        btns = QHBoxLayout()
+        self._btn_add = QPushButton(" + Create Trust Boundary")
+        self._btn_add.setMinimumHeight(35)
+        self._btn_add.clicked.connect(self._on_add_boundary)
+        btns.addWidget(self._btn_add)
+        
+        self._btn_del = QPushButton(" x Delete Selected")
+        self._btn_del.setMinimumHeight(35)
+        self._btn_del.clicked.connect(self._on_delete_selected)
+        btns.addWidget(self._btn_del)
+        btns.addStretch()
+        layout.addLayout(btns)
+        
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _load_data(self) -> None:
+        self._table.blockSignals(True)
+        self._table.setRowCount(0)
+        
+        for row, tb in enumerate(self._project.boundaries):
+            self._table.insertRow(row)
+            name_item = QTableWidgetItem(tb.name)
+            name_item.setData(Qt.ItemDataRole.UserRole, tb)
+            self._table.setItem(row, 0, name_item)
+            
+            type_item = QTableWidgetItem(tb.type)
+            self._table.setItem(row, 1, type_item)
+            
+            parent_combo = QComboBox()
+            options = ["None"] + [b.name for b in self._project.boundaries if b.boundary_id != tb.boundary_id]
+            parent_combo.addItems(options)
+            
+            parent_name = "None"
+            if tb.parent_boundary_id:
+                parent = next((b for b in self._project.boundaries if b.boundary_id == tb.parent_boundary_id), None)
+                if parent: parent_name = parent.name
+            
+            parent_combo.setCurrentText(parent_name)
+            parent_combo.setProperty("row", row)
+            parent_combo.currentTextChanged.connect(self._on_parent_changed)
+            self._table.setCellWidget(row, 2, parent_combo)
+            
+            desc_item = QTableWidgetItem(tb.description)
+            self._table.setItem(row, 3, desc_item)
+            
+        self._table.blockSignals(False)
+
+    def _on_undo_redo_index_changed(self, index: int) -> None:
+        if not self._is_internal_edit:
+            QTimer.singleShot(0, self._load_data)
+
+    def _on_item_changed(self, item) -> None:
+        row = item.row()
+        name_item = self._table.item(row, 0)
+        if name_item:
+            tb = name_item.data(Qt.ItemDataRole.UserRole)
+            if tb:
+                field = ""
+                if item.column() == 0: field = "name"
+                elif item.column() == 1: field = "type"
+                elif item.column() == 3: field = "description"
+                
+                if field:
+                    new_val = item.text().strip()
+                    old_val = getattr(tb, field)
+                    if new_val != old_val:
+                        if self._undo_stack:
+                            self._is_internal_edit = True
+                            from threatpilot.ui import undo_commands
+                            cmd = undo_commands.PropertyUpdateCommand(tb, field, old_val, new_val)
+                            self._undo_stack.push(cmd)
+                            self._is_internal_edit = False
+                        else:
+                            setattr(tb, field, new_val)
+                        self.project_modified.emit()
+                        if field == "name":
+                            self._load_data()
+
+    def _on_parent_changed(self, new_val: str) -> None:
+        sender = self.sender()
+        row = sender.property("row")
+        name_item = self._table.item(row, 0)
+        if name_item:
+            tb = name_item.data(Qt.ItemDataRole.UserRole)
+            if tb:
+                old_val = tb.parent_boundary_id
+                new_pid = None
+                if new_val != "None":
+                    parent = next((b for b in self._project.boundaries if b.name == new_val), None)
+                    if parent: new_pid = parent.boundary_id
+                
+                if new_pid != old_val:
+                    if self._undo_stack:
+                        self._is_internal_edit = True
+                        from threatpilot.ui import undo_commands
+                        cmd = undo_commands.PropertyUpdateCommand(tb, "parent_boundary_id", old_val, new_pid)
+                        self._undo_stack.push(cmd)
+                        self._is_internal_edit = False
+                    else:
+                        tb.parent_boundary_id = new_pid
+                    self.project_modified.emit()
+
+    def _on_add_boundary(self) -> None:
+        from threatpilot.core.domain_models import TrustBoundary
+        from threatpilot.ui import undo_commands
+        new_tb = TrustBoundary(name="New Trust Boundary", x=50, y=50)
+        if self._undo_stack:
+            cmd = undo_commands.AddTrustBoundaryCommand(self._project, new_tb)
+            self._undo_stack.push(cmd)
+        else:
+            self._project.boundaries.append(new_tb)
+        self.project_modified.emit()
+        self._load_data()
+
+    def _on_delete_selected(self) -> None:
+        from threatpilot.ui import undo_commands
+        row = self._table.currentRow()
+        if row >= 0:
+            name_item = self._table.item(row, 0)
+            tb = name_item.data(Qt.ItemDataRole.UserRole)
+            if tb:
+                if self._undo_stack:
+                    cmd = undo_commands.DeleteTrustBoundaryCommand(self._project, tb)
+                    self._undo_stack.push(cmd)
+                else:
+                    if tb in self._project.boundaries:
+                        self._project.boundaries.remove(tb)
+                self.project_modified.emit()
+                self._load_data()
+
+# Compatibility aliases
+ArchitectureDialog = ElementsDialog
+EntitiesDialog = ElementsDialog

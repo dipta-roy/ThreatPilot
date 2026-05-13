@@ -89,9 +89,13 @@ class ProjectExplorer(QWidget):
 
         arch_root = QTreeWidgetItem(root, ["Architecture"])
         arch_root.setExpanded(True)
-        i0 = QTreeWidgetItem(arch_root, ["Entities and Nodes"])
-        i0.setData(0, Qt.ItemDataRole.UserRole, "action_edit_components")
-        i0b = QTreeWidgetItem(arch_root, ["Data Flow"])
+        i0 = QTreeWidgetItem(arch_root, ["System Elements"])
+        i0.setData(0, Qt.ItemDataRole.UserRole, "action_edit_elements")
+        i0a = QTreeWidgetItem(arch_root, ["System Assets"])
+        i0a.setData(0, Qt.ItemDataRole.UserRole, "action_edit_assets")
+        i0ab = QTreeWidgetItem(arch_root, ["System Trust Boundaries"])
+        i0ab.setData(0, Qt.ItemDataRole.UserRole, "action_edit_boundaries")
+        i0b = QTreeWidgetItem(arch_root, ["Data Flow Mapping"])
         i0b.setData(0, Qt.ItemDataRole.UserRole, "action_edit_flows")
 
         analysis_root = QTreeWidgetItem(root, ["Analysis"])

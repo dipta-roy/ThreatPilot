@@ -16,8 +16,8 @@ from typing import Any
 from pydantic import BaseModel, Field
 from threatpilot.config.prompt_config import PromptConfig
 from threatpilot.core.diagram_model import Diagram
-from threatpilot.core.threat_model import ThreatRegister
-from threatpilot.core.domain_models import Component, Flow, TrustBoundary
+from threatpilot.core.threat_model import ThreatRegister, VulnerabilityRegister, Vulnerability
+from threatpilot.core.domain_models import Component, Flow, TrustBoundary, Asset
 
 class Project(BaseModel):
     """Represents a ThreatPilot project.
@@ -42,7 +42,9 @@ class Project(BaseModel):
     components: list[Component] = Field(default_factory=list)
     flows: list[Flow] = Field(default_factory=list)
     boundaries: list[TrustBoundary] = Field(default_factory=list)
+    assets: list[Asset] = Field(default_factory=list)
     threat_register: ThreatRegister = Field(default_factory=ThreatRegister)
+    vulnerability_register: VulnerabilityRegister = Field(default_factory=VulnerabilityRegister)
     custom_component_types: list[str] = Field(default_factory=list)
     project_path: str = Field(default="", exclude=True)
 
@@ -72,7 +74,64 @@ class Project(BaseModel):
         if "ai_config" in data:
             del data["ai_config"]
             
-        return cls(**data, project_path=project_path)
+        # Migration: If project has old components that were actually assets, move them
+        components = data.get("components", [])
+        assets = data.get("assets", [])
+        
+        new_components = []
+        migrated_any = False
+        
+        # We'll use a set to track names already in assets to avoid duplicates
+        existing_asset_names = {a.get("name") for a in assets}
+        
+        for c in components:
+            # All components are preserved as elements
+            new_components.append(c)
+            
+            a_name = c.get("name", "Unknown Element")
+            a_type_raw = c.get("asset_type")
+            
+            # If assets list is empty/missing this component, mirror it as an Asset
+            if a_name not in existing_asset_names:
+                # Determine type: if it was Informational in legacy, keep it, else Physical
+                a_type = "Informational" if str(a_type_raw).lower() == "informational" else "Physical"
+                
+                asset_dict = {
+                    "asset_id": uuid.uuid4().hex, # Use new ID to ensure independence
+                    "name": a_name,
+                    "type": a_type,
+                    "description": c.get("description", ""),
+                    "criticality": c.get("criticality_description") or c.get("criticality", "Medium"),
+                    "is_out_of_scope": c.get("is_out_of_scope", False),
+                    "out_of_scope_justification": c.get("out_of_scope_justification", "")
+                }
+                assets.append(asset_dict)
+                existing_asset_names.add(a_name)
+                migrated_any = True
+        
+        if migrated_any:
+            data["components"] = new_components
+            data["assets"] = assets
+
+        project = cls.model_validate(data)
+        project.project_path = project_path
+        
+        # Migration: Decouple vulnerabilities from threats
+        raw_threat_reg = data.get("threat_register")
+        if isinstance(raw_threat_reg, dict):
+            raw_threats = raw_threat_reg.get("threats", [])
+            for i, rt in enumerate(raw_threats):
+                legacy_vulns = rt.get("vulnerabilities", [])
+                if legacy_vulns and i < len(project.threat_register.threats):
+                    target_threat = project.threat_register.threats[i]
+                    for lv in legacy_vulns:
+                        if isinstance(lv, dict):
+                            v_obj = Vulnerability.model_validate(lv)
+                            project.vulnerability_register.add_vulnerability(v_obj)
+                            if v_obj.vulnerability_id not in target_threat.vulnerability_ids:
+                                target_threat.vulnerability_ids.append(v_obj.vulnerability_id)
+        
+        return project
 
 
 _PROJECT_FILE = "project.json"
@@ -153,6 +212,11 @@ def load_project(project_path: str | Path) -> Project:
     if threats_file.exists():
         with threats_file.open("r", encoding="utf-8") as fh:
             data.update(json.load(fh))
+            
+    vuln_file = project_dir / "vulnerabilities.json"
+    if vuln_file.exists():
+        with vuln_file.open("r", encoding="utf-8") as fh:
+            data.update(json.load(fh))
 
     return Project.from_dict(data, project_path=str(project_dir))
 
@@ -185,15 +249,22 @@ def _write_project_file(project: Project) -> None:
 
     data = project.to_dict()
 
-    arch_keys = ["diagrams", "components", "flows", "boundaries", "custom_component_types"]
+    # Extract data for sidecar files
+    arch_keys = ["diagrams", "components", "flows", "boundaries", "assets", "custom_component_types"]
     arch_data = {k: data.pop(k, []) for k in arch_keys}
 
     threats_keys = ["threat_register"]
     threats_data = {k: data.pop(k, {}) for k in threats_keys}
+    
+    vuln_keys = ["vulnerability_register"]
+    vuln_data = {k: data.pop(k, {}) for k in vuln_keys}
 
+    # Write project metadata (core config only)
     project_file = project_dir / _PROJECT_FILE
     with project_file.open("w", encoding="utf-8") as fh:
         json.dump(data, fh, indent=2, ensure_ascii=False)
+        
+    # Write specialized sidecar files
     arch_file = project_dir / "architecture.json"
     with arch_file.open("w", encoding="utf-8") as fh:
         json.dump(arch_data, fh, indent=2, ensure_ascii=False)
@@ -201,3 +272,7 @@ def _write_project_file(project: Project) -> None:
     threats_file = project_dir / "threats.json"
     with threats_file.open("w", encoding="utf-8") as fh:
         json.dump(threats_data, fh, indent=2, ensure_ascii=False)
+
+    vuln_file = project_dir / "vulnerabilities.json"
+    with vuln_file.open("w", encoding="utf-8") as fh:
+        json.dump(vuln_data, fh, indent=2, ensure_ascii=False)

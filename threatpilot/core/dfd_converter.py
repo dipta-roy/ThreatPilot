@@ -10,20 +10,16 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 from threatpilot.core.domain_models import Component, Flow, TrustBoundary
 
-class DFDNodeType(str, Enum):
-    """The standard DFD element types."""
-    PROCESS = "Process"
-    DATA_STORE = "DataStore"
-    EXTERNAL_ENTITY = "ExternalEntity"
-
 class DFDNode(BaseModel):
     """A node in the Data Flow Diagram."""
 
     id: str
     name: str
     type: str
-    element_classification: str = ""
-    asset_classification: str = ""
+    element_type: str = ""
+    asset_type: str = ""
+    trust_boundary: Optional[str] = None
+    parent_trust_boundary: Optional[str] = None
     description: str = ""
     component_id: Optional[str] = None
 
@@ -35,38 +31,97 @@ class DFDEdge(BaseModel):
     source_id: str
     target_id: str
     protocol: str = "HTTPS"
+    is_bidirectional: bool = False
+    trust_boundary: Optional[str] = None
     flow_id: Optional[str] = None
+
+class DFDAsset(BaseModel):
+    """A high-value asset in the system."""
+    name: str
+    type: str
+    criticality: str
+    is_out_of_scope: bool = False
+    out_of_scope_justification: str = ""
 
 class DFDModel(BaseModel):
     """The complete DFD representation of the system."""
 
     nodes: List[DFDNode] = Field(default_factory=list)
     edges: List[DFDEdge] = Field(default_factory=list)
+    assets: List[DFDAsset] = Field(default_factory=list)
 
 def convert_to_dfd(
     components: List[Component],
-    flows: List[Flow]
+    flows: List[Flow],
+    boundaries: List[TrustBoundary] = None,
+    assets: List[Asset] = None
 ) -> DFDModel:
-    """Map detected domain objects to a DFD structure with auto-linking."""
+    """Map detected domain objects to a DFD structure with auto-linking and TB detection."""
+    from threatpilot.core.domain_models import Asset
     dfd = DFDModel()
+    boundaries = boundaries or []
+    assets = assets or []
+
+    # Map standalone assets
+    for a in assets:
+        dfd.assets.append(DFDAsset(
+            name=a.name,
+            type=a.type.value,
+            criticality=a.criticality,
+            is_out_of_scope=a.is_out_of_scope,
+            out_of_scope_justification=a.out_of_scope_justification
+        ))
+
+    # Helper for spatial detection
+    def get_containing_boundary(x: float, y: float, w: float = 0, h: float = 0) -> Optional[TrustBoundary]:
+        cx, cy = x + w/2, y + h/2
+        for b in boundaries:
+            if b.x <= cx <= b.x + b.width and b.y <= cy <= b.y + b.height:
+                return b
+        return None
 
     for comp in components:
+        if comp.is_out_of_scope:
+            continue
+
+        # Determine Trust Boundary
+        tb_name = "None (External)"
+        parent_tb_name = None
+        tb = None
+        if comp.trust_boundary_id:
+            tb = next((b for b in boundaries if b.boundary_id == comp.trust_boundary_id), None)
+        
+        if not tb:
+            # Try spatial detection
+            tb = get_containing_boundary(comp.x, comp.y, comp.width, comp.height)
+        
+        if tb:
+            tb_name = tb.name
+            if tb.parent_boundary_id:
+                parent = next((b for b in boundaries if b.boundary_id == tb.parent_boundary_id), None)
+                if parent: parent_tb_name = parent.name
+
         node = DFDNode(
             id=comp.component_id,
             name=comp.name,
             type=comp.type,
-            element_classification=comp.element_classification,
-            asset_classification=comp.asset_classification,
+            element_type=comp.element_type.value,
+            trust_boundary=tb_name,
+            parent_trust_boundary=parent_tb_name,
             description=comp.description,
             component_id=comp.component_id
         )
         dfd.nodes.append(node)
 
     for flow in flows:
+        if flow.is_out_of_scope:
+            continue
+
         src_id = flow.source_id
         dst_id = flow.target_id
         
         if not src_id or not dst_id:
+            # ... (Auto-linking logic)
             best_src = None
             best_dst = None
             min_src_dist = 150.0  
@@ -90,12 +145,25 @@ def convert_to_dfd(
             if not src_id: src_id = best_src or ""
             if not dst_id: dst_id = best_dst or ""
 
+        # Determine Trust Boundary for Flow
+        tb_name = "Internal"
+        src_node = next((n for n in dfd.nodes if n.id == src_id), None)
+        dst_node = next((n for n in dfd.nodes if n.id == dst_id), None)
+        
+        if src_node and dst_node:
+            if src_node.trust_boundary != dst_node.trust_boundary:
+                tb_name = f"Cross-Boundary ({src_node.trust_boundary} -> {dst_node.trust_boundary})"
+            else:
+                tb_name = src_node.trust_boundary
+
         edge = DFDEdge(
             id=flow.flow_id,
             name=flow.name,
             source_id=src_id,
             target_id=dst_id,
             protocol=flow.protocol,
+            is_bidirectional=flow.is_bidirectional,
+            trust_boundary=tb_name,
             flow_id=flow.flow_id
         )
         dfd.edges.append(edge)

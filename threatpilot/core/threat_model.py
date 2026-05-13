@@ -27,19 +27,16 @@ class STRIDECategory(str, Enum):
     NON_COMPLIANCE = "Non-compliance"
 
 
-class Threat(BaseModel):
-    """A single identified security threat.
+class Vulnerability(BaseModel):
+    """A specific flaw or exploit path associated with a threat."""
+    vulnerability_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    description: str = ""
+    mitigation: str = ""
+    status: str = "Open"  # Open, Mitigated, Accepted, etc.
+    reasoning: str = ""
 
-    Attributes:
-        threat_id: Unique identifier for this instance.
-        category: Standard STRIDE classification.
-        title: Short descriptive name.
-        description: Deep technical detail of the threat.
-        impact: Analysis of the potential business/system damage.
-        likelihood: Numeric probability score (1-5).
-        mitigation: Proposed remediation steps.
-        source_dfd_node: Optional ID of the node this threat applies to.
-    """
+class Threat(BaseModel):
+    """A single identified security threat (System Weakness)."""
 
     threat_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     category: STRIDECategory
@@ -50,10 +47,10 @@ class Threat(BaseModel):
     mitigation: str = ""
     is_accepted_risk: bool = False
     acceptance_justification: str = ""
-    vulnerabilities: str = ""
+    vulnerability_ids: List[str] = Field(default_factory=list)
     affected_components: str = ""
-    affected_element: str = ""
-    affected_asset: str = ""
+    affected_element_type: str = ""
+    affected_asset_type: str = ""
     cvss_score: float = 0.0
     cvss_vector: str = ""
     mitre_attack_id: str = ""
@@ -65,6 +62,7 @@ class ThreatRegister(BaseModel):
     """A collection of all threats for a project."""
 
     threats: List[Threat] = Field(default_factory=list)
+    new_vulnerabilities: List[Vulnerability] = Field(default_factory=list, exclude=True)
 
     def add_threat(self, threat: Threat, skip_duplicates: bool = True) -> bool:
         """Add a threat to the register.
@@ -96,3 +94,16 @@ class ThreatRegister(BaseModel):
                 self.threats.pop(i)
                 return True
         return False
+class VulnerabilityRegister(BaseModel):
+    """A global registry of all identified vulnerabilities across the project."""
+    vulnerabilities: List[Vulnerability] = Field(default_factory=list)
+
+    def add_vulnerability(self, vuln: Vulnerability) -> None:
+        if not any(v.vulnerability_id == vuln.vulnerability_id for v in self.vulnerabilities):
+            self.vulnerabilities.append(vuln)
+
+    def get_vulnerability(self, vuln_id: str) -> Optional[Vulnerability]:
+        for v in self.vulnerabilities:
+            if v.vulnerability_id == vuln_id:
+                return v
+        return None

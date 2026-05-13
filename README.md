@@ -23,12 +23,14 @@
 
 ### 3. Risk Assessment & Controls
 - **CVSS v3.1 Scoring**: Built-in calculator to determine base vulnerability scores with automatic severity categorization (Low-Critical).
+- **Decoupled Vulnerability Registry**: Manage security flaws independently from threats via a global registry, enabling many-to-many relationships and standardized remediation tracking.
 - **Interactive Risk Matrix**: Visualize your system's risk profile through a dynamic Likelihood vs. Impact matrix.
-- **High-Fidelity Tracking**: Manage threats with a full-featured Threat Ledger, supporting acceptance, mitigation status, and manual overrides.
+- **High-Fidelity Tracking**: Manage threats with a modernized, flat-table Threat Ledger for rapid triage, acceptance, and manual overrides.
 
 ### 4. Professional Reporting & Export
 - **Comprehensive Markdown Reports**: Generates deep-dive narrative reports including methodology, executive summaries, and detailed threat registers.
 - **Lightweight Excel Exports**: Custom-built Excel generation using `openpyxl`, ensuring high-fidelity 7-tab GRC workbooks without the bloat of heavy data libraries.
+- **Git-Optimized Project Storage**: Project data is cleanly partitioned into specialized JSON sidecars (`architecture.json`, `threats.json`, `vulnerabilities.json`), enabling human-readable diffs and better collaboration in version control.
 - **Architecture Export**: Save your modeled architecture as structured JSON or export annotated diagrams.
 
 ### 5. Advanced UX & Workflow
@@ -114,7 +116,7 @@ Download Code Verification Certificate: [Dipta Roy - Code Verification Certifica
 
 - VERIFY APPLICATION AUTHENTICITY
 
-1. To confirm the application is genuine, right click on ThreatPilot-1.2.0-win64.msi and click on Properties.
+1. To confirm the application is genuine, right click on ThreatPilot-1.1.0-win64.msi and click on Properties.
 2. Go to the Digital Signatures tab.
 3. Select "Signed_By_Dipta" from the Embedded Signatures list, then choose Details.
 4. In the General tab, you should see the message "This digital signature is OK."
@@ -122,5 +124,5 @@ Download Code Verification Certificate: [Dipta Roy - Code Verification Certifica
 
 Once verified,
 ```
-Run ThreatPilot-1.2.0-win64.msi and install the application.
+Run ThreatPilot-1.1.0-win64.msi and install the application.
 ```

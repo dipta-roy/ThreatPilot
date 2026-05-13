@@ -28,11 +28,12 @@ from threatpilot.core.threat_model import Threat, ThreatRegister
 class RiskMatrixDialog(QDialog):
     """Visual heat map for risk prioritization."""
 
-    def __init__(self, threats: List[Threat], component_names: List[str] = None, is_dark: bool = True, parent=None) -> None:
+    def __init__(self, threats: List[Threat], component_names: List[str] = None, is_dark: bool = True, project: Project | None = None, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Strategic Risk Matrix")
         self.resize(900, 650)
         self._threats = threats
+        self._project = project
         self._component_names = component_names or []
         self._is_dark_theme = is_dark
         self._setup_ui()
@@ -220,7 +221,7 @@ class RiskMatrixDialog(QDialog):
     def _edit_threat(self, threat: Threat) -> None:
         """Open the edit dialog for the selected threat."""
         from threatpilot.ui.threat_edit_dialog import ThreatEditDialog
-        dialog = ThreatEditDialog(threat, component_names=self._component_names, parent=self)
+        dialog = ThreatEditDialog(threat, component_names=self._component_names, project=self._project, parent=self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._populate_matrix()
             impact = self._get_impact_score(threat.cvss_score)

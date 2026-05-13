@@ -19,7 +19,7 @@ def main() -> None:
     app = QApplication(sys.argv)
     app.setApplicationName("ThreatPilot")
     app.setOrganizationName("Dipta Roy")
-    app.setApplicationVersion("1.2.0")
+    app.setApplicationVersion("1.3.0")
     icon_path = Path(__file__).parent / "threatpilot" / "resources" / "app-icon.png"
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))

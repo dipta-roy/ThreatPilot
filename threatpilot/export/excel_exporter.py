@@ -64,11 +64,11 @@ def export_to_excel(project: Project, output_path: str | Path) -> None:
     
     for c in project.components:
          raw_desc = c.description.strip() if c.description else ""
-         final_desc = raw_desc if raw_desc else f"Detected {c.element_classification} in architecture blueprint."
+         final_desc = raw_desc if raw_desc else f"Detected {c.element_type.value} in architecture blueprint."
          
          ws_elem.append([
              sanitize_excel(c.name),
-             sanitize_excel(c.element_classification),
+             sanitize_excel(c.element_type.value),
              sanitize_excel(final_desc)
          ])
 
@@ -78,11 +78,11 @@ def export_to_excel(project: Project, output_path: str | Path) -> None:
     
     for c in project.components:
          raw_desc = c.description.strip() if c.description else ""
-         final_desc = raw_desc if raw_desc else f"Identified {c.asset_classification} asset for security analysis."
+         final_desc = raw_desc if raw_desc else f"Identified {c.asset_type.value} asset for security analysis."
          
          ws_asset.append([
              sanitize_excel(c.name),
-             sanitize_excel(c.asset_classification),
+             sanitize_excel(c.asset_type.value),
              sanitize_excel(final_desc)
          ])
 
@@ -121,10 +121,18 @@ def export_to_excel(project: Project, output_path: str | Path) -> None:
     for cell in ws_vuln[1]: cell.font = header_font
     
     for t in project.threat_register.threats:
-         if t.vulnerabilities:
+         # Join vulnerability descriptions from the global register
+         v_ids = getattr(t, "vulnerability_ids", [])
+         v_texts = []
+         for vid in v_ids:
+             v_obj = project.vulnerability_register.get_vulnerability(vid)
+             if v_obj:
+                 v_texts.append(v_obj.description)
+         
+         if v_texts:
              ws_vuln.append([
                  sanitize_excel(t.title),
-                 sanitize_excel(t.vulnerabilities)
+                 sanitize_excel("; ".join(v_texts))
              ])
 
     ws_risk = wb.create_sheet("Risk Assessment")
@@ -144,18 +152,82 @@ def export_to_excel(project: Project, output_path: str | Path) -> None:
     white_font = Font(color="FFFFFF", bold=True)
     black_font = Font(color="000000", bold=True)
 
+    def _resolve_flow(f):
+        """Return (source_name, dest_name) for a flow, or ('', '')."""
+        src = next((c for c in project.components if c.component_id == f.source_id), None)
+        dst = next((c for c in project.components if c.component_id == f.target_id), None)
+        return (src.name if src else "", dst.name if dst else "")
+
     for i, t in enumerate(project.threat_register.threats):
         severity_label = get_cvss_severity(t.cvss_score)
         severity_full = f"{severity_label} ({t.cvss_score})"
-        elem_name = t.affected_element or t.affected_components or "N/A"
-        asset_name = t.affected_asset or t.affected_components or "N/A"
+
+        # Resolve Element Name (source/actor) and Asset Name (target/resource).
+        # Priority: manual user override → exact flow name → exact component → fuzzy flow → fuzzy component → type fields.
+        elem_name = t.affected_element_type or ""
+        asset_name = t.affected_asset_type or ""
+
+        generic_types = ["data flow", "informational", "physical", "process", "data store", "external entity", "n/a", ""]
+        if elem_name.lower() in generic_types or asset_name.lower() in generic_types:
+            res_elem = ""
+            res_asset = ""
+            if t.affected_components:
+                # Build a broad search haystack from all narrative fields
+                haystack = (f"{t.affected_components} {t.title} {t.description}").lower()
+                for cname in [n.strip() for n in t.affected_components.split(",")]:
+                    # 1. Exact flow name match
+                    flow_match = next((f for f in project.flows if f.name == cname), None)
+                    if flow_match:
+                        src = next((c for c in project.components if c.component_id == flow_match.source_id), None)
+                        dst = next((c for c in project.components if c.component_id == flow_match.target_id), None)
+                        res_elem = src.name if src else ""
+                        res_asset = dst.name if dst else ""
+                        break
+
+                    # 2. Exact component name match
+                    comp_match = next((c for c in project.components if c.name == cname), None)
+                    if comp_match:
+                        res_elem = comp_match.name
+                        res_asset = comp_match.name
+                        break
+
+                # 3. Fuzzy flow match
+                if not res_elem:
+                    for f in project.flows:
+                        src = next((c for c in project.components if c.component_id == f.source_id), None)
+                        dst = next((c for c in project.components if c.component_id == f.target_id), None)
+                        if src and dst and src.name.lower() in haystack and dst.name.lower() in haystack:
+                            res_elem = src.name
+                            res_asset = dst.name
+                            break
+
+                # 4. Fuzzy component match
+                if not res_elem:
+                    for c in project.components:
+                        if c.name.lower() in haystack:
+                            res_elem = c.name
+                            res_asset = c.name
+                            break
+            
+            # Apply resolution results to generic fields
+            elem_name = elem_name if elem_name.lower() not in generic_types else (res_elem or elem_name or t.affected_components or "N/A")
+            asset_name = asset_name if asset_name.lower() not in generic_types else (res_asset or asset_name or t.affected_components or "N/A")
+        
+        # Join vulnerability descriptions
+        v_ids = getattr(t, "vulnerability_ids", [])
+        v_texts = []
+        for vid in v_ids:
+            v_obj = project.vulnerability_register.get_vulnerability(vid)
+            if v_obj:
+                v_texts.append(v_obj.description)
+        vuln_summary = "; ".join(v_texts) if v_texts else "N/A"
         
         ws_risk.append([
             i + 1,
             sanitize_excel(elem_name),
             sanitize_excel(asset_name),
             sanitize_excel(t.title),
-            sanitize_excel(t.vulnerabilities),
+            sanitize_excel(vuln_summary),
             sanitize_excel(t.description),
             sanitize_excel(t.impact),
             str(t.cvss_vector or "N/A"),

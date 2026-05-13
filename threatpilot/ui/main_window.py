@@ -25,6 +25,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QStatusBar,
     QToolBar,
+    QHBoxLayout,
+    QPushButton,
     QVBoxLayout,
     QWidget,
     QProgressDialog,
@@ -65,6 +67,46 @@ from threatpilot.ai.analyzer import ThreatAnalyzer
 from threatpilot.ai.response_parser import extract_json
 from threatpilot.config.ai_config import AIConfig
 from threatpilot.utils.logger import setup_logging, LOG_DIR, sanitize_text
+
+class ReasoningDisplayDialog(QDialog):
+    """A dedicated dialog for displaying long-form technical reasoning.
+    
+    Provides a wider, scrollable view with markdown support, making
+    technical reports much easier to read than a standard message box.
+    """
+    def __init__(self, title: str, reasoning: str, parent: QWidget | None = None, show_regenerate: bool = False):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(800, 650)
+        self.setMinimumWidth(700)
+        
+        layout = QVBoxLayout(self)
+        
+        self.text_area = QTextEdit()
+        self.text_area.setReadOnly(True)
+        self.text_area.setMarkdown(reasoning)
+        # Ensure high readability
+        self.text_area.setStyleSheet("QTextEdit { padding: 15px; background: palette(base); }")
+        layout.addWidget(self.text_area)
+        
+        self.buttons = QHBoxLayout()
+        self.btn_close = QPushButton("Close")
+        self.btn_close.clicked.connect(self.accept)
+        
+        self.regenerate_clicked = False
+        if show_regenerate:
+            self.btn_regen = QPushButton("Regenerate Analysis")
+            self.btn_regen.setStyleSheet("background: #1a73e8; color: white; font-weight: bold; padding: 6px 12px;")
+            self.btn_regen.clicked.connect(self._on_regen)
+            self.buttons.addWidget(self.btn_regen)
+            
+        self.buttons.addStretch()
+        self.buttons.addWidget(self.btn_close)
+        layout.addLayout(self.buttons)
+
+    def _on_regen(self):
+        self.regenerate_clicked = True
+        self.accept()
 
 class AnalysisWorker(QThread):
     """Background worker for running AI analysis without blocking the UI.
@@ -214,11 +256,11 @@ class ReasoningWorker(QThread):
     finished = Signal(str, object)
     failed = Signal(str)
 
-    def __init__(self, provider, prompt_config, threat, analysis_mode, parent=None):
+    def __init__(self, provider, prompt_config, item, analysis_mode, parent=None):
         super().__init__(parent)
         self.provider = provider
         self.prompt_config = prompt_config
-        self.threat = threat
+        self.item = item
         self.analysis_mode = analysis_mode
 
     def run(self):
@@ -230,8 +272,13 @@ class ReasoningWorker(QThread):
             analyzer = ThreatAnalyzer(self.provider, self.prompt_config)
             analyzer.builder.analysis_mode = self.analysis_mode
             
-            reasoning = loop.run_until_complete(analyzer.analyze_reasoning(self.threat))
-            self.finished.emit(reasoning, self.threat)
+            from threatpilot.core.threat_model import Vulnerability
+            if isinstance(self.item, Vulnerability):
+                reasoning = loop.run_until_complete(analyzer.analyze_vulnerability_reasoning(self.item))
+            else:
+                reasoning = loop.run_until_complete(analyzer.analyze_reasoning(self.item))
+                
+            self.finished.emit(reasoning, self.item)
         except Exception as exc:
             self.failed.emit(str(exc))
         finally:
@@ -327,6 +374,8 @@ class MainWindow(QMainWindow):
             self._properties_panel.set_theme(self._is_dark_theme)
         if hasattr(self, "_canvas"):
             self._canvas.set_theme(self._is_dark_theme)
+        if hasattr(self, "_vulnerability_panel"):
+            self._vulnerability_panel.set_theme(self._is_dark_theme)
 
     def _on_toggle_theme(self) -> None:
         """Switch between dark and light modes."""
@@ -390,6 +439,14 @@ class MainWindow(QMainWindow):
         self._linddun_threat_ledger = ThreatPanel(self, filter_mode="LINDDUN")
         self._central_tabs.addTab(self._linddun_threat_ledger, "LINDDUN Privacy")
 
+        from threatpilot.ui.vulnerability_panel import VulnerabilityPanel
+        self._vulnerability_panel = VulnerabilityPanel(self)
+        self._vulnerability_panel.vulnerability_changed.connect(self._on_save_project)
+        self._vulnerability_panel.vulnerability_changed.connect(
+            lambda: self._properties_panel.set_item(self._properties_panel._current_item)
+        )
+        self._central_tabs.addTab(self._vulnerability_panel, "Vulnerabilities")
+
         self._risk_assessment_panel = RiskAssessmentPanel(self)
         self._risk_assessment_panel.threat_edited.connect(self._on_save_project)
         self._central_tabs.addTab(self._risk_assessment_panel, "Risk Assessment")
@@ -446,10 +503,16 @@ class MainWindow(QMainWindow):
         self._stride_threat_ledger.threat_selected.connect(self._properties_panel.set_item)
         self._linddun_threat_ledger.threat_selected.connect(self._properties_panel.set_item)
 
+        self._threat_panel.reasoning_requested.connect(self._on_reasoning_requested)
+        self._stride_threat_ledger.reasoning_requested.connect(self._on_reasoning_requested)
+        self._linddun_threat_ledger.reasoning_requested.connect(self._on_reasoning_requested)
+        self._vulnerability_panel.reasoning_requested.connect(self._on_reasoning_requested)
+
         self._stride_threat_ledger.run_analysis_requested.connect(self._on_run_analysis)
         self._stride_threat_ledger.threat_added.connect(self._on_save_project)
         self._stride_threat_ledger.threat_removed.connect(self._on_save_project)
         
+        self._risk_assessment_panel.threat_edited.connect(self._on_save_project)
         self._linddun_threat_ledger.run_analysis_requested.connect(self._on_run_analysis)
         self._linddun_threat_ledger.threat_added.connect(self._on_save_project)
         self._linddun_threat_ledger.threat_removed.connect(self._on_save_project)
@@ -540,13 +603,22 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(self._redo_action)
         edit_menu.addSeparator()
         
-        self._action_detect_objects = QAction("&Detect Entities", self)
+        self._action_detect_objects = QAction("&Detect Elements", self)
         self._action_detect_objects.setShortcut(QKeySequence("Ctrl+D"))
 
-        self._action_edit_components = QAction("&Component Inventory (Edit)...", self)
-        self._action_edit_components.setShortcut(QKeySequence("Ctrl+E"))
+        self._action_edit_elements = QAction("&System Elements (Process, Store)...", self)
+        self._action_edit_elements.setShortcut(QKeySequence("Ctrl+E"))
+        
+        self._action_edit_assets = QAction("&System Assets (Physical, Info)...", self)
+        self._action_edit_assets.setShortcut(QKeySequence("Ctrl+A"))
+
+        self._action_edit_boundaries = QAction("&System Trust Boundaries...", self)
+        self._action_edit_boundaries.setShortcut(QKeySequence("Ctrl+B"))
+        
         edit_menu.addAction(self._action_detect_objects)
-        edit_menu.addAction(self._action_edit_components)
+        edit_menu.addAction(self._action_edit_elements)
+        edit_menu.addAction(self._action_edit_assets)
+        edit_menu.addAction(self._action_edit_boundaries)
 
         intel_menu = menu_bar.addMenu("&Intelligence")
 
@@ -573,7 +645,7 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self._action_toggle_threats)
 
         self._action_toggle_properties = self._properties_panel_dock.toggleViewAction()
-        self._action_toggle_properties.setText("&Element Attributes")
+        self._action_toggle_properties.setText("&Threat Attributes")
         view_menu.addAction(self._action_toggle_properties)
 
         self._action_toggle_ai_log = self._ai_log_dock.toggleViewAction()
@@ -660,7 +732,9 @@ class MainWindow(QMainWindow):
         self._action_export_diagram.triggered.connect(self._on_export_diagram)
         self._action_about.triggered.connect(self._on_about)
         self._action_detect_objects.triggered.connect(self._on_detect_objects)
-        self._action_edit_components.triggered.connect(self._on_edit_components)
+        self._action_edit_elements.triggered.connect(self._on_edit_elements)
+        self._action_edit_assets.triggered.connect(self._on_edit_assets)
+        self._action_edit_boundaries.triggered.connect(self._on_edit_boundaries)
         self._action_toggle_theme.triggered.connect(self._on_toggle_theme)
         self._action_quickstart.triggered.connect(self._on_quick_start)
         self._action_open_logs.triggered.connect(self._on_open_logs)
@@ -689,6 +763,8 @@ class MainWindow(QMainWindow):
             self._stride_threat_ledger.set_register(self._project.threat_register)
             self._linddun_threat_ledger.set_register(self._project.threat_register)
             self._risk_assessment_panel.set_project(self._project)
+            self._vulnerability_panel.set_project(self._project)
+            self._properties_panel.set_project(self._project)
             self._current_diagram = None
             self._canvas.clear_diagram()
             self._update_title()
@@ -715,9 +791,11 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_worker_ai_vision") and self._worker_ai_vision.isRunning():
             self._worker_ai_vision.terminate()
             self._worker_ai_vision.wait()
-        if hasattr(self, "_reasoning_worker") and self._reasoning_worker.isRunning():
-            self._reasoning_worker.terminate()
-            self._reasoning_worker.wait()
+        if hasattr(self, "_reasoning_workers"):
+            for w in self._reasoning_workers:
+                if w.isRunning():
+                    w.terminate()
+                    w.wait()
 
         self._project = None
         self._current_diagram = None
@@ -768,6 +846,8 @@ class MainWindow(QMainWindow):
         self._stride_threat_ledger.set_register(self._project.threat_register)
         self._linddun_threat_ledger.set_register(self._project.threat_register)
         self._risk_assessment_panel.set_project(self._project)
+        self._vulnerability_panel.set_project(self._project)
+        self._properties_panel.set_project(self._project)
         self._current_diagram = None
         self._canvas.clear_diagram()
         self._update_title()
@@ -793,6 +873,8 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self._stride_threat_ledger.refresh)
         if hasattr(self, "_linddun_threat_ledger"):
             QTimer.singleShot(0, self._linddun_threat_ledger.refresh)
+        if hasattr(self, "_vulnerability_panel"):
+            QTimer.singleShot(0, self._vulnerability_panel.refresh)
         QTimer.singleShot(0, self._refresh_canvas_overlays)
         self._update_title()
 
@@ -919,8 +1001,12 @@ class MainWindow(QMainWindow):
             self._on_ai_settings()
         elif action == "action_prompt_config":
             self._on_prompt_config()
-        elif action == "action_edit_components":
-            self._on_edit_components()
+        elif action == "action_edit_elements":
+            self._on_edit_elements()
+        elif action == "action_edit_assets":
+            self._on_edit_assets()
+        elif action == "action_edit_boundaries":
+            self._on_edit_boundaries()
         elif action == "action_edit_flows":
             self._on_edit_flows()
         elif action == "action_view_threats":
@@ -933,7 +1019,7 @@ class MainWindow(QMainWindow):
             from threatpilot.ui.risk_matrix_dialog import RiskMatrixDialog
             component_names = [c.name for c in self._project.components]
             component_names.extend([f.name for f in self._project.flows])
-            dialog = RiskMatrixDialog(self._project.threat_register.threats, component_names=component_names, is_dark=self._is_dark_theme, parent=self)
+            dialog = RiskMatrixDialog(self._project.threat_register.threats, component_names=component_names, is_dark=self._is_dark_theme, project=self._project, parent=self)
             dialog.exec()
 
     def _on_run_analysis(self, analysis_mode: str | None = None) -> None:
@@ -943,7 +1029,7 @@ class MainWindow(QMainWindow):
         
         mode = analysis_mode if analysis_mode and analysis_mode != "ALL" else None
         
-        dfd = convert_to_dfd(self._project.components, self._project.flows)
+        dfd = convert_to_dfd(self._project.components, self._project.flows, self._project.boundaries)
         if not dfd.nodes:
             QMessageBox.warning(self, "Analysis", "No components detected to analyze. Please add or detect components first.")
             return
@@ -1008,108 +1094,79 @@ class MainWindow(QMainWindow):
         self._worker.start()
         self._progress.show()
 
-    def _on_reasoning_requested(self, threat: Threat) -> None:
-        """Handle request for deep technical reasoning for a specific threat."""
+    def _on_reasoning_requested(self, item: Any) -> None:
+        """Handle request for deep technical reasoning."""
+        if not self._project:
+            return
+
+        # Check if reasoning already exists to prevent redundant AI calls
+        existing_reasoning = getattr(item, "reasoning", "")
+        if existing_reasoning and existing_reasoning.strip():
+            dialog = ReasoningDisplayDialog(
+                "AI Technical Reasoning", 
+                existing_reasoning, 
+                parent=self, 
+                show_regenerate=True
+            )
+            dialog.exec()
+            
+            if not dialog.regenerate_clicked:
+                return
+
         config = AIConfig.load()
         provider = create_ai_provider(config)
         
-        self.statusBar().showMessage("Analyzing threat reasoning with AI...")
-        self._properties_panel.set_reasoning_progress(True)
-        
-        self._reasoning_worker = ReasoningWorker(
-            provider, 
-            self._project.prompt_config, 
-            threat,
-            config.analysis_mode
-        )
-        self._reasoning_worker.finished.connect(lambda res, t: self._on_reasoning_finished(res, t, self._project))
-        self._reasoning_worker.failed.connect(self._on_reasoning_failed)
-        self._reasoning_worker.start()
-
-    def _on_reasoning_finished(self, reasoning: str, threat: Threat, origin_project: Project | None = None) -> None:
-        """Update threat with reasoning, converting any dict/JSON to Markdown."""
-        if not self._project or (origin_project and self._project is not origin_project):
-            return
+        from threatpilot.core.threat_model import Threat, Vulnerability
+        analysis_mode = "STRIDE"
+        if isinstance(item, Threat):
+            # Check which ledger it belongs to
+            if any(t is item for t in self._project.threat_register.threats):
+                # Simple check: LINDDUN categories are different
+                from threatpilot.core.threat_model import STRIDECategory
+                if not isinstance(item.category, STRIDECategory):
+                    analysis_mode = "LINDDUN"
+        elif isinstance(item, Vulnerability):
+            analysis_mode = "STRIDE" # Default for vulns
             
-        import json, ast, re
+        worker = ReasoningWorker(provider, self._project.prompt_config, item, analysis_mode)
+        worker.finished.connect(self._on_reasoning_finished)
+        worker.failed.connect(self._on_reasoning_failed)
+        
+        self.statusBar().showMessage(f"Generating XAI Reasoning for: {getattr(item, 'title', 'Vulnerability')}...")
+        worker.start()
+        # Keep reference to prevent GC
+        if not hasattr(self, "_reasoning_workers"):
+            self._reasoning_workers = []
+        self._reasoning_workers.append(worker)
 
-        def _dict_to_markdown(data: dict) -> str:
-            SECTION_MAP = {
-                "attack_vector":            "### 1. Attack Vector",
-                "architectural_root_cause": "### 2. Architectural Root Cause",
-                "risk_rationalization":     "### 3. Risk Rationalization",
-                "framework_alignment":      "### 4. Framework Alignment",
-            }
-            md = ""
-            for key, heading in SECTION_MAP.items():
-                if key in data:
-                    val = data[key]
-                    if isinstance(val, dict):
-                        val = "\n".join(f"- **{k}**: {v}" for k, v in val.items())
-                    elif isinstance(val, list):
-                        val = "\n".join(f"- {item}" for item in val)
-                    md += f"{heading}\n\n{val}\n\n"
-            if not md:
-                for k, v in data.items():
-                    if isinstance(v, (dict, list)):
-                        v = str(v)
-                    md += f"### {k.replace('_', ' ').title()}\n\n{v}\n\n"
-            return md.strip()
+    def _on_reasoning_finished(self, reasoning: str, item: Any) -> None:
+        """Update item with AI reasoning and refresh UI."""
+        item.reasoning = reasoning
+        
+        # PERSISTENCE: Save the project after generating reasoning
+        if self._project:
+            save_project(self._project)
 
-        def _regex_extract_dict(text: str) -> dict | None:
-            """Fallback: extract key–value pairs from a Python dict string via regex.
-
-            Handles mixed-quote AI output where single-quoted values contain double
-            quotes (or vice versa), causing ast.literal_eval to raise SyntaxError.
-            """
-            result: dict = {}
-            key_pattern = re.compile(r"[\"\']([\w]+)[\"\']\s*:\s*", re.DOTALL)
-            keys_found = list(key_pattern.finditer(text))
-            for i, match in enumerate(keys_found):
-                key = match.group(1)
-                val_start = match.end()
-                val_end = keys_found[i + 1].start() if i + 1 < len(keys_found) else len(text)
-                raw_val = text[val_start:val_end].strip().rstrip(",").strip()
-                if len(raw_val) >= 2 and raw_val[0] in ('"', "'"):
-                    q = raw_val[0]
-                    end_idx = raw_val.rfind(q)
-                    if end_idx > 0:
-                        raw_val = raw_val[1:end_idx]
-                result[key] = raw_val
-            return result if result else None
-
-        raw = reasoning.strip()
-        raw = re.sub(r"^Technical Reasoning\s*[:\-]?\s*\n+", "", raw, flags=re.IGNORECASE).strip()
-
-        processed_markdown = raw
-        brace_match = re.search(r"\{[\s\S]+\}", raw)
-        if brace_match:
-            candidate = brace_match.group(0)
-            data = None
-            try:
-                data = json.loads(candidate)
-            except Exception:
-                pass
-            if data is None:
-                try:
-                    data = ast.literal_eval(candidate)
-                except Exception:
-                    pass
-            if data is None:
-                data = _regex_extract_dict(candidate)
-            if isinstance(data, dict):
-                processed_markdown = _dict_to_markdown(data)
-
-        threat.reasoning = processed_markdown
-        self._properties_panel.set_reasoning_progress(False)
-        self._properties_panel.set_item(threat)
-        self.statusBar().showMessage("Reasoning analysis complete.")
-        save_project(self._project)
+        from threatpilot.core.threat_model import Threat, Vulnerability
+        if isinstance(item, Threat):
+            self._threat_panel.refresh()
+            self._stride_threat_ledger.refresh()
+            self._linddun_threat_ledger.refresh()
+            if self._properties_panel._current_item is item:
+                self._properties_panel.set_item(item)
+        elif isinstance(item, Vulnerability):
+            self._vulnerability_panel.refresh()
+            
+        self.statusBar().showMessage("Reasoning generated successfully.")
+        
+        # Show in a dedicated wide dialog for a professional report feel
+        dialog = ReasoningDisplayDialog("AI Technical Reasoning", reasoning, parent=self)
+        dialog.exec()
 
     def _on_reasoning_failed(self, error_msg: str) -> None:
-        """Clean up UI and show error message on reasoning failure."""
-        self._properties_panel.set_reasoning_progress(False)
-        self._show_concise_error("Reasoning Error", "XAI Reasoning failed:", error_msg)
+        """Handle reasoning generation failure."""
+        self.statusBar().showMessage("Reasoning generation failed.")
+        self._show_concise_error("XAI Error", "Reasoning generation failed:", error_msg)
 
     def _on_partial_analysis_result(self, partial_register, origin_project: Project | None = None) -> None:
         """Merge intermediate results from a single segment while analysis continues."""
@@ -1119,10 +1176,14 @@ class MainWindow(QMainWindow):
         for t in partial_register.threats:
             self._project.threat_register.add_threat(t)
             
+        if hasattr(partial_register, "new_vulnerabilities"):
+            for v in partial_register.new_vulnerabilities:
+                self._project.vulnerability_register.add_vulnerability(v)
         self._threat_panel.refresh()
         self._stride_threat_ledger.refresh()
         self._linddun_threat_ledger.refresh()
         self._risk_assessment_panel.refresh()
+        self._vulnerability_panel.refresh()
         
         total_threats = len(self._project.threat_register.threats)
         self.statusBar().showMessage(f"Analysis update: Project now has {total_threats} identified risks.")
@@ -1165,6 +1226,10 @@ class MainWindow(QMainWindow):
         for t in new_register.threats:
             if self._project.threat_register.add_threat(t):
                 added += 1
+                
+        if hasattr(new_register, "new_vulnerabilities"):
+            for v in new_register.new_vulnerabilities:
+                self._project.vulnerability_register.add_vulnerability(v)
 
         total = len(self._project.threat_register.threats)
         self.statusBar().showMessage(f"Analysis complete: {added} new threats added ({total} total in register).")
@@ -1173,6 +1238,7 @@ class MainWindow(QMainWindow):
         self._stride_threat_ledger.refresh()
         self._linddun_threat_ledger.refresh()
         self._risk_assessment_panel.refresh()
+        self._vulnerability_panel.refresh()
 
         save_project(self._project)
         QMessageBox.information(
@@ -1376,45 +1442,118 @@ class MainWindow(QMainWindow):
         
         img_w, img_h = 1920, 1080 
         if self._current_diagram:
-             image_path = Path(self._project.project_path) / self._current_diagram.file_path
-             pix = QPixmap(str(image_path))
-             if not pix.isNull():
-                 img_w, img_h = pix.width(), pix.height()
+            image_path = Path(self._project.project_path) / self._current_diagram.file_path
+            pix = QPixmap(str(image_path))
+            if not pix.isNull():
+                img_w, img_h = pix.width(), pix.height()
+                
+        tb_list = data.get("tb", data.get("trust_boundaries", []))
+        for dtb in tb_list:
+            bbox = dtb.get("b", dtb.get("bounding_box"))
+            if isinstance(bbox, list) and len(bbox) >= 4:
+                final_x = (float(bbox[0]) / 1000.0) * img_w
+                final_y = (float(bbox[1]) / 1000.0) * img_h
+                final_w = (float(bbox[2]) / 1000.0) * img_w
+                final_h = (float(bbox[3]) / 1000.0) * img_h
+            else:
+                final_x, final_y, final_w, final_h = 10, 10, img_w - 20, img_h - 20
+            
+            b = TrustBoundary(
+                name=str(dtb.get("n", dtb.get("name", "Trust Boundary")) or "Trust Boundary"),
+                x=final_x, y=final_y, width=final_w, height=final_h
+            )
+            self._project.boundaries.append(b)
 
+        from threatpilot.core.domain_models import Asset, AssetType
+
+        # Parse standalone assets if AI provided them
+        asset_list = data.get("a", [])
+        for ad in asset_list:
+             a_name = str(ad.get("n", ad.get("name", "Unknown Asset")) or "Unknown Asset")
+             a_type_raw = str(ad.get("t", ad.get("type", "Informational")) or "Informational")
+             a_type = AssetType.PHYSICAL if "phys" in a_type_raw.lower() else AssetType.INFORMATIONAL
+             a_desc = str(ad.get("d", ad.get("description", "")) or "")
+             
+             asset = Asset(name=a_name, type=a_type, description=a_desc)
+             self._project.assets.append(asset)
+
+        comp_count = 0
         for dc in comp_list:
-            bbox = dc.get("b", dc.get("bounding_box", [0, 0, 100, 100]))
-            if not isinstance(bbox, list) or len(bbox) < 4:
-                bbox = [0, 0, 100, 100]
+            bbox = dc.get("b", dc.get("bounding_box"))
+            if isinstance(bbox, list) and len(bbox) >= 4:
+                final_x = (float(bbox[0]) / 1000.0) * img_w
+                final_y = (float(bbox[1]) / 1000.0) * img_h
+                final_w = (float(bbox[2]) / 1000.0) * img_w
+                final_h = (float(bbox[3]) / 1000.0) * img_h
+            else:
+                # Default staggered position if no spatial proof provided
+                final_x = 50 + (comp_count % 5) * 120
+                final_y = 50 + (comp_count // 5) * 120
+                final_w = 100
+                final_h = 100
+                comp_count += 1
 
-            final_x = (float(bbox[0]) / 1000.0) * img_w
-            final_y = (float(bbox[1]) / 1000.0) * img_h
-            final_w = (float(bbox[2]) / 1000.0) * img_w
-            final_h = (float(bbox[3]) / 1000.0) * img_h
-
-            comp_type = dc.get("t", dc.get("type", "Service"))
-            low_type = str(comp_type).lower()
-            name = dc.get("n", dc.get("name", "Unknown AI Item"))
+            comp_type = str(dc.get("t", dc.get("type", "Service")) or "Service")
+            low_type = comp_type.lower()
+            name = str(dc.get("n", dc.get("name", "Unknown AI Item")) or "Unknown AI Item")
 
             if "boundary" in low_type or "trust" in low_type:
-                 b = TrustBoundary(
-                     name=name,
-                     x=final_x, y=final_y, width=final_w, height=final_h
-                 )
-                 self._project.boundaries.append(b)
+                # Already handled in tb_list, but fallback for models that put it in 'c'
+                if not any(b.name == name for b in self._project.boundaries):
+                    b = TrustBoundary(
+                        name=name,
+                        x=final_x, y=final_y, width=final_w, height=final_h
+                    )
+                    self._project.boundaries.append(b)
             else:
-                element_cls = dc.get("ec", dc.get("element_classification"))
-                if not element_cls:
-                     element_cls = "Process" if "service" in low_type else "DataStore" if "store" in low_type else "Entity"
+                et = str(dc.get("et", dc.get("element_type", "Process")) or "Process")
                 
-                asset_cls = dc.get("ac", dc.get("asset_classification"))
-                if not asset_cls:
-                     asset_cls = "Informational" if "store" in low_type or "data" in low_type else "Physical"
+                # Mirroring Element as an Asset (Physical by default)
+                # This ensures every diagram box is also tracked as a security asset
+                if not any(a.name == name for a in self._project.assets):
+                    asset = Asset(
+                        name=name,
+                        type=AssetType.PHYSICAL,
+                        description=f"Structural component ({comp_type})"
+                    )
+                    self._project.assets.append(asset)
+                
+                # Backward compatibility: if AI still uses 'at' (asset_type) in component
+                at = dc.get("at", dc.get("asset_type"))
+                if at and str(at).lower() != "none":
+                    a_type = AssetType.PHYSICAL if "phys" in str(at).lower() else AssetType.INFORMATIONAL
+                    # Check if already added
+                    if not any(a.name == name for a in self._project.assets):
+                        asset = Asset(
+                            name=name,
+                            type=a_type,
+                            description=f"Identified as {comp_type} node"
+                        )
+                        self._project.assets.append(asset)
+
+                # Set Trust Boundary ID if AI specified a name
+                tb_id = None
+                tb_name = dc.get("tb", dc.get("trust_boundary"))
+                if tb_name:
+                    tb_match = next((b for b in self._project.boundaries if b.name == tb_name), None)
+                    if tb_match:
+                        tb_id = tb_match.boundary_id
+                
+                # Spatial fallback: Check if component center is inside any boundary
+                if not tb_id:
+                    comp_rect = QRectF(final_x, final_y, final_w, final_h)
+                    comp_center = comp_rect.center()
+                    for b in self._project.boundaries:
+                        b_rect = QRectF(b.x, b.y, b.width, b.height)
+                        if b_rect.contains(comp_center):
+                            tb_id = b.boundary_id
+                            break
 
                 c = Component(
                     name=name,
                     type=comp_type,
-                    element_classification=element_cls,
-                    asset_classification=asset_cls,
+                    element_type=et,
+                    trust_boundary_id=tb_id,
                     x=final_x, y=final_y, width=final_w, height=final_h
                 )
                 self._project.components.append(c)
@@ -1447,8 +1586,8 @@ class MainWindow(QMainWindow):
             dst_id = _find_comp_id(dst_name)
 
             f = Flow(
-                name=df.get("n", df.get("name", "Data Flow")),
-                protocol=df.get("p", df.get("protocol", "HTTPS")),
+                name=str(df.get("n", df.get("name", "Data Flow")) or "Data Flow"),
+                protocol=str(df.get("p", df.get("protocol", "HTTPS")) or "HTTPS"),
                 source_id=src_id,
                 target_id=dst_id,
                 start_x=final_x,
@@ -1483,12 +1622,38 @@ class MainWindow(QMainWindow):
                 end = QPointF(f.end_x, f.end_y)
                 self._canvas.add_flow_arrow(start, end, label=f.name, data=f)
 
-    def _on_edit_components(self) -> None:
-        """Open the dialog to manage architectural entities and nodes."""
+    def _on_edit_elements(self) -> None:
+        """Open the dialog to manage architectural elements (Process, Data Store, etc.)."""
         if not self._project:
             return
             
-        dialog = EntitiesDialog(self._project, self._undo_stack, self)
+        from threatpilot.ui.architecture_dialog import ElementsDialog
+        dialog = ElementsDialog(self._project, self._undo_stack, self)
+        dialog.project_modified.connect(self._refresh_canvas_overlays)
+        dialog.project_modified.connect(self._on_project_modified)
+        dialog.exec()
+        
+        self._refresh_canvas_overlays()
+        save_project(self._project)
+
+    def _on_edit_assets(self) -> None:
+        """Open the dialog to manage system assets (Physical, Informational)."""
+        if not self._project:
+            return
+            
+        from threatpilot.ui.architecture_dialog import AssetsDialog
+        dialog = AssetsDialog(self._project, self._undo_stack, self)
+        dialog.project_modified.connect(self._on_project_modified)
+        dialog.exec()
+        save_project(self._project)
+
+    def _on_edit_boundaries(self) -> None:
+        """Open the dialog to manage trust boundaries (Zones, VPCs, etc.)."""
+        if not self._project:
+            return
+            
+        from threatpilot.ui.architecture_dialog import TrustBoundaryDialog
+        dialog = TrustBoundaryDialog(self._project, self._undo_stack, self)
         dialog.project_modified.connect(self._refresh_canvas_overlays)
         dialog.project_modified.connect(self._on_project_modified)
         dialog.exec()
@@ -1607,6 +1772,8 @@ class MainWindow(QMainWindow):
             self._linddun_threat_ledger.refresh()
         if hasattr(self, "_risk_assessment_panel"):
             self._risk_assessment_panel.refresh()
+        if hasattr(self, "_vulnerability_panel"):
+            self._vulnerability_panel.refresh()
 
     def append_ai_log(self, text: str, category: str = "INFO") -> None:
         """Add a timestamped entry to the AI Activity Log dock."""

@@ -72,15 +72,14 @@ def export_to_markdown(project: Project, output_path: str | Path) -> None:
                 severity = get_cvss_severity(t.cvss_score)
                 comp_details = []
                 if t.affected_components:
-                    names = [n.strip() for n in t.affected_components.split(",")]
-                    for name in names:
-                        for c in project.components:
-                            if c.name == name:
-                                s_name = sanitize_md(c.name)
-                                s_el = sanitize_md(c.element_classification)
-                                s_as = sanitize_md(c.asset_classification)
-                                comp_details.append(f"{s_name} ({s_el} / {s_as})")
-                                break
+                    haystack = (f"{t.affected_components} {t.title} {t.description}").lower()
+                    for c in project.components:
+                        if c.name == t.affected_components or c.name.lower() in haystack:
+                            s_name = sanitize_md(c.name)
+                            s_el = sanitize_md(c.element_type.value)
+                            s_as = sanitize_md(c.asset_type.value)
+                            comp_details.append(f"{s_name} ({s_el} / {s_as})")
+                            # Don't break if there are multiple components in the haystack
                 
                 lines.append(f"#### {status} {sanitize_md(t.title)}")
                 lines.append(f"- **Risk Level:** {severity} (Score: {t.cvss_score})")
@@ -97,8 +96,16 @@ def export_to_markdown(project: Project, output_path: str | Path) -> None:
                     lines.append(f"- **Affected Components:** {sanitize_md(t.affected_components)}")
                 
                 lines.append(f"- **Description:** {sanitize_md(t.description)}")
-                if t.vulnerabilities:
-                    lines.append(f"- **Vulnerabilities:** {sanitize_md(t.vulnerabilities)}")
+                v_ids = getattr(t, "vulnerability_ids", [])
+                if v_ids and hasattr(project, "vulnerability_register"):
+                    v_descs = []
+                    for vid in v_ids:
+                        v_obj = project.vulnerability_register.get_vulnerability(vid)
+                        if v_obj:
+                            v_descs.append(v_obj.description)
+                        else:
+                            v_descs.append(vid)
+                    lines.append(f"- **Vulnerabilities:** {sanitize_md('; '.join(v_descs))}")
                 lines.append(f"- **Impact:** {sanitize_md(t.impact)}")
                 lines.append(f"- **Mitigation Strategy:** {sanitize_md(t.mitigation)}")
                 

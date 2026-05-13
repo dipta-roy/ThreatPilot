@@ -102,9 +102,13 @@ class AISettingsDialog(QDialog):
         self._temperature.setSingleStep(0.1)
         self._temperature.setValue(self._config.temperature)
         self._form.addRow("Temperature:", self._temperature)
-        self._max_tokens = QSpinBox()
-        self._max_tokens.setRange(1, 128000)
-        self._max_tokens.setValue(self._config.max_tokens)
+        self._max_tokens = QComboBox()
+        self._max_tokens.addItems(["8192", "16384", "32768"])
+        token_val = str(self._config.max_tokens)
+        if token_val in ["8192", "16384", "32768"]:
+            self._max_tokens.setCurrentText(token_val)
+        else:
+            self._max_tokens.setCurrentText("16384")
         self._form.addRow("Max Tokens:", self._max_tokens)
         self._timeout = QSpinBox()
         self._timeout.setRange(1, 86400)
@@ -258,7 +262,7 @@ class AISettingsDialog(QDialog):
         self._config.model_name = self._model_name.currentText()
         self._config.api_key = self._gemini_key.text()
         self._config.temperature = self._temperature.value()
-        self._config.max_tokens = self._max_tokens.value()
+        self._config.max_tokens = int(self._max_tokens.currentText())
         self._config.timeout = self._timeout.value()
         self._config.autosave_interval = self._autosave.value()
         return self._config

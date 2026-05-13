@@ -34,11 +34,12 @@ from threatpilot.risk.cvss_calculator import (
 class ThreatEditDialog(QDialog):
     """Dialog for editing threat details with integrated CVSS calculator."""
 
-    def __init__(self, threat: Threat, component_names: list[str] = None, parent=None) -> None:
+    def __init__(self, threat: Threat, component_names: list[str] = None, project: Project | None = None, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Edit Security Threat")
+        self.setWindowTitle("Edit Risk")
         self.resize(700, 850)
         self._threat = threat
+        self._project = project
         self._component_names = component_names or []
         self._setup_ui()
         self._load_data()
@@ -127,7 +128,9 @@ class ThreatEditDialog(QDialog):
         self._vulnerabilities_input = QTextEdit()
         self._vulnerabilities_input.setAcceptRichText(False)
         self._vulnerabilities_input.setMinimumHeight(80)
-        remedy_layout.addRow("Technical Vulnerabilities:", self._vulnerabilities_input)
+        self._vulnerabilities_input.setReadOnly(True)
+        self._vulnerabilities_input.setToolTip("Vulnerabilities are managed globally in the Vulnerabilities tab.")
+        remedy_layout.addRow("Technical Vulnerabilities (Linked):", self._vulnerabilities_input)
 
         self._mitigation_input = QTextEdit()
         self._mitigation_input.setAcceptRichText(False)
@@ -148,12 +151,68 @@ class ThreatEditDialog(QDialog):
         if idx >= 0:
             self._category_combo.setCurrentIndex(idx)
             
-        self._affected_element_combo.setCurrentText(self._threat.affected_element or self._threat.affected_components)
-        self._affected_asset_combo.setCurrentText(self._threat.affected_asset or self._threat.affected_components)
+        # ── Resolve element/asset names for display consistency with the table ──
+        display_elem = self._threat.affected_element_type or ""
+        display_asset = self._threat.affected_asset_type or ""
+        
+        generic_types = ["data flow", "informational", "physical", "process", "data store", "external entity", "n/a", ""]
+        if (display_elem.lower() in generic_types or display_asset.lower() in generic_types) and self._project:
+            res_elem = ""
+            res_asset = ""
+            if self._threat.affected_components:
+                haystack = (f"{self._threat.affected_components} {self._threat.title} {self._threat.description}").lower()
+                for cname in [n.strip() for n in self._threat.affected_components.split(",")]:
+                    # 1. Exact flow name match
+                    flow_match = next((f for f in self._project.flows if f.name == cname), None)
+                    if flow_match:
+                        src = next((c for c in self._project.components if c.component_id == flow_match.source_id), None)
+                        dst = next((c for c in self._project.components if c.component_id == flow_match.target_id), None)
+                        res_elem = src.name if src else ""
+                        res_asset = dst.name if dst else ""
+                        break
+                    # 2. Exact component match
+                    comp_match = next((c for c in self._project.components if c.name == cname), None)
+                    if comp_match:
+                        res_elem = comp_match.name
+                        res_asset = comp_match.name
+                        break
+                # 3. Fuzzy flow match
+                if not res_elem:
+                    for f in self._project.flows:
+                        src = next((c for c in self._project.components if c.component_id == f.source_id), None)
+                        dst = next((c for c in self._project.components if c.component_id == f.target_id), None)
+                        if src and dst and src.name.lower() in haystack and dst.name.lower() in haystack:
+                            res_elem = src.name
+                            res_asset = dst.name
+                            break
+                # 4. Fuzzy component match
+                if not res_elem:
+                    for c in self._project.components:
+                        if c.name.lower() in haystack:
+                            res_elem = c.name
+                            res_asset = c.name
+                            break
+            
+            display_elem = display_elem if display_elem.lower() not in generic_types else (res_elem or display_elem)
+            display_asset = display_asset if display_asset.lower() not in generic_types else (res_asset or display_asset)
+
+        self._affected_element_combo.setCurrentText(display_elem)
+        self._affected_asset_combo.setCurrentText(display_asset)
         self._description_input.setPlainText(self._threat.description)
         self._impact_input.setPlainText(self._threat.impact)
         self._likelihood_spin.setValue(self._threat.likelihood)
-        self._vulnerabilities_input.setPlainText(self._threat.vulnerabilities)
+        
+        # Build vulnerability summary from IDs
+        v_texts = []
+        if self._project and self._project.vulnerability_register:
+            v_ids = getattr(self._threat, "vulnerability_ids", [])
+            for vid in v_ids:
+                v_obj = self._project.vulnerability_register.get_vulnerability(vid)
+                if v_obj:
+                    v_texts.append(f"\u2022 {v_obj.description}")
+        
+        self._vulnerabilities_input.setPlainText("\n".join(v_texts) if v_texts else "None linked.")
+        
         self._mitigation_input.setPlainText(self._threat.mitigation)
         if self._threat.cvss_vector:
             metrics = parse_cvss_vector(self._threat.cvss_vector)
@@ -184,14 +243,12 @@ class ThreatEditDialog(QDialog):
 
     def accept(self) -> None:
         self._threat.title = self._title_input.text()
-        self._threat.affected_element = self._affected_element_combo.currentText()
-        self._threat.affected_asset = self._affected_asset_combo.currentText()
-        self._threat.affected_components = self._threat.affected_element
+        self._threat.affected_element_type = self._affected_element_combo.currentText()
+        self._threat.affected_asset_type = self._affected_asset_combo.currentText()
         self._threat.description = self._description_input.toPlainText()
         self._threat.impact = self._impact_input.toPlainText()
         self._threat.likelihood = self._likelihood_spin.value()
         self._threat.cvss_score = float(self._cvss_score_display.text())
         self._threat.cvss_vector = self._cvss_vector_display.text()
-        self._threat.vulnerabilities = self._vulnerabilities_input.toPlainText()
         self._threat.mitigation = self._mitigation_input.toPlainText()
         super().accept()

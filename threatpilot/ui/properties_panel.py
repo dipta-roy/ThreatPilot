@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QTextEdit,
     QVBoxLayout,
     QWidget,
+    QCompleter,
 )
 from threatpilot.core.domain_models import Component, Flow, TrustBoundary
 from threatpilot.core.threat_model import Threat, STRIDECategory
@@ -47,6 +48,7 @@ class PropertiesPanel(QWidget):
         super().__init__(parent)
         self._current_item: Any | None = None
         self._undo_stack = undo_stack
+        self._project = None
         
         self._debounce_timer = QTimer(self)
         self._debounce_timer.setSingleShot(True)
@@ -94,6 +96,9 @@ class PropertiesPanel(QWidget):
         if self._current_item:
             self.set_item(self._current_item)
 
+    def set_project(self, project: object) -> None:
+        self._project = project
+
     def set_item(self, item: Any | None) -> None:
         """Load the properties of the given item into the panel.
 
@@ -118,17 +123,40 @@ class PropertiesPanel(QWidget):
             self._header.setText("Component Properties")
             self._add_text_row("Name:", "name", item.name)
             self._add_combo_row("Type:", "type", item.type, ["Service", "Datastore", "Asset", "Trustboundary"])
-            self._add_combo_row("Element Class:", "element_classification", item.element_classification, ["Entity", "Process", "DataStore", "DataFlow"])
-            self._add_combo_row("Asset Class:", "asset_classification", item.asset_classification, ["Physical", "Informational"])
+            
+            from threatpilot.core.domain_models import ElementType, AssetType
+            self._add_combo_row("Element Type:", "element_type", item.element_type.value, [e.value for e in ElementType])
+            self._add_combo_row("Asset Type:", "asset_type", item.asset_type.value, [a.value for a in AssetType])
+            
+            # Trust Boundary Selection
+            tb_options = ["None (External)"]
+            tb_map = {"None (External)": None}
+            if hasattr(self.parent(), "project") and self.parent().project:
+                for b in self.parent().project.boundaries:
+                    tb_options.append(b.name)
+                    tb_map[b.name] = b.boundary_id
+            
+            current_tb_name = "None (External)"
+            if item.trust_boundary_id and hasattr(self.parent(), "project") and self.parent().project:
+                tb = next((b for b in self.parent().project.boundaries if b.boundary_id == item.trust_boundary_id), None)
+                if tb: current_tb_name = tb.name
+            
+            self._add_combo_row("Trust Boundary:", "trust_boundary_id", current_tb_name, tb_options)
+
             self._add_textarea_row("Description:", "description", item.description)
             self._add_checkbox_row("High Value Asset:", "is_high_value_asset", item.is_high_value_asset)
             self._add_textarea_row("Criticality Desc:", "criticality_description", item.criticality_description)
+            self._add_checkbox_row("Out of Scope:", "is_out_of_scope", item.is_out_of_scope)
+            self._add_textarea_row("OOS Justification:", "out_of_scope_justification", item.out_of_scope_justification)
             self._add_readonly_row("ID:", item.component_id)
 
         elif isinstance(item, Flow):
             self._header.setText("Data Flow Properties")
             self._add_text_row("Protocol:", "protocol", item.protocol)
             self._add_textarea_row("Description:", "description", item.description)
+            self._add_checkbox_row("Bidirectional:", "is_bidirectional", item.is_bidirectional)
+            self._add_checkbox_row("Out of Scope:", "is_out_of_scope", item.is_out_of_scope)
+            self._add_textarea_row("OOS Justification:", "out_of_scope_justification", item.out_of_scope_justification)
             self._add_readonly_row("Source ID:", item.source_id)
             self._add_readonly_row("Target ID:", item.target_id)
             self._add_readonly_row("ID:", item.flow_id)
@@ -137,6 +165,20 @@ class PropertiesPanel(QWidget):
             self._header.setText("Trust Boundary Properties")
             self._add_text_row("Name:", "name", item.name)
             self._add_text_row("Type:", "type", item.type)
+            
+            parent_options = ["None"]
+            parent_map = {"None": None}
+            for b in self._project.boundaries:
+                if b.boundary_id != item.boundary_id:
+                    parent_options.append(b.name)
+                    parent_map[b.name] = b.boundary_id
+            
+            current_parent_name = "None"
+            if item.parent_boundary_id:
+                p = next((b for b in self._project.boundaries if b.boundary_id == item.parent_boundary_id), None)
+                if p: current_parent_name = p.name
+                
+            self._add_combo_row("Parent Boundary:", "parent_boundary_id", current_parent_name, parent_options, parent_map)
             self._add_textarea_row("Description:", "description", item.description)
             self._add_readonly_row("ID:", item.boundary_id)
 
@@ -147,7 +189,20 @@ class PropertiesPanel(QWidget):
             self._add_combo_row("Category:", "category", item.category.value, [c.value for c in STRIDECategory])
             
             self._add_textarea_row("Description:", "description", item.description)
-            self._add_textarea_row("Vulnerabilities:", "vulnerabilities", item.vulnerabilities)
+            
+            vuln_display = ""
+            if self._project and self._project.vulnerability_register:
+                v_ids = getattr(item, "vulnerability_ids", [])
+                v_texts = []
+                for vid in v_ids:
+                    v_obj = self._project.vulnerability_register.get_vulnerability(vid)
+                    if v_obj:
+                        v_texts.append(f"• {v_obj.description}")
+                    else:
+                        v_texts.append(f"• [Unknown: {vid}]")
+                vuln_display = "\n".join(v_texts)
+            
+            self._add_readonly_textarea_row("Vulnerabilities:", "vulnerability_ids", vuln_display)
             self._add_textarea_row("Impact:", "impact", item.impact)
             self._add_textarea_row("Mitigation:", "mitigation", item.mitigation)
             
@@ -158,8 +213,61 @@ class PropertiesPanel(QWidget):
             self._add_text_row("MITRE Technique:", "mitre_attack_technique", item.mitre_attack_technique)
             
             self._add_textarea_row("Affected Components:", "affected_components", item.affected_components)
-            self._add_text_row("Affected Element:", "affected_element", item.affected_element)
-            self._add_text_row("Affected Asset:", "affected_asset", item.affected_asset)
+            
+            # Get list of all component names for the dropdowns
+            component_names = []
+            if self._project:
+                component_names = sorted(list(set(
+                    [c.name for c in self._project.components]
+                )))
+            
+            # ── Resolve element/asset names for display consistency ──
+            display_elem = item.affected_element_type or ""
+            display_asset = item.affected_asset_type or ""
+            
+            generic_types = ["data flow", "informational", "physical", "process", "data store", "external entity", "n/a", ""]
+            if (display_elem.lower() in generic_types or display_asset.lower() in generic_types) and self._project:
+                res_elem = ""
+                res_asset = ""
+                if item.affected_components:
+                    haystack = (f"{item.affected_components} {item.title} {item.description}").lower()
+                    for cname in [n.strip() for n in item.affected_components.split(",")]:
+                        # 1. Exact flow name match
+                        flow_match = next((f for f in self._project.flows if f.name == cname), None)
+                        if flow_match:
+                            src = next((c for c in self._project.components if c.component_id == flow_match.source_id), None)
+                            dst = next((c for c in self._project.components if c.component_id == flow_match.target_id), None)
+                            res_elem = src.name if src else ""
+                            res_asset = dst.name if dst else ""
+                            break
+                        # 2. Exact component match
+                        comp_match = next((c for c in self._project.components if c.name == cname), None)
+                        if comp_match:
+                            res_elem = comp_match.name
+                            res_asset = comp_match.name
+                            break
+                    # 3. Fuzzy flow match
+                    if not res_elem:
+                        for f in self._project.flows:
+                            src = next((c for c in self._project.components if c.component_id == f.source_id), None)
+                            dst = next((c for c in self._project.components if c.component_id == f.target_id), None)
+                            if src and dst and src.name.lower() in haystack and dst.name.lower() in haystack:
+                                res_elem = src.name
+                                res_asset = dst.name
+                                break
+                    # 4. Fuzzy component match
+                    if not res_elem:
+                        for c in self._project.components:
+                            if c.name.lower() in haystack:
+                                res_elem = c.name
+                                res_asset = c.name
+                                break
+                
+                display_elem = display_elem if display_elem.lower() not in generic_types else (res_elem or display_elem)
+                display_asset = display_asset if display_asset.lower() not in generic_types else (res_asset or display_asset)
+
+            self._add_editable_combo_row("Affected Element:", "affected_element_type", display_elem, component_names)
+            self._add_editable_combo_row("Affected Asset:", "affected_asset_type", display_asset, component_names)
             self._add_checkbox_row("Accepted Risk:", "is_accepted_risk", item.is_accepted_risk)
             self._add_textarea_row("Acceptance Rationale:", "acceptance_justification", item.acceptance_justification)
             
@@ -273,6 +381,27 @@ class PropertiesPanel(QWidget):
         cb.currentTextChanged.connect(lambda text: self._on_field_changed(field, text))
         self._form_layout.addRow(label, cb)
 
+    def _add_editable_combo_row(self, label: str, field: str, value: str, options: list[str]) -> None:
+        """Add an editable dropdown with autocompletion support."""
+        cb = QComboBox()
+        cb.setEditable(True)
+        cb.addItems(options)
+        
+        # Add current value if not in options
+        if value and value not in options:
+            cb.addItem(value)
+            
+        cb.setCurrentText(value)
+        
+        # Add a completer for better UX
+        completer = QCompleter(options)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        cb.setCompleter(completer)
+        
+        cb.currentTextChanged.connect(lambda text: self._on_field_changed(field, text))
+        self._form_layout.addRow(label, cb)
+
     def _on_request_reasoning(self) -> None:
         """Inform the controller that reasoning analysis should be executed for the current threat."""
         from threatpilot.core.threat_model import Threat
@@ -305,6 +434,27 @@ class PropertiesPanel(QWidget):
             if field == "cvss_score":
                 value = round(float(value), 1)
                 old_val = round(float(old_val or 0.0), 1)
+
+            if field == "trust_boundary_id":
+                if value == "None (External)":
+                    value = None
+                elif hasattr(self.parent(), "project") and self.parent().project:
+                    tb = next((b for b in self.parent().project.boundaries if b.name == value), None)
+                    value = tb.boundary_id if tb else None
+
+            if field == "element_type":
+                from threatpilot.core.domain_models import ElementType
+                for et in ElementType:
+                    if et.value == value:
+                        value = et
+                        break
+            
+            if field == "asset_type":
+                from threatpilot.core.domain_models import AssetType
+                for at in AssetType:
+                    if at.value == value:
+                        value = at
+                        break
 
             if value != old_val:
                 self._is_panel_editing = True

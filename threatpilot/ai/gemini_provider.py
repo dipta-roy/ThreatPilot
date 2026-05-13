@@ -40,6 +40,8 @@ class GeminiProvider(AIProviderInterface):
         
         max_out = max(self.config.max_tokens, 16384)
         
+        mime_type = kwargs.get("response_mime_type", "application/json")
+        
         payload: Dict[str, Any] = {
             "contents": contents,
             "generationConfig": {
@@ -47,7 +49,7 @@ class GeminiProvider(AIProviderInterface):
                 "maxOutputTokens": max_out,
                 "topP": 0.95,
                 "topK": 40,
-                "responseMimeType": "application/json"
+                "responseMimeType": mime_type
             }
         }
 

@@ -230,9 +230,13 @@ def parse_threat_list(raw_response: str) -> List[Dict[str, Any]]:
             "attack_id": "mitre_attack_id",
             "mitre_technique": "mitre_attack_technique",
             "attack_technique": "mitre_attack_technique",
-            "affected_element": "affected_element",
-            "affected_item": "affected_element",
+            "affected_element": "affected_components",
+            "affected_item": "affected_components",
             "component": "affected_components",
+            "element_type": "affected_element_type",
+            "asset_type": "affected_asset_type",
+            "affected_element_type": "affected_element_type",
+            "affected_asset_type": "affected_asset_type",
             "score": "cvss_score",
             "cvss": "cvss_score",
             "vector": "cvss_vector",
@@ -242,12 +246,39 @@ def parse_threat_list(raw_response: str) -> List[Dict[str, Any]]:
             if k_ai in item and (k_model not in item or not item[k_model]):
                 item[k_model] = item[k_ai]
         
-        str_fields = ["title", "description", "mitigation", "vulnerabilities", "affected_components", "impact"]
+        str_fields = ["title", "description", "mitigation", "affected_components", "impact", "affected_element_type", "affected_asset_type"]
         for f in str_fields:
             if f in item and isinstance(item[f], list):
                 item[f] = ", ".join(str(x) for x in item[f])
             elif f in item:
                 item[f] = str(item[f])
+        
+        # Handle vulnerabilities list with robust key mapping
+        vuln_keys = ["vulnerabilities", "vulns", "exploits", "flaws", "security_vulnerabilities", "exploit_paths"]
+        raw_vulns = []
+        for vk in vuln_keys:
+            if vk in item:
+                val = item.get(vk)
+                if val:
+                    if isinstance(val, list):
+                        raw_vulns.extend(val)
+                    elif isinstance(val, str):
+                        raw_vulns.append(val)
+                # Keep the primary key for analyzer.py to find
+                item["vulnerabilities"] = raw_vulns
+
+        if not raw_vulns:
+            # Fallback: if no explicit vulnerabilities, use description as a baseline
+            raw_vulns = [{"description": item.get("description", "Potential vulnerability identified."), "mitigation": item.get("mitigation", "")}]
+            item["vulnerabilities"] = raw_vulns
+
+        processed_vulns = []
+        for v in raw_vulns:
+            if isinstance(v, dict):
+                processed_vulns.append(v)
+            elif isinstance(v, str):
+                processed_vulns.append({"description": v, "mitigation": item.get("mitigation", "")})
+        item["vulnerabilities"] = processed_vulns
 
         cat_val = item.get("category", "Information Disclosure")
         item["category"] = map_category(str(cat_val))

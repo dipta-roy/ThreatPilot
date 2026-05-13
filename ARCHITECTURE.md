@@ -21,6 +21,7 @@ graph TD
     subgraph "Core Logic"
         PM[Project Manager] --> DM[Domain Models]
         PM --> TM[Threat Model]
+        PM --> VR[Vulnerability Register]
         US[Undo System] --> MW
         DFD[DFD Converter]
     end
@@ -60,7 +61,8 @@ The UI is built using Python and PySide6, providing a desktop-native experience 
 Handles the underlying logic of threat modeling and state management.
 - **Domain Models**: Pydantic-based schemas for architectural elements (Entity, Process, Data Store, Flow).
 - **Threat Model**: Implements both **STRIDE** (Security) and **LINDDUN** (Privacy) categorization, CVSS 3.1 scoring, and **MITRE ATT&CK** technique mapping.
-- **Project Manager**: Handles lifecycle of `.project.json` files, ensuring data persistence and integrity.
+- **Vulnerability Register**: A global repository of identified security flaws. Decouples technical vulnerabilities from high-level threats, allowing for standardized remediation tracking across multiple elements.
+- **Project Manager**: Orchestrates project lifecycles using a **Multi-File Persistence** strategy (partitioning data into `project.json`, `architecture.json`, `threats.json`, and `vulnerabilities.json`).
 - **Undo System**: Uses `QUndoStack` for multi-action undo/redo capabilities.
 
 ### 3. AI Analysis Engine
@@ -102,6 +104,7 @@ A sophisticated pipeline that transforms architectural diagrams into structured 
 5. **Sync**: The `MainWindow` updates the `Threat Register` and refreshes the UI.
 
 ### Project Persistence
-- All states are serialized into JSON.
-- `ProjectManager` ensures that manual overrides to AI-generated threats are preserved during re-analysis.
-- Delta updates maintain undo/redo consistency during heavy modeling sessions.
+- **State Serialization**: All project states are serialized into structured JSON.
+- **Data Partitioning**: Uses a sidecar file strategy to prevent data bloat and ensure Git-friendly diffs. Core metadata resides in `project.json`, while technical data is stored in specialized sidecars.
+- **Persistence Integrity**: `ProjectManager` ensures that manual overrides to AI-generated threats are preserved during re-analysis.
+- **Delta Updates**: Optimized save operations maintain undo/redo consistency during heavy modeling sessions.

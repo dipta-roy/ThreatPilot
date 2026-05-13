@@ -122,8 +122,26 @@ class RiskAssessmentPanel(QWidget):
         self._is_dark_theme = is_dark
         self.refresh()
 
-    def refresh(self) -> None:
-        """Clear and rebuild the table with the latest joined data."""
+    def refresh(self, scroll_to_row: int = -1) -> None:
+        """Clear and rebuild the table with the latest joined data.
+
+        Args:
+            scroll_to_row: If >= 0, scroll to and select this row after
+                rebuilding. When -1 (default), the previous scroll
+                position is preserved instead.
+        """
+        # ── Consume any pending scroll target set by _edit_threat ──
+        if scroll_to_row < 0:
+            pending = getattr(self, "_pending_scroll_row", -1)
+            if pending >= 0:
+                scroll_to_row = pending
+            self._pending_scroll_row = -1
+
+        # ── Preserve scroll position & selection before clearing ──
+        v_scroll = self._table.verticalScrollBar().value()
+        h_scroll = self._table.horizontalScrollBar().value()
+        prev_row = self._table.currentRow()
+
         self._table.setRowCount(0)
         if not self._project or not self._project.threat_register:
             return
@@ -137,12 +155,63 @@ class RiskAssessmentPanel(QWidget):
             id_item.setToolTip("Double click to edit")
             self._table.setItem(row, 0, id_item)
             
-            elem = t.affected_element or t.affected_components or "N/A"
-            asset = t.affected_asset or t.affected_components or "N/A"
+            # Determine display names. Prioritize manual user overrides in the specific fields.
+            elem = t.affected_element_type or ""
+            asset = t.affected_asset_type or ""
+            
+            # If fields are empty or contain generic AI types, attempt to resolve from narrative
+            generic_types = ["data flow", "informational", "physical", "process", "data store", "external entity", "n/a", ""]
+            if elem.lower() in generic_types or asset.lower() in generic_types:
+                res_elem = ""
+                res_asset = ""
+                if t.affected_components:
+                    haystack = (f"{t.affected_components} {t.title} {t.description}").lower()
+                    for cname in [n.strip() for n in t.affected_components.split(",")]:
+                        # 1. Exact flow name match
+                        flow_match = next((f for f in self._project.flows if f.name == cname), None)
+                        if flow_match:
+                            src = next((c for c in self._project.components if c.component_id == flow_match.source_id), None)
+                            dst = next((c for c in self._project.components if c.component_id == flow_match.target_id), None)
+                            res_elem = src.name if src else ""
+                            res_asset = dst.name if dst else ""
+                            break
+                        # 2. Exact component name match
+                        comp_match = next((c for c in self._project.components if c.name == cname), None)
+                        if comp_match:
+                            res_elem = comp_match.name
+                            res_asset = comp_match.name
+                            break
+                    # 3. Fuzzy flow match
+                    if not res_elem:
+                        for f in self._project.flows:
+                            src = next((c for c in self._project.components if c.component_id == f.source_id), None)
+                            dst = next((c for c in self._project.components if c.component_id == f.target_id), None)
+                            if src and dst and src.name.lower() in haystack and dst.name.lower() in haystack:
+                                res_elem = src.name
+                                res_asset = dst.name
+                                break
+                    # 4. Fuzzy component match
+                    if not res_elem:
+                        for c in self._project.components:
+                            if c.name.lower() in haystack:
+                                res_elem = c.name
+                                res_asset = c.name
+                                break
+                
+                # Only overwrite if resolution found something better
+                elem = elem if elem.lower() not in generic_types else (res_elem or elem or t.affected_components or "N/A")
+                asset = asset if asset.lower() not in generic_types else (res_asset or asset or t.affected_components or "N/A")
             self._table.setItem(row, 1, QTableWidgetItem(elem))
             self._table.setItem(row, 2, QTableWidgetItem(asset))
             self._table.setItem(row, 3, QTableWidgetItem(t.title))
-            self._table.setItem(row, 4, QTableWidgetItem(t.vulnerabilities or "N/A"))
+            v_texts = []
+            v_ids = getattr(t, "vulnerability_ids", [])
+            for vid in v_ids:
+                v_obj = self._project.vulnerability_register.get_vulnerability(vid)
+                if v_obj:
+                    v_texts.append(v_obj.description)
+            vuln_summary = "; ".join(v_texts) if v_texts else "N/A"
+            self._table.setItem(row, 4, QTableWidgetItem(vuln_summary))
             self._table.setItem(row, 5, QTableWidgetItem(t.description))
             self._table.setItem(row, 6, QTableWidgetItem(t.impact))
             self._table.setItem(row, 7, QTableWidgetItem(t.cvss_vector or "N/A"))
@@ -170,15 +239,15 @@ class RiskAssessmentPanel(QWidget):
                     lbl.setStyleSheet("background-color: #30363d; color: white; border-radius: 4px; padding: 3px;")
             else:
                 if s_upper == "CRITICAL":
-                    lbl.setStyleSheet("background-color: #ffebe9; color: #cf222e; border-radius: 4px; padding: 3px;")
+                    lbl.setStyleSheet("background-color: #cf222e; color: white; border-radius: 4px; padding: 3px;")
                 elif s_upper == "HIGH":
-                    lbl.setStyleSheet("background-color: #fff1e5; color: #af4e00; border-radius: 4px; padding: 3px;")
+                    lbl.setStyleSheet("background-color: #af4e00; color: white; border-radius: 4px; padding: 3px;")
                 elif s_upper == "MEDIUM":
-                    lbl.setStyleSheet("background-color: #fff8c5; color: #9a6700; border-radius: 4px; padding: 3px;")
+                    lbl.setStyleSheet("background-color: #9a6700; color: white; border-radius: 4px; padding: 3px;")
                 elif s_upper == "LOW":
-                    lbl.setStyleSheet("background-color: #ddf4ff; color: #0969da; border-radius: 4px; padding: 3px;")
+                    lbl.setStyleSheet("background-color: #0969da; color: white; border-radius: 4px; padding: 3px;")
                 else:
-                    lbl.setStyleSheet("background-color: #f6f8fa; color: #24292f; border-radius: 4px; padding: 3px;")
+                    lbl.setStyleSheet("background-color: #f6f8fa; color: #57606a; border-radius: 4px; padding: 3px;")
 
             container = QWidget()
             layout = QHBoxLayout(container)
@@ -218,15 +287,39 @@ class RiskAssessmentPanel(QWidget):
             
         self._table.resizeRowsToContents()
 
+        # ── Restore scroll position & selection after rebuild ──
+        if scroll_to_row >= 0 and scroll_to_row < self._table.rowCount():
+            self._table.selectRow(scroll_to_row)
+            self._table.scrollToItem(
+                self._table.item(scroll_to_row, 0),
+                QTableWidget.ScrollHint.PositionAtCenter,
+            )
+        else:
+            # Clamp previous row to the new row count
+            if prev_row >= 0 and prev_row < self._table.rowCount():
+                self._table.selectRow(prev_row)
+            self._table.verticalScrollBar().setValue(v_scroll)
+            self._table.horizontalScrollBar().setValue(h_scroll)
+
 
     def _edit_threat(self, threat: Threat) -> None:
         """Open the edit dialog for the selected threat."""
         if self._project:
-            component_names = [c.name for c in self._project.components]
-            component_names.extend([f.name for f in self._project.flows])
+            component_names = sorted(list(set(
+                [c.name for c in self._project.components]
+            )))
 
-        dialog = ThreatEditDialog(threat, component_names=component_names, parent=self)
+        dialog = ThreatEditDialog(threat, component_names=component_names, project=self._project, parent=self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
+            # Determine the row index of the edited threat so we can
+            # scroll back to it after the save-triggered refresh.
+            edited_row = -1
+            if self._project and self._project.threat_register:
+                try:
+                    edited_row = self._project.threat_register.threats.index(threat)
+                except ValueError:
+                    edited_row = -1
+            self._pending_scroll_row = edited_row
             self.threat_edited.emit()
 
     def _on_add_threat(self) -> None:
