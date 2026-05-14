@@ -124,5 +124,5 @@ Download Code Verification Certificate: [Dipta Roy - Code Verification Certifica
 
 Once verified,
 ```
-Run ThreatPilot-1.1.0-win64.msi and install the application.
+Run ThreatPilot-1.4.1-win64.msi and install the application.
 ```

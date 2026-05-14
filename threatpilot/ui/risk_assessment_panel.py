@@ -61,11 +61,23 @@ class RiskAssessmentPanel(QWidget):
         self._btn_add_threat.clicked.connect(self._on_add_threat)
         self._btn_add_threat.setEnabled(False)
         header_layout.addWidget(self._btn_add_threat)
+
+        self._btn_bulk_del = QPushButton("Delete Selected")
+        self._btn_bulk_del.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_bulk_del.clicked.connect(self._on_bulk_delete)
+        self._btn_bulk_del.setEnabled(False)
+        header_layout.addWidget(self._btn_bulk_del)
+
+        from PySide6.QtWidgets import QCheckBox
+        self._select_all = QCheckBox("Select All")
+        self._select_all.clicked.connect(self._on_select_all)
+        header_layout.addWidget(self._select_all)
         
         layout.addLayout(header_layout)
 
-        self._table = QTableWidget(0, 12)
+        self._table = QTableWidget(0, 13)
         self._table.setHorizontalHeaderLabels([
+            "",
             "SL #",
             "Element / Component Name",
             "Asset / Component Name",
@@ -87,13 +99,14 @@ class RiskAssessmentPanel(QWidget):
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setDefaultSectionSize(150)
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Interactive)
-        self._table.setColumnWidth(5, 300)
-        header.setSectionResizeMode(10, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(11, QHeaderView.ResizeMode.Fixed)
-        self._table.setColumnWidth(11, 185)
+        self._table.setColumnWidth(0, 30) # Checkbox
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Interactive)
+        self._table.setColumnWidth(6, 300)
+        header.setSectionResizeMode(11, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(12, QHeaderView.ResizeMode.Fixed)
+        self._table.setColumnWidth(12, 185)
         self._table.setAlternatingRowColors(True)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -115,6 +128,7 @@ class RiskAssessmentPanel(QWidget):
         """Load data from the project into the assessment table."""
         self._project = project
         self._btn_add_threat.setEnabled(project is not None)
+        self._btn_bulk_del.setEnabled(project is not None)
         self.refresh()
 
     def set_theme(self, is_dark: bool) -> None:
@@ -151,9 +165,15 @@ class RiskAssessmentPanel(QWidget):
         self._table.setRowCount(len(threats))
 
         for row, t in enumerate(threats):
+            chk_item = QTableWidgetItem()
+            chk_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+            chk_item.setCheckState(Qt.CheckState.Unchecked)
+            self._table.setItem(row, 0, chk_item)
+
             id_item = QTableWidgetItem(str(row + 1))
             id_item.setToolTip("Double click to edit")
-            self._table.setItem(row, 0, id_item)
+            id_item.setData(Qt.ItemDataRole.UserRole, t)
+            self._table.setItem(row, 1, id_item)
             
             # Determine display names. Prioritize manual user overrides in the specific fields.
             elem = t.affected_element_type or ""
@@ -201,9 +221,9 @@ class RiskAssessmentPanel(QWidget):
                 # Only overwrite if resolution found something better
                 elem = elem if elem.lower() not in generic_types else (res_elem or elem or t.affected_components or "N/A")
                 asset = asset if asset.lower() not in generic_types else (res_asset or asset or t.affected_components or "N/A")
-            self._table.setItem(row, 1, QTableWidgetItem(elem))
-            self._table.setItem(row, 2, QTableWidgetItem(asset))
-            self._table.setItem(row, 3, QTableWidgetItem(t.title))
+            self._table.setItem(row, 2, QTableWidgetItem(elem))
+            self._table.setItem(row, 3, QTableWidgetItem(asset))
+            self._table.setItem(row, 4, QTableWidgetItem(t.title))
             v_texts = []
             v_ids = getattr(t, "vulnerability_ids", [])
             for vid in v_ids:
@@ -211,15 +231,15 @@ class RiskAssessmentPanel(QWidget):
                 if v_obj:
                     v_texts.append(v_obj.description)
             vuln_summary = "; ".join(v_texts) if v_texts else "N/A"
-            self._table.setItem(row, 4, QTableWidgetItem(vuln_summary))
-            self._table.setItem(row, 5, QTableWidgetItem(t.description))
-            self._table.setItem(row, 6, QTableWidgetItem(t.impact))
-            self._table.setItem(row, 7, QTableWidgetItem(t.cvss_vector or "N/A"))
-            self._table.setItem(row, 8, QTableWidgetItem(f"{t.likelihood}/5"))
+            self._table.setItem(row, 5, QTableWidgetItem(vuln_summary))
+            self._table.setItem(row, 6, QTableWidgetItem(t.description))
+            self._table.setItem(row, 7, QTableWidgetItem(t.impact))
+            self._table.setItem(row, 8, QTableWidgetItem(t.cvss_vector or "N/A"))
+            self._table.setItem(row, 9, QTableWidgetItem(f"{t.likelihood}/5"))
             severity = get_cvss_severity(t.cvss_score)
             sev_text = f"{severity} ({t.cvss_score})"
             sev_item = QTableWidgetItem(sev_text)
-            self._table.setItem(row, 9, sev_item)
+            self._table.setItem(row, 10, sev_item)
             lbl = QLabel(sev_text)
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
@@ -254,8 +274,8 @@ class RiskAssessmentPanel(QWidget):
             layout.setContentsMargins(4, 2, 4, 2)
             layout.addWidget(lbl)
             container.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-            self._table.setCellWidget(row, 9, container)
-            self._table.setItem(row, 10, QTableWidgetItem(t.mitigation))
+            self._table.setCellWidget(row, 10, container)
+            self._table.setItem(row, 11, QTableWidgetItem(t.mitigation))
             actions_container = QWidget()
             actions_layout = QHBoxLayout(actions_container)
             actions_layout.setContentsMargins(4, 2, 4, 2)
@@ -279,9 +299,9 @@ class RiskAssessmentPanel(QWidget):
                     QPushButton:hover { background-color: #d73a49; color: white; }
                 """)
                 
-            del_btn.clicked.connect(lambda checked=False, tid=t.threat_id: self._delete_threat(tid))
+            del_btn.clicked.connect(lambda checked=False, tid=t.threat_id: self._on_delete_threat_id(tid))
             actions_layout.addWidget(del_btn)
-            self._table.setCellWidget(row, 11, actions_container)
+            self._table.setCellWidget(row, 12, actions_container)
             self._table.setVerticalHeaderItem(row, QTableWidgetItem(str(row + 1)))
             self._table.verticalHeaderItem(row).setToolTip("Double click to edit")
             
@@ -332,6 +352,46 @@ class RiskAssessmentPanel(QWidget):
         self.refresh()
         self._edit_threat(new_threat)
         self.threat_edited.emit()
+
+    def _on_select_all(self, checked: bool) -> None:
+        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+        self._table.blockSignals(True)
+        for row in range(self._table.rowCount()):
+            item = self._table.item(row, 0)
+            if item:
+                item.setCheckState(state)
+        self._table.blockSignals(False)
+
+    def _on_bulk_delete(self) -> None:
+        if not self._project or not self._project.threat_register:
+            return
+            
+        to_delete_ids = []
+        for row in range(self._table.rowCount()):
+            chk_item = self._table.item(row, 0)
+            if chk_item and chk_item.checkState() == Qt.CheckState.Checked:
+                id_item = self._table.item(row, 1)
+                threat = id_item.data(Qt.ItemDataRole.UserRole)
+                if isinstance(threat, Threat):
+                    to_delete_ids.append(threat.threat_id)
+        
+        if not to_delete_ids:
+            return
+            
+        reply = QMessageBox.question(
+            self, "Bulk Delete",
+            f"Are you sure you want to delete {len(to_delete_ids)} selected threats?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            for tid in to_delete_ids:
+                self._project.threat_register.remove_threat(tid)
+            self.refresh()
+            self.threat_edited.emit()
+
+    def _on_delete_threat_id(self, threat_id: str) -> None:
+        # Simple wrapper for consistency with my lambda update
+        self._delete_threat(threat_id)
 
     def _delete_threat(self, threat_id: str) -> None:
         """Delete the specified threat after confirmation."""

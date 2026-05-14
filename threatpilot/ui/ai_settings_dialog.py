@@ -205,18 +205,23 @@ class AISettingsDialog(QDialog):
     def _start_ollama_fetch(self, url: str) -> None:
         """Spin up a background thread to retrieve available Ollama models."""
         # Stop existing fetch if any
-        if self._fetch_thread and self._fetch_thread.isRunning():
+        if self._fetch_thread:
             try:
-                # Disconnect signals to prevent the old worker from updating the UI
-                if self._fetch_worker:
-                    self._fetch_worker.finished.disconnect()
-            except Exception:
+                if self._fetch_thread.isRunning():
+                    # Disconnect signals to prevent the old worker from updating the UI
+                    if self._fetch_worker:
+                        try:
+                            self._fetch_worker.finished.disconnect()
+                        except (Exception, RuntimeError):
+                            pass
+                    self._fetch_thread.quit()
+                    self._fetch_thread.wait(500)
+                    if self._fetch_thread.isRunning():
+                        self._fetch_thread.terminate()
+                        self._fetch_thread.wait()
+            except RuntimeError:
+                # C++ object already deleted
                 pass
-            self._fetch_thread.quit()
-            self._fetch_thread.wait(500)
-            if self._fetch_thread.isRunning():
-                self._fetch_thread.terminate()
-                self._fetch_thread.wait()
 
         self._fetch_thread = QThread(self)
         self._fetch_worker = _OllamaFetchWorker(url)
@@ -229,8 +234,16 @@ class AISettingsDialog(QDialog):
         self._fetch_worker.finished.connect(self._fetch_thread.quit)
         self._fetch_worker.finished.connect(self._fetch_worker.deleteLater)
         self._fetch_thread.finished.connect(self._fetch_thread.deleteLater)
+        
+        # Nullify references when finished to prevent accessing deleted objects
+        self._fetch_thread.finished.connect(self._on_fetch_cleanup)
 
         self._fetch_thread.start()
+
+    def _on_fetch_cleanup(self) -> None:
+        """Clear references to finished background tasks."""
+        self._fetch_thread = None
+        self._fetch_worker = None
 
     def _on_ollama_models_ready(self, models: list) -> None:
         """Called on the UI thread once the background fetch finishes."""

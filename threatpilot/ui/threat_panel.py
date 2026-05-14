@@ -92,6 +92,12 @@ class ThreatPanel(QWidget):
         self._btn_delete.clicked.connect(self._on_delete_threat)
         toolbar_layout.addWidget(self._btn_delete)
 
+        from PySide6.QtWidgets import QCheckBox
+        self._select_all = QCheckBox("Select All")
+        self._select_all.clicked.connect(self._on_select_all)
+        self._select_all.setStyleSheet("color: #8b949e; margin-left: 10px;")
+        toolbar_layout.addWidget(self._select_all)
+
         btn_text = "Run AI Analysis"
         if self._filter_mode == "STRIDE":
             btn_text = "Run STRIDE Analysis"
@@ -150,8 +156,9 @@ class ThreatPanel(QWidget):
         layout.addWidget(self._summary_label)
 
         # --- Table ---
-        self._table = QTableWidget(0, 6)
+        self._table = QTableWidget(0, 7)
         self._table.setHorizontalHeaderLabels([
+            "",
             "SL #",
             "Category",
             "Severity",
@@ -162,12 +169,13 @@ class ThreatPanel(QWidget):
 
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self._table.setColumnWidth(1, 160)
-        self._table.setColumnWidth(2, 100)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        self._table.setColumnWidth(4, 200)
-        self._table.setColumnWidth(5, 100)
+        self._table.setColumnWidth(0, 30) # Checkbox column
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self._table.setColumnWidth(2, 160)
+        self._table.setColumnWidth(3, 100)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        self._table.setColumnWidth(5, 200)
+        self._table.setColumnWidth(6, 100)
 
         self._table.setHorizontalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
         self._table.setVerticalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
@@ -276,11 +284,17 @@ class ThreatPanel(QWidget):
             sev_label = self._get_severity_label(threat.cvss_score)
             cat_name = target_cat.name.upper().replace("_PRIVACY", "")
 
+            # Checkbox
+            chk_item = QTableWidgetItem()
+            chk_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+            chk_item.setCheckState(Qt.CheckState.Unchecked)
+            self._table.setItem(row, 0, chk_item)
+
             # SL #
             sl_item = QTableWidgetItem(str(row + 1))
             sl_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             sl_item.setData(Qt.ItemDataRole.UserRole, threat)
-            self._table.setItem(row, 0, sl_item)
+            self._table.setItem(row, 1, sl_item)
 
             # Category
             cat_item = QTableWidgetItem(cat_name)
@@ -289,7 +303,7 @@ class ThreatPanel(QWidget):
                 cat_item.setForeground(QColor("#58a6ff"))
             else:
                 cat_item.setForeground(QColor("#0969da"))
-            self._table.setItem(row, 1, cat_item)
+            self._table.setItem(row, 2, cat_item)
 
             # Severity (coloured table item)
             sev_item = QTableWidgetItem(sev_label)
@@ -298,7 +312,7 @@ class ThreatPanel(QWidget):
             bg, fg = self._severity_colors(sev_label, is_dark)
             sev_item.setBackground(bg)
             sev_item.setForeground(fg)
-            self._table.setItem(row, 2, sev_item)
+            self._table.setItem(row, 3, sev_item)
 
             # Title
             title_text = threat.title
@@ -307,15 +321,15 @@ class ThreatPanel(QWidget):
             title_item = QTableWidgetItem(title_text)
             if threat.is_accepted_risk:
                 title_item.setForeground(QColor(Qt.GlobalColor.gray))
-            self._table.setItem(row, 3, title_item)
+            self._table.setItem(row, 4, title_item)
 
             # Affected Component
-            self._table.setItem(row, 4, QTableWidgetItem(threat.affected_components or "N/A"))
+            self._table.setItem(row, 5, QTableWidgetItem(threat.affected_components or "N/A"))
 
             # CVSS Score
             score_item = QTableWidgetItem(f"{threat.cvss_score:.1f}")
             score_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._table.setItem(row, 5, score_item)
+            self._table.setItem(row, 6, score_item)
 
 
 
@@ -395,25 +409,59 @@ class ThreatPanel(QWidget):
         self.threat_added.emit(new_threat)
         self.threat_selected.emit(new_threat)
 
+    def _on_select_all(self, checked: bool) -> None:
+        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+        self._table.blockSignals(True)
+        for row in range(self._table.rowCount()):
+            item = self._table.item(row, 0)
+            if item:
+                item.setCheckState(state)
+        self._table.blockSignals(False)
+
     def _on_delete_threat(self) -> None:
-        """Remove the currently selected threat from the register."""
-        row = self._table.currentRow()
-        if row < 0:
+        """Remove the selected threat(s) from the register."""
+        if self._register is None:
             return
 
-        item = self._table.item(row, 0)
-        if not item:
+        to_delete = []
+        for row in range(self._table.rowCount()):
+            chk_item = self._table.item(row, 0)
+            if chk_item and chk_item.checkState() == Qt.CheckState.Checked:
+                sl_item = self._table.item(row, 1)
+                threat = sl_item.data(Qt.ItemDataRole.UserRole)
+                if isinstance(threat, Threat):
+                    to_delete.append(threat)
+        
+        # Fallback to current row if none checked
+        if not to_delete:
+            row = self._table.currentRow()
+            if row >= 0:
+                sl_item = self._table.item(row, 1)
+                threat = sl_item.data(Qt.ItemDataRole.UserRole)
+                if isinstance(threat, Threat):
+                    to_delete.append(threat)
+        
+        if not to_delete:
             return
-        threat = item.data(Qt.ItemDataRole.UserRole)
-        if isinstance(threat, Threat) and self._register:
-            self._register.remove_threat(threat.threat_id)
+
+        reply = QMessageBox.question(
+            self,
+            "Delete Threats",
+            f"Are you sure you want to delete {len(to_delete)} selected threat(s)?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            for threat in to_delete:
+                self._register.remove_threat(threat.threat_id)
+                self.threat_removed.emit(threat.threat_id)
             self.refresh()
-            self.threat_removed.emit(threat.threat_id)
+            self._select_all.setCheckState(Qt.CheckState.Unchecked)
 
     def _on_item_clicked(self, item: QTableWidgetItem) -> None:
         """Handle selection of a threat row and emit signal."""
         row = item.row()
-        sl_item = self._table.item(row, 0)
+        sl_item = self._table.item(row, 1)
         if sl_item:
             threat = sl_item.data(Qt.ItemDataRole.UserRole)
             if isinstance(threat, Threat):

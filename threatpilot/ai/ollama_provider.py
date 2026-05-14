@@ -154,6 +154,8 @@ class OllamaProvider(AIProviderInterface):
                         error_msg = error_data.get("error", "")
                         if "out of memory" in error_msg.lower():
                             raise RuntimeError(f"Ollama Out Of Memory: The model '{self.config.model_name}' exceeded available VRAM. Try a smaller model (llava:7b) or close other GPU-intensive apps.")
+                        if "ggml_assert" in error_msg.lower():
+                            raise RuntimeError(f"Ollama Model Assertion Error: {error_msg}\n\nThis often happens when sending images to a NON-VISION model (like gemma2 or llama3) or if the image resolution is incompatible with the model's KV cache. Please ensure you are using a vision-capable model (llava, paligemma, etc.).")
                         if error_msg:
                             raise RuntimeError(f"Ollama Server Failure: {error_msg}")
                     except (ValueError, TypeError, json.JSONDecodeError):

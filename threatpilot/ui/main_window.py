@@ -277,10 +277,22 @@ class AIVisionWorker(QThread):
             response_text, meta = loop.run_until_complete(run_vision())
             
             usage = meta.get("usage", {})
-            finish_reason = meta.get("finish_reason", "UNKNOWN")
+            # Robust metadata extraction for both Gemini and Ollama
+            if "prompt_eval_count" in usage:
+                # Ollama format
+                in_tokens = usage.get("prompt_eval_count", 0)
+                out_tokens = usage.get("eval_count", 0)
+                total_tokens = in_tokens + out_tokens
+                finish_reason = usage.get("done_reason", "UNKNOWN")
+            else:
+                # Gemini / Default format
+                in_tokens = usage.get('promptTokenCount', 0)
+                out_tokens = usage.get('candidatesTokenCount', 0)
+                total_tokens = usage.get('total_token_count', usage.get('totalTokenCount', 0))
+                finish_reason = meta.get("finish_reason", "UNKNOWN")
             
             self.response_ready.emit(response_text)
-            log_meta = f"METADATA: Tokens [In: {usage.get('promptTokenCount', 0)} | Out: {usage.get('candidatesTokenCount', 0)} | Total: {usage.get('total_token_count', usage.get('totalTokenCount', 0))}]"
+            log_meta = f"METADATA: Tokens [In: {in_tokens} | Out: {out_tokens} | Total: {total_tokens}]"
             log_meta += f" | FinishReason: {finish_reason}"
             self.response_ready.emit(log_meta)
             
@@ -1514,9 +1526,11 @@ class MainWindow(QMainWindow):
             "llava" in model_name or 
             "vl" in model_name or 
             "vision" in model_name or 
-            "gemma" in model_name or
+            "paligemma" in model_name or 
+            "gemma" in model_name or      # User indicated gemma4 supports vision
             "moondream" in model_name or
             "minicpm" in model_name or
+            "pixtral" in model_name or
             prov_type == "gemini"
         )
         
@@ -1550,12 +1564,24 @@ class MainWindow(QMainWindow):
             self._ai_log_dock.raise_()
             self._worker_ai_vision.start()
         else:
-            QMessageBox.warning(self, "Detection", "Traditional Computer Vision detection is disabled as OpenCV has been removed. Please configure an AI Vision provider in AI Settings.")
+            reason = "The selected model does not appear to support vision (e.g. gemma, llama3)." if prov_type == "ollama" else "The provider is not correctly configured."
+            QMessageBox.warning(self, "Vision Detection Unavailable", 
+                f"{reason}\n\n"
+                "To use AI-driven detection, please ensure:\n"
+                "1. You have selected a vision-capable model (like llava, qwen2-vl, or paligemma).\n"
+                "2. Your AI provider is reachable (Test Connection in AI Settings).")
 
-    def _on_ai_detection_finished(self, data: dict, origin_project: Project | None = None) -> None:
+    def _on_ai_detection_finished(self, data: Any, origin_project: Project | None = None) -> None:
         """Handle results from multimodal AI vision detection."""
         if not self._project or (origin_project and self._project is not origin_project):
              return
+
+        if not isinstance(data, dict):
+            # If AI returned a list directly, assume it's components
+            if isinstance(data, list):
+                data = {"c": data, "f": [], "tb": [], "a": []}
+            else:
+                return
 
         self._project.components.clear()
         self._project.flows.clear()
@@ -1563,15 +1589,15 @@ class MainWindow(QMainWindow):
 
         comp_list = data.get("c", data.get("components", []))
         flow_list = data.get("f", data.get("flows", []))
-        
+        tb_list = data.get("tb", data.get("trust_boundaries", []))
+
         img_w, img_h = 1920, 1080 
         if self._current_diagram:
             image_path = Path(self._project.project_path) / self._current_diagram.file_path
             pix = QPixmap(str(image_path))
             if not pix.isNull():
                 img_w, img_h = pix.width(), pix.height()
-                
-        tb_list = data.get("tb", data.get("trust_boundaries", []))
+
         for dtb in tb_list:
             bbox = dtb.get("b", dtb.get("bounding_box"))
             if isinstance(bbox, list) and len(bbox) >= 4:
