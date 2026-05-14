@@ -76,13 +76,13 @@ def export_to_excel(project: Project, output_path: str | Path) -> None:
     ws_asset.append(["Asset Name", "Asset Classification", "Description"])
     for cell in ws_asset[1]: cell.font = header_font
     
-    for c in project.components:
-         raw_desc = c.description.strip() if c.description else ""
-         final_desc = raw_desc if raw_desc else f"Identified {c.asset_type.value} asset for security analysis."
+    for a in project.assets:
+         raw_desc = a.description.strip() if a.description else ""
+         final_desc = raw_desc if raw_desc else f"Identified {a.type.value} asset for security analysis."
          
          ws_asset.append([
-             sanitize_excel(c.name),
-             sanitize_excel(c.asset_type.value),
+             sanitize_excel(a.name),
+             sanitize_excel(a.type.value),
              sanitize_excel(final_desc)
          ])
 
