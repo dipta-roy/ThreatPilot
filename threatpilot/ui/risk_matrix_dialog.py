@@ -32,6 +32,7 @@ class RiskMatrixDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Strategic Risk Matrix")
         self.resize(900, 650)
+        self.setSizeGripEnabled(True)
         self._threats = threats
         self._project = project
         self._component_names = component_names or []

@@ -129,14 +129,21 @@ class OllamaProvider(AIProviderInterface):
             "images": [b64_image],
         }]
 
+        # Ensure we have enough context for image + prompt + response.
+        ctx_size = 32768
+        
+        # We must leave room for the image tokens (typically 4k-8k for high res).
+        # We also want a large enough output window for 45+ elements in JSON.
+        predict_size = max(self.config.max_tokens, 8192)
+        
         payload = {
             "model": self.config.model_name,
             "messages": messages,
             "stream": False,
             "options": {
                 "temperature": self.config.temperature,
-                "num_predict": max(self.config.max_tokens, 16384),
-                "num_ctx": 16384,
+                "num_predict": predict_size,
+                "num_ctx": ctx_size,
                 **kwargs,
             },
         }

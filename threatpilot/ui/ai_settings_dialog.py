@@ -54,7 +54,6 @@ class _OllamaFetchWorker(QObject):
         except Exception:
             pass
         
-        # Ensure we don't emit if the object is being deleted
         self.finished.emit(models)
 
 
@@ -69,7 +68,8 @@ class AISettingsDialog(QDialog):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("AI Settings")
-        self.setFixedWidth(550)
+        self.setMinimumWidth(550)
+        self.setSizeGripEnabled(True)
 
         self._fetch_thread: QThread | None = None
         self._fetch_worker: _OllamaFetchWorker | None = None
@@ -204,11 +204,9 @@ class AISettingsDialog(QDialog):
 
     def _start_ollama_fetch(self, url: str) -> None:
         """Spin up a background thread to retrieve available Ollama models."""
-        # Stop existing fetch if any
         if self._fetch_thread:
             try:
                 if self._fetch_thread.isRunning():
-                    # Disconnect signals to prevent the old worker from updating the UI
                     if self._fetch_worker:
                         try:
                             self._fetch_worker.finished.disconnect()
@@ -220,7 +218,6 @@ class AISettingsDialog(QDialog):
                         self._fetch_thread.terminate()
                         self._fetch_thread.wait()
             except RuntimeError:
-                # C++ object already deleted
                 pass
 
         self._fetch_thread = QThread(self)
@@ -230,12 +227,10 @@ class AISettingsDialog(QDialog):
         self._fetch_thread.started.connect(self._fetch_worker.run)
         self._fetch_worker.finished.connect(self._on_ollama_models_ready)
         
-        # Proper cleanup: worker and thread should clean themselves up
         self._fetch_worker.finished.connect(self._fetch_thread.quit)
         self._fetch_worker.finished.connect(self._fetch_worker.deleteLater)
         self._fetch_thread.finished.connect(self._fetch_thread.deleteLater)
         
-        # Nullify references when finished to prevent accessing deleted objects
         self._fetch_thread.finished.connect(self._on_fetch_cleanup)
 
         self._fetch_thread.start()
@@ -292,7 +287,6 @@ class AISettingsDialog(QDialog):
         self._config.provider_type = self._provider_type.currentText()
         self._config.endpoint_url = self._endpoint_url.text()
         self._config.model_name = self._model_name.currentText()
-        # Set directly to bypass any conditional logic in the api_key setter
         from pydantic import SecretStr
         self._config.gemini_api_key = SecretStr(self._gemini_key.text())
         

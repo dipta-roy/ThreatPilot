@@ -32,8 +32,9 @@ class PromptSettingsDialog(QDialog):
     def __init__(self, config: PromptConfig, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Prompt Configuration")
-        self.setFixedWidth(500)
+        self.setMinimumWidth(500)
         self.setMinimumHeight(450)
+        self.setSizeGripEnabled(True)
         
         self._config = config.model_copy()
 

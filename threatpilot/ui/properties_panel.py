@@ -214,14 +214,12 @@ class PropertiesPanel(QWidget):
             
             self._add_textarea_row("Affected Components:", "affected_components", item.affected_components)
             
-            # Get list of all component names for the dropdowns
             component_names = []
             if self._project:
                 component_names = sorted(list(set(
                     [c.name for c in self._project.components]
                 )))
             
-            # ── Resolve element/asset names for display consistency ──
             display_elem = item.affected_element_type or ""
             display_asset = item.affected_asset_type or ""
             
@@ -232,7 +230,6 @@ class PropertiesPanel(QWidget):
                 if item.affected_components:
                     haystack = (f"{item.affected_components} {item.title} {item.description}").lower()
                     for cname in [n.strip() for n in item.affected_components.split(",")]:
-                        # 1. Exact flow name match
                         flow_match = next((f for f in self._project.flows if f.name == cname), None)
                         if flow_match:
                             src = next((c for c in self._project.components if c.component_id == flow_match.source_id), None)
@@ -240,13 +237,13 @@ class PropertiesPanel(QWidget):
                             res_elem = src.name if src else ""
                             res_asset = dst.name if dst else ""
                             break
-                        # 2. Exact component match
+                        
                         comp_match = next((c for c in self._project.components if c.name == cname), None)
                         if comp_match:
                             res_elem = comp_match.name
                             res_asset = comp_match.name
                             break
-                    # 3. Fuzzy flow match
+                    
                     if not res_elem:
                         for f in self._project.flows:
                             src = next((c for c in self._project.components if c.component_id == f.source_id), None)
@@ -255,7 +252,7 @@ class PropertiesPanel(QWidget):
                                 res_elem = src.name
                                 res_asset = dst.name
                                 break
-                    # 4. Fuzzy component match
+                    
                     if not res_elem:
                         for c in self._project.components:
                             if c.name.lower() in haystack:
@@ -387,13 +384,11 @@ class PropertiesPanel(QWidget):
         cb.setEditable(True)
         cb.addItems(options)
         
-        # Add current value if not in options
         if value and value not in options:
             cb.addItem(value)
             
         cb.setCurrentText(value)
         
-        # Add a completer for better UX
         completer = QCompleter(options)
         completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)

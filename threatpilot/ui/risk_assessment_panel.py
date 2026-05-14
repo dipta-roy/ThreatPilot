@@ -111,7 +111,8 @@ class RiskAssessmentPanel(QWidget):
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.itemDoubleClicked.connect(lambda item: self._on_row_double_clicked(item.row()))
-        self._table.verticalHeader().sectionDoubleClicked.connect(self._on_row_double_clicked)
+        self._table.verticalHeader().setDefaultSectionSize(38)
+        self._table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         layout.addWidget(self._table)
 
     def _on_row_double_clicked(self, row: int) -> None:
@@ -305,7 +306,8 @@ class RiskAssessmentPanel(QWidget):
             self._table.setVerticalHeaderItem(row, QTableWidgetItem(str(row + 1)))
             self._table.verticalHeaderItem(row).setToolTip("Double click to edit")
             
-        self._table.resizeRowsToContents()
+        # Fixed 38px row height for compact matrix view
+        # self._table.resizeRowsToContents()
 
         # ── Restore scroll position & selection after rebuild ──
         if scroll_to_row >= 0 and scroll_to_row < self._table.rowCount():

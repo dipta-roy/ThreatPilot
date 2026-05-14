@@ -259,8 +259,8 @@ class AIVisionWorker(QThread):
             if img.isNull():
                 raise FileNotFoundError(f"Selected image file at {self.image_path} could not be loaded.")
             
-            if img.width() > 2048 or img.height() > 2048:
-                img = img.scaled(2048, 2048, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            if img.width() > 3072 or img.height() > 3072:
+                img = img.scaled(3072, 3072, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
             
             buffer = QBuffer()
             buffer.open(QIODevice.WriteOnly)
@@ -519,7 +519,6 @@ class MainWindow(QMainWindow):
         
         def _sync_labels(obj):
             if isinstance(obj, Threat):
-                QTimer.singleShot(0, self._threat_panel.refresh)
                 QTimer.singleShot(0, self._stride_threat_ledger.refresh)
                 QTimer.singleShot(0, self._linddun_threat_ledger.refresh)
         self._properties_panel.property_changed.connect(_sync_labels)
@@ -542,24 +541,15 @@ class MainWindow(QMainWindow):
             min_width=220,
         )
 
-        self._threat_panel = ThreatPanel(self)
-        self._threat_panel.threat_selected.connect(self._properties_panel.set_item)
-        self._threat_panel.threat_added.connect(self._on_save_project)
-        self._threat_panel.threat_removed.connect(self._on_save_project)
-        self._threat_panel.run_analysis_requested.connect(lambda mode, iters: self._on_run_analysis(mode, iters))
-        self._threat_panel_dock = self._create_dock(
-            "Threat Ledger",
-            self._threat_panel,
-            Qt.DockWidgetArea.RightDockWidgetArea,
-            min_width=280,
-        )
-        self._threat_panel_dock.setVisible(False)
-        
-        self._threat_panel.threat_selected.connect(self._properties_panel.set_item)
+        self._ai_log_view = QTextEdit()
+        self._ai_log_view.setReadOnly(True)
+        self._ai_log_view.setObjectName("ai_log_view")
+        self._ai_log_view.setPlaceholderText("AI transaction logs will appear here during detection or analysis...")
+
+        # --- Reconnect Analysis Panels ---
         self._stride_threat_ledger.threat_selected.connect(self._properties_panel.set_item)
         self._linddun_threat_ledger.threat_selected.connect(self._properties_panel.set_item)
 
-        self._threat_panel.reasoning_requested.connect(self._on_reasoning_requested)
         self._stride_threat_ledger.reasoning_requested.connect(self._on_reasoning_requested)
         self._linddun_threat_ledger.reasoning_requested.connect(self._on_reasoning_requested)
         self._vulnerability_panel.reasoning_requested.connect(self._on_reasoning_requested)
@@ -567,16 +557,12 @@ class MainWindow(QMainWindow):
         self._stride_threat_ledger.run_analysis_requested.connect(lambda mode, iters: self._on_run_analysis(mode, iters))
         self._stride_threat_ledger.threat_added.connect(self._on_save_project)
         self._stride_threat_ledger.threat_removed.connect(self._on_save_project)
-        
-        self._risk_assessment_panel.threat_edited.connect(self._on_save_project)
+
         self._linddun_threat_ledger.run_analysis_requested.connect(lambda mode, iters: self._on_run_analysis(mode, iters))
         self._linddun_threat_ledger.threat_added.connect(self._on_save_project)
         self._linddun_threat_ledger.threat_removed.connect(self._on_save_project)
 
-        self._ai_log_view = QTextEdit()
-        self._ai_log_view.setReadOnly(True)
-        self._ai_log_view.setObjectName("ai_log_view")
-        self._ai_log_view.setPlaceholderText("AI transaction logs will appear here during detection or analysis...")
+        self._risk_assessment_panel.threat_edited.connect(self._on_save_project)
         
         self._ai_log_dock = self._create_dock(
             "AI Activity Log",
@@ -696,10 +682,6 @@ class MainWindow(QMainWindow):
         self._action_toggle_explorer.setText("Project &Map")
         view_menu.addAction(self._action_toggle_explorer)
 
-        self._action_toggle_threats = self._threat_panel_dock.toggleViewAction()
-        self._action_toggle_threats.setText("&Threat Ledger")
-        view_menu.addAction(self._action_toggle_threats)
-
         self._action_toggle_properties = self._properties_panel_dock.toggleViewAction()
         self._action_toggle_properties.setText("&Threat Attributes")
         view_menu.addAction(self._action_toggle_properties)
@@ -815,7 +797,6 @@ class MainWindow(QMainWindow):
         try:
             self._project = create_project(name.strip(), parent_dir=directory)
             self._project_explorer.set_project(self._project)
-            self._threat_panel.set_register(self._project.threat_register)
             self._stride_threat_ledger.set_register(self._project.threat_register)
             self._linddun_threat_ledger.set_register(self._project.threat_register)
             self._risk_assessment_panel.set_project(self._project)
@@ -858,7 +839,6 @@ class MainWindow(QMainWindow):
         
         # Reset UI components
         self._project_explorer.set_project(None)
-        self._threat_panel.set_register(None)
         self._stride_threat_ledger.set_register(None)
         self._linddun_threat_ledger.set_register(None)
         self._risk_assessment_panel.set_project(None)
@@ -898,7 +878,6 @@ class MainWindow(QMainWindow):
         """Helper to load a project directly from a directory path."""
         self._project = load_project(directory)
         self._project_explorer.set_project(self._project)
-        self._threat_panel.set_register(self._project.threat_register)
         self._stride_threat_ledger.set_register(self._project.threat_register)
         self._linddun_threat_ledger.set_register(self._project.threat_register)
         self._risk_assessment_panel.set_project(self._project)
@@ -923,8 +902,6 @@ class MainWindow(QMainWindow):
         """Trigger UI updates for panels when a project property changes. Does NOT save to disk."""
         if hasattr(self, "_risk_assessment_panel"):
             QTimer.singleShot(0, self._risk_assessment_panel.refresh)
-        if hasattr(self, "_threat_panel"):
-            QTimer.singleShot(0, self._threat_panel.refresh)
         if hasattr(self, "_stride_threat_ledger"):
             QTimer.singleShot(0, self._stride_threat_ledger.refresh)
         if hasattr(self, "_linddun_threat_ledger"):
@@ -1098,8 +1075,6 @@ class MainWindow(QMainWindow):
             self._central_tabs.setCurrentIndex(1)
             self._stride_threat_ledger.clear_filter()
             self._linddun_threat_ledger.clear_filter()
-            self._threat_panel_dock.show()
-            self._threat_panel_dock.raise_()
         elif action == "action_view_risk_matrix" and self._project:
             from threatpilot.ui.risk_matrix_dialog import RiskMatrixDialog
             component_names = [c.name for c in self._project.components]
@@ -1472,11 +1447,6 @@ class MainWindow(QMainWindow):
         return self._project_explorer_dock
 
     @property
-    def threat_panel_dock(self) -> QDockWidget:
-        """Return the Threat Panel dock widget."""
-        return self._threat_panel_dock
-
-    @property
     def properties_panel_dock(self) -> QDockWidget:
         """Return the Properties Panel dock widget."""
         return self._properties_panel_dock
@@ -1586,6 +1556,7 @@ class MainWindow(QMainWindow):
         self._project.components.clear()
         self._project.flows.clear()
         self._project.boundaries.clear()
+        self._project.assets.clear()
 
         comp_list = data.get("c", data.get("components", []))
         flow_list = data.get("f", data.get("flows", []))

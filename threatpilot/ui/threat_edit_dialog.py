@@ -38,6 +38,7 @@ class ThreatEditDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Edit Risk")
         self.resize(700, 850)
+        self.setSizeGripEnabled(True)
         self._threat = threat
         self._project = project
         self._component_names = component_names or []

@@ -103,7 +103,7 @@ QLineEdit, QTextEdit, QComboBox, QPlainTextEdit, QSpinBox, QDoubleSpinBox {
     background-color: #ffffff;
     border: 1px solid #d0d7de;
     border-radius: 6px;
-    padding: 8px 12px;
+    padding: 8px 35px 8px 12px;
     color: #24292f;
     selection-background-color: #0969da;
 }
@@ -125,8 +125,19 @@ QComboBox::down-arrow {
     image: none;
     border-left: 5px solid transparent;
     border-right: 5px solid transparent;
-    border-top: 5px solid #57606a;
-    margin-right: 10px;
+    border-top: 6px solid #24292f;
+    width: 0;
+    height: 0;
+    margin-right: 4px;
+}
+
+QComboBox::down-arrow:on {
+    border-top: none;
+    border-bottom: 6px solid #0969da;
+}
+
+QComboBox::down-arrow:hover {
+    border-top-color: #0969da;
 }
 
 /* 6. Modern Buttons */

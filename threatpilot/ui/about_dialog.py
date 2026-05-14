@@ -23,7 +23,8 @@ class AboutDialog(QDialog):
     def __init__(self, parent: QWidget | None = None, is_dark: bool = True) -> None:
         super().__init__(parent)
         self.setWindowTitle("About ThreatPilot")
-        self.setFixedSize(520, 440)
+        self.setMinimumSize(520, 440)
+        self.setSizeGripEnabled(True)
         self._is_dark = is_dark
         self._setup_ui()
 

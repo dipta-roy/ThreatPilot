@@ -95,8 +95,23 @@ class ThreatPanel(QWidget):
         from PySide6.QtWidgets import QCheckBox
         self._select_all = QCheckBox("Select All")
         self._select_all.clicked.connect(self._on_select_all)
-        self._select_all.setStyleSheet("color: #8b949e; margin-left: 10px;")
+        self._select_all.setStyleSheet("""
+            QCheckBox { color: #8b949e; margin-left: 10px; }
+            QCheckBox::indicator { width: 14px; height: 14px; border: 1px solid #30363d; border-radius: 3px; }
+            QCheckBox::indicator:checked { background-color: #238636; border: 1px solid #238636; }
+        """)
         toolbar_layout.addWidget(self._select_all)
+
+        toolbar_layout.addStretch()
+
+        self._filter_combo = QComboBox()
+        self._filter_combo.addItems(["All Frameworks", "STRIDE (Security)", "LINDDUN (Privacy)"])
+        # Map the internal filter mode to the combo index
+        mode_map = {"ALL": 0, "STRIDE": 1, "LINDDUN": 2}
+        self._filter_combo.setCurrentIndex(mode_map.get(self._filter_mode, 0))
+        self._filter_combo.currentTextChanged.connect(self._on_filter_mode_changed)
+        self._filter_combo.setFixedWidth(180)
+        toolbar_layout.addWidget(self._filter_combo)
 
         btn_text = "Run AI Analysis"
         if self._filter_mode == "STRIDE":
@@ -169,7 +184,7 @@ class ThreatPanel(QWidget):
 
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        self._table.setColumnWidth(0, 30) # Checkbox column
+        self._table.setColumnWidth(0, 30)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self._table.setColumnWidth(2, 160)
         self._table.setColumnWidth(3, 100)
@@ -331,8 +346,6 @@ class ThreatPanel(QWidget):
             score_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self._table.setItem(row, 6, score_item)
 
-
-
         # ── Restore scroll & selection ──
         if prev_row >= 0 and prev_row < self._table.rowCount():
             self._table.selectRow(prev_row)
@@ -390,6 +403,26 @@ class ThreatPanel(QWidget):
     # ------------------------------------------------------------------
     # Slots
     # ------------------------------------------------------------------
+    def _on_filter_mode_changed(self, text: str) -> None:
+        """Update the internal filter mode and refresh the table."""
+        if "STRIDE" in text:
+            self._filter_mode = "STRIDE"
+        elif "LINDDUN" in text:
+            self._filter_mode = "LINDDUN"
+        else:
+            self._filter_mode = "ALL"
+            
+        # Update the analysis button text accordingly
+        if hasattr(self, "_btn_run"):
+            btn_text = "Run AI Analysis"
+            if self._filter_mode == "STRIDE":
+                btn_text = "Run STRIDE Analysis"
+            elif self._filter_mode == "LINDDUN":
+                btn_text = "Run LINDDUN Analysis"
+            self._btn_run.setText(btn_text)
+            
+        self.refresh()
+
     def _on_run_clicked(self) -> None:
         """Emit the run analysis signal with the current iteration count."""
         iterations = 1

@@ -38,6 +38,7 @@ class ElementsDialog(QDialog):
         width = int(screen.width() * 0.6)
         height = int(screen.height() * 0.6)
         self.resize(width, height)
+        self.setSizeGripEnabled(True)
         self._project = project
         self._undo_stack = undo_stack
         self._is_internal_edit = False
@@ -118,7 +119,7 @@ class ElementsDialog(QDialog):
             self._table.setItem(row, 1, name_item)
             
             elem_combo = QComboBox()
-            elem_types = [e.value for e in ElementType]
+            elem_types = sorted([e.value for e in ElementType])
             elem_combo.addItems(elem_types)
             elem_combo.setCurrentText(comp.element_type.value)
             elem_combo.setProperty("row", row)
@@ -126,7 +127,7 @@ class ElementsDialog(QDialog):
             self._table.setCellWidget(row, 2, elem_combo)
             
             tb_combo = QComboBox()
-            tb_names = ["None (External)"] + [b.name for b in self._project.boundaries]
+            tb_names = ["None (External)"] + sorted([b.name for b in self._project.boundaries])
             tb_combo.addItems(tb_names)
             curr_tb_name = "None (External)"
             if comp.trust_boundary_id:
@@ -318,6 +319,7 @@ class AssetsDialog(QDialog):
         width = int(screen.width() * 0.7)
         height = int(screen.height() * 0.6)
         self.resize(width, height)
+        self.setSizeGripEnabled(True)
         self._project = project
         self._undo_stack = undo_stack
         self._is_internal_edit = False
@@ -556,6 +558,7 @@ class DataFlowDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Data Flow Mapping")
         self.resize(1000, 600)
+        self.setSizeGripEnabled(True)
         self._project = project
         self._undo_stack = undo_stack
         self._is_internal_edit = False
@@ -614,7 +617,7 @@ class DataFlowDialog(QDialog):
     def _load_data(self) -> None:
         self._flow_table.blockSignals(True)
         self._flow_table.setRowCount(0)
-        comp_names = ["(Unlinked)"] + [c.name for c in self._project.components]
+        comp_names = ["(Unlinked)"] + sorted([c.name for c in self._project.components])
         for row, flow in enumerate(self._project.flows):
             self._flow_table.insertRow(row)
             
@@ -790,6 +793,7 @@ class TrustBoundaryDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("System Trust Boundaries")
         self.resize(900, 500)
+        self.setSizeGripEnabled(True)
         self._project = project
         self._undo_stack = undo_stack
         self._is_internal_edit = False
@@ -873,7 +877,7 @@ class TrustBoundaryDialog(QDialog):
             self._table.setItem(row, 2, type_item)
             
             parent_combo = QComboBox()
-            options = ["None"] + [b.name for b in self._project.boundaries if b.boundary_id != tb.boundary_id]
+            options = ["None"] + sorted([b.name for b in self._project.boundaries if b.boundary_id != tb.boundary_id])
             parent_combo.addItems(options)
             
             parent_name = "None"

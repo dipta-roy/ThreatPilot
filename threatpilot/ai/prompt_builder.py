@@ -140,28 +140,29 @@ class PromptBuilder:
         return (
             f"Analyze the attached architecture diagram for the system: '{system_name}'.\n\n"
             "STRICT GROUNDING RULES (Anti-Hallucination Protocol):\n"
-            "1. NO LABEL, NO COMPONENT: Only report components that have an explicit text label in the image.\n"
-            "2. NO INFERENCE: Do not assume the existence of items (Internet, Firewall, User) unless they are explicitly drawn and labeled.\n"
-            "3. NO GENERIC INFRASTRUCTURE: Do not invent infrastructure layers that are not visually present.\n"
-            "4. NO GUESSING: If text is blurry, skip it.\n"
-            "5. EMPTY STATE: If the image is not a diagram, return an empty JSON object.\n\n"
-            "TASK: Extract all architectural components (c), data flows (f), trust boundaries (tb), and assets (a).\n\n"
+            "1. NO INFERENCE: Do not assume the existence of items (Internet, Firewall, User) unless they are explicitly drawn and labeled.\n"
+            "2. BE EXHAUSTIVE: Capture every single labeled component, data flow, and trust boundary. For large diagrams (40+ elements), do not truncate the list; ensure every visible node is included in the JSON.\n"
+            "3. NO GUESSING: If text is completely unreadable, skip it, but if it is identifiable, include it.\n"
+            "4. EMPTY STATE: If the image is not a diagram, return an empty JSON object.\n\n"
+            "TASK: Extract all architectural components (c), data flows (f), trust boundaries (tb), and assets (a).\n"
+            "For each item, identify its position and size using a normalized bounding box [x, y, width, height] where coordinates are from 0 to 1000.\n\n"
             "JSON OUTPUT FORMAT (MANDATORY):\n"
             "{\n"
             '  "c": [\n'
-            '    {"n": "Component Name", "t": "Service/Database", "et": "Process/Data Store/Entity", "tb": "Trust Boundary Name"}\n'
+            '    {"n": "Name", "t": "Service/DB", "et": "Process/Data Store/Entity", "tb": "TB Name", "b": [x, y, w, h]}\n'
             '  ],\n'
             '  "f": [\n'
-            '    {"n": "Flow Name", "s": "Source Component Name", "d": "Target Component Name", "p": "Protocol (e.g. HTTPS)"}\n'
+            '    {"n": "Name", "s": "Source", "d": "Target", "p": "HTTPS", "b": [start_x, start_y, end_x, end_y]}\n'
             '  ],\n'
             '  "tb": [\n'
-            '    {"n": "Trust Boundary Name"}\n'
+            '    {"n": "Name", "b": [x, y, w, h]}\n'
             '  ],\n'
             '  "a": [\n'
-            '    {"n": "Asset Name", "t": "Informational/Physical", "d": "Description"}\n'
+            '    {"n": "Name", "t": "Informational/Physical", "d": "Description"}\n'
             '  ]\n'
             "}\n\n"
-            "CRITICAL: Return ONLY the raw JSON object. No conversational text."
+            "CRITICAL: Return ONLY the raw JSON object. No conversational text. "
+            "Ensure the output includes ALL components seen in the diagram, even if the architecture is large (e.g. 40+ elements)."
         )
 
     def build_reasoning_prompt(self, threat: any) -> str:

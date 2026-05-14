@@ -21,6 +21,7 @@ class CVSSCalculatorDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("CVSS 3.1 Calculator")
         self.resize(550, 600)
+        self.setSizeGripEnabled(True)
         self._vector = initial_vector if initial_vector.startswith("CVSS:3.1/") else "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
         self._setup_ui()
         self._parse_vector(self._vector)
