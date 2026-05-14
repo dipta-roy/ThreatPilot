@@ -110,7 +110,7 @@ class AboutDialog(QDialog):
         header_row.addStretch()
         banner_layout.addLayout(header_row)
 
-        version_badge = QLabel("  v1.3.0  ")
+        version_badge = QLabel("  v1.4.0  ")
         version_badge.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
         version_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         version_badge.setFixedWidth(90)

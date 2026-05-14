@@ -44,12 +44,17 @@ class _OllamaFetchWorker(QObject):
     def run(self) -> None: 
         models: list[str] = []
         try:
-            with httpx.Client(timeout=3.0) as client:
+            # Use a short timeout to prevent long hangs
+            with httpx.Client(timeout=5.0, follow_redirects=True) as client:
                 resp = client.get(f"{self._url}/api/tags")
                 resp.raise_for_status()
-                models = [m.get("name", "") for m in resp.json().get("models", []) if m.get("name")]
+                data = resp.json()
+                if isinstance(data, dict) and "models" in data:
+                    models = [m.get("name", "") for m in data.get("models", []) if m.get("name")]
         except Exception:
             pass
+        
+        # Ensure we don't emit if the object is being deleted
         self.finished.emit(models)
 
 
@@ -199,17 +204,31 @@ class AISettingsDialog(QDialog):
 
     def _start_ollama_fetch(self, url: str) -> None:
         """Spin up a background thread to retrieve available Ollama models."""
+        # Stop existing fetch if any
         if self._fetch_thread and self._fetch_thread.isRunning():
+            try:
+                # Disconnect signals to prevent the old worker from updating the UI
+                if self._fetch_worker:
+                    self._fetch_worker.finished.disconnect()
+            except Exception:
+                pass
             self._fetch_thread.quit()
             self._fetch_thread.wait(500)
+            if self._fetch_thread.isRunning():
+                self._fetch_thread.terminate()
+                self._fetch_thread.wait()
 
-        self._fetch_worker = _OllamaFetchWorker(url)
         self._fetch_thread = QThread(self)
-
+        self._fetch_worker = _OllamaFetchWorker(url)
         self._fetch_worker.moveToThread(self._fetch_thread)
+
         self._fetch_thread.started.connect(self._fetch_worker.run)
         self._fetch_worker.finished.connect(self._on_ollama_models_ready)
+        
+        # Proper cleanup: worker and thread should clean themselves up
         self._fetch_worker.finished.connect(self._fetch_thread.quit)
+        self._fetch_worker.finished.connect(self._fetch_worker.deleteLater)
+        self._fetch_thread.finished.connect(self._fetch_thread.deleteLater)
 
         self._fetch_thread.start()
 
@@ -260,7 +279,10 @@ class AISettingsDialog(QDialog):
         self._config.provider_type = self._provider_type.currentText()
         self._config.endpoint_url = self._endpoint_url.text()
         self._config.model_name = self._model_name.currentText()
-        self._config.api_key = self._gemini_key.text()
+        # Set directly to bypass any conditional logic in the api_key setter
+        from pydantic import SecretStr
+        self._config.gemini_api_key = SecretStr(self._gemini_key.text())
+        
         self._config.temperature = self._temperature.value()
         self._config.max_tokens = int(self._max_tokens.currentText())
         self._config.timeout = self._timeout.value()

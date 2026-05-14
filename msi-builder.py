@@ -46,7 +46,9 @@ build_exe_options = {
         "os", "sys", "threatpilot", "threatpilot.ai", "threatpilot.ui", 
         "threatpilot.core", "threatpilot.utils", "threatpilot.detection",
         "threatpilot.config", "threatpilot.export", "threatpilot.risk",
-        "pydantic", "pydantic_core", "httpx", "cryptography", "keyring", "shiboken6",
+        "pydantic", "pydantic_core", "httpx", "cryptography", "keyring",
+        "keyring.backends", "keyring.backends.Windows",
+        "shiboken6",
         "dotenv", "openpyxl", "certifi", "anyio", "idna", "sniffio", "httpcore",
         "PIL", "PySide6.QtCore", "PySide6.QtGui", "PySide6.QtWidgets", 
         "PySide6.QtNetwork", "PySide6.QtPrintSupport", "PySide6.QtXml", "PySide6.QtSvg"
@@ -78,8 +80,8 @@ build_exe_options = {
 }
 
 base = None
-if sys.platform == "win32":
-    base = "Win32GUI"
+# if sys.platform == "win32":
+#     base = "Win32GUI"
 
 shortcut_table = [
     ("DesktopShortcut",        

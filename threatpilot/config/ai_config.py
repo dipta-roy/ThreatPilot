@@ -11,7 +11,19 @@ import dotenv
 from threatpilot.utils.crypto_utils import encrypt_api_key, decrypt_api_key
 from threatpilot.utils.logger import add_secret_to_redaction
 
-_ENV_FILE = Path(__file__).resolve().parent.parent.parent / "config.env"
+import sys
+from pathlib import Path
+
+def _get_config_path() -> Path:
+    """Determine the most reliable path for the config.env file."""
+    # Use a dedicated hidden directory in the user's home for all persistent state
+    # This ensures writability even in restricted frozen environments.
+    base_dir = Path.home() / ".threatpilot"
+    base_dir.mkdir(parents=True, exist_ok=True)
+    return base_dir / "config.env"
+
+_ENV_FILE = _get_config_path()
+
 
 class AIConfig(BaseModel):
     """Configuration for the AI provider used by the application.
@@ -57,16 +69,21 @@ class AIConfig(BaseModel):
     @classmethod
     def load(cls) -> AIConfig:
         """Load configuration from config.env, decrypting API keys."""
+        path_str = str(_ENV_FILE.absolute())
+        
         if not _ENV_FILE.exists():
+            # Ensure the directory exists even if the file doesn't
+            _ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
             instance = cls()
             instance.save()
             return instance
             
-        dotenv.load_dotenv(_ENV_FILE, override=True)
+        # Read values directly from the file to avoid process environment pollution
+        values = dotenv.dotenv_values(path_str)
         
         def get_opt(key: str, default: str) -> str:
-            val = os.getenv(key, default)
-            if not val:
+            val = values.get(key, default)
+            if val is None:
                 return default
             if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
                 val = val[1:-1]
@@ -92,24 +109,49 @@ class AIConfig(BaseModel):
         )
         
         add_secret_to_redaction(config.gemini_api_key)
-        
         return config
 
     def save(self) -> None:
         """Save configuration to config.env, encrypting API keys."""
-        _ENV_FILE.touch(exist_ok=True)
-        dotenv.set_key(_ENV_FILE, "AI_PROVIDER_TYPE", self.provider_type)
-        dotenv.set_key(_ENV_FILE, "AI_ENDPOINT_URL", self.endpoint_url)
-        dotenv.set_key(_ENV_FILE, "AI_MODEL_NAME", self.model_name)
-        dotenv.set_key(_ENV_FILE, "AI_TEMPERATURE", str(self.temperature))
-        dotenv.set_key(_ENV_FILE, "AI_MAX_TOKENS", str(self.max_tokens))
-        dotenv.set_key(_ENV_FILE, "AI_TIMEOUT", str(self.timeout))
-        dotenv.set_key(_ENV_FILE, "AUTOSAVE_INTERVAL", str(self.autosave_interval))
-        dotenv.set_key(_ENV_FILE, "AI_ANALYSIS_MODE", self.analysis_mode)
-        
-        api_key_str = self.gemini_api_key.get_secret_value()
-        if api_key_str:
-            dotenv.set_key(_ENV_FILE, "GEMINI_API_KEY", encrypt_api_key(api_key_str))
-        elif os.getenv("GEMINI_API_KEY"):
-            dotenv.unset_key(_ENV_FILE, "GEMINI_API_KEY")
+        path_str = str(_ENV_FILE.absolute())
+        try:
+            # Ensure parent directory exists
+            _ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+            _ENV_FILE.touch(exist_ok=True)
+            
+            dotenv.set_key(path_str, "AI_PROVIDER_TYPE", self.provider_type)
+            dotenv.set_key(path_str, "AI_ENDPOINT_URL", self.endpoint_url)
+            dotenv.set_key(path_str, "AI_MODEL_NAME", self.model_name)
+            dotenv.set_key(path_str, "AI_TEMPERATURE", str(self.temperature))
+            dotenv.set_key(path_str, "AI_MAX_TOKENS", str(self.max_tokens))
+            dotenv.set_key(path_str, "AI_TIMEOUT", str(self.timeout))
+            dotenv.set_key(path_str, "AUTOSAVE_INTERVAL", str(self.autosave_interval))
+            dotenv.set_key(path_str, "AI_ANALYSIS_MODE", self.analysis_mode)
+            
+            api_key_str = self.gemini_api_key.get_secret_value()
+            if api_key_str:
+                encrypted = encrypt_api_key(api_key_str)
+                if encrypted:
+                    dotenv.set_key(path_str, "GEMINI_API_KEY", encrypted)
+            else:
+                # If no key, explicitly remove it from the file
+                dotenv.unset_key(path_str, "GEMINI_API_KEY")
+                
+        except Exception:
+            # Fallback to direct file write if dotenv fails or permissions are tricky
+            try:
+                with open(path_str, "w", encoding="utf-8") as f:
+                    f.write(f"AI_PROVIDER_TYPE={self.provider_type}\n")
+                    f.write(f"AI_ENDPOINT_URL={self.endpoint_url}\n")
+                    f.write(f"AI_MODEL_NAME={self.model_name}\n")
+                    f.write(f"AI_TEMPERATURE={self.temperature}\n")
+                    f.write(f"AI_MAX_TOKENS={self.max_tokens}\n")
+                    f.write(f"AI_TIMEOUT={self.timeout}\n")
+                    f.write(f"AUTOSAVE_INTERVAL={self.autosave_interval}\n")
+                    f.write(f"AI_ANALYSIS_MODE={self.analysis_mode}\n")
+                    api_key_str = self.gemini_api_key.get_secret_value()
+                    if api_key_str:
+                        f.write(f"GEMINI_API_KEY={encrypt_api_key(api_key_str)}\n")
+            except Exception:
+                pass
 

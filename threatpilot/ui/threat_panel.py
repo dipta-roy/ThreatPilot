@@ -10,6 +10,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -53,7 +54,7 @@ class ThreatPanel(QWidget):
     threat_selected: Signal = Signal(object)
     threat_added: Signal = Signal(object)
     threat_removed: Signal = Signal(str)
-    run_analysis_requested: Signal = Signal(str)
+    run_analysis_requested: Signal = Signal(str, int)
     reasoning_requested: Signal = Signal(object)
 
     def __init__(self, parent: QWidget | None = None, filter_mode: str = "ALL") -> None:
@@ -97,11 +98,44 @@ class ThreatPanel(QWidget):
         elif self._filter_mode == "LINDDUN":
             btn_text = "Run LINDDUN Analysis"
 
+        # --- Iterations selector (only for STRIDE / LINDDUN tabs) ---
+        if self._filter_mode in ("STRIDE", "LINDDUN"):
+            iter_label = QLabel("Iterations:")
+            iter_label.setStyleSheet("font-weight: bold; margin-left: 10px; color: #8b949e;")
+            toolbar_layout.addWidget(iter_label)
+
+            self._iterations_combo = QComboBox()
+            self._iterations_combo.setObjectName("combo_iterations")
+            self._iterations_combo.addItems([str(i) for i in range(1, 6)])
+            self._iterations_combo.setCurrentIndex(0)  # default = 1
+            self._iterations_combo.setMinimumWidth(85)
+            self._iterations_combo.setFixedWidth(85)
+            self._iterations_combo.setStyleSheet("""
+                QComboBox {
+                    padding: 4px 8px;
+                    border: 1px solid #30363d;
+                    border-radius: 4px;
+                    background: #0d1117;
+                    color: #c9d1d9;
+                }
+                QComboBox::drop-down {
+                    border: 0;
+                }
+            """)
+            self._iterations_combo.setToolTip(
+                "Number of full analysis passes to run.\n"
+                "Each iteration re-analyzes every segment, allowing the AI\n"
+                "to discover additional threats on subsequent passes."
+            )
+            toolbar_layout.addWidget(self._iterations_combo)
+        else:
+            self._iterations_combo = None
+
         self._btn_run = QPushButton(btn_text)
         self._btn_run.setObjectName("btn_run_threat_analysis")
         self._btn_run.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_run.setStyleSheet("background-color: #238636; color: white; font-weight: bold;")
-        self._btn_run.clicked.connect(lambda: self.run_analysis_requested.emit(self._filter_mode))
+        self._btn_run.clicked.connect(self._on_run_clicked)
         toolbar_layout.addWidget(self._btn_run)
 
         toolbar_layout.addStretch()
@@ -342,6 +376,13 @@ class ThreatPanel(QWidget):
     # ------------------------------------------------------------------
     # Slots
     # ------------------------------------------------------------------
+    def _on_run_clicked(self) -> None:
+        """Emit the run analysis signal with the current iteration count."""
+        iterations = 1
+        if self._iterations_combo is not None:
+            iterations = int(self._iterations_combo.currentText())
+        self.run_analysis_requested.emit(self._filter_mode, iterations)
+
     def _on_add_threat(self) -> None:
         """Create a new manual threat and add it to the register."""
         if self._register is None:

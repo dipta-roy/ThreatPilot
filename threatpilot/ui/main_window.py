@@ -111,9 +111,15 @@ class ReasoningDisplayDialog(QDialog):
 class AnalysisWorker(QThread):
     """Background worker for running AI analysis without blocking the UI.
     
+    Supports multi-iteration analysis where each iteration runs all segments
+    sequentially. When iterations > 1, segments auto-continue without user
+    prompts between them.
+    
     Signals:
         finished: Emitted when analysis completes successfully.
         failed: Emitted when an error occurs.
+        iteration_progress: Emitted with (current_iteration, total_iterations,
+            current_segment, total_segments) for UI progress updates.
     """
     finished = Signal(object)
     failed = Signal(str)
@@ -121,13 +127,15 @@ class AnalysisWorker(QThread):
     prompt_ready = Signal(str)
     response_ready = Signal(str)
     request_segment_continuation = Signal(int, int)
+    iteration_progress = Signal(int, int, int, int)
 
-    def __init__(self, provider, prompt_config, dfd, system_name, parent=None):
+    def __init__(self, provider, prompt_config, dfd, system_name, iterations=1, parent=None):
         super().__init__(parent)
         self.provider = provider
         self.prompt_config = prompt_config
         self.dfd = dfd
         self.system_name = system_name
+        self.iterations = max(1, min(iterations, 5))
         
         import threading
         self._continue_event = threading.Event()
@@ -139,48 +147,84 @@ class AnalysisWorker(QThread):
         self._continue_event.set()
 
     def run(self):
-        """Execute the async analysis within a new event loop."""
+        """Execute the async analysis within a new event loop.
+        
+        When iterations > 1, all segments auto-continue without prompting
+        the user. The iteration_progress signal keeps the UI informed.
+        """
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
-            analyzer = ThreatAnalyzer(self.provider, self.prompt_config)
+            all_register = None
+            auto_mode = self.iterations > 1
 
-            async def progress_cb(current, total):
-                self._continue_event.clear()
-                self.request_segment_continuation.emit(current, total)
-                self._continue_event.wait()
-                return self._should_continue_result
+            for iteration in range(1, self.iterations + 1):
+                analyzer = ThreatAnalyzer(self.provider, self.prompt_config)
 
-            register, raw_resp, usage = loop.run_until_complete(
-                analyzer.analyze(
-                    self.dfd, 
-                    self.system_name, 
-                    progress_callback=progress_cb,
-                    result_callback=lambda partial: self.partial_result_ready.emit(partial)
-                )
-            )
-            
-            if "Analysis cancelled by user" in raw_resp:
-                self.failed.emit("Analysis cancelled by user.")
-                return
-                
-            system_p = analyzer.builder.build_system_prompt()
-            user_p = analyzer.builder.build_user_prompt(self.dfd, self.system_name)
-            self.prompt_ready.emit(f"SYSTEM: {system_p}\n\nUSER: {user_p}")
-            
-            self.response_ready.emit(raw_resp)
-            if usage:
-                u = usage.get("usage", usage)
-                in_t = u.get('promptTokenCount') or u.get('prompt_tokens') or u.get('prompt_eval_count') or 0
-                out_t = u.get('candidatesTokenCount') or u.get('completion_tokens') or u.get('eval_count') or 0
-                total_t = u.get('totalTokenCount') or u.get('total_tokens') or (in_t + out_t)
-                
-                finish_reason = usage.get("finish_reason", "SUCCESS")
-                meta_log = f"METADATA: Tokens [In: {in_t} | Out: {out_t} | Total: {total_t}] | FinishReason: {finish_reason}"
-                self.response_ready.emit(meta_log)
-                
-            self.finished.emit(register)
+                if auto_mode:
+                    # Auto-continue: no user prompts between segments
+                    async def progress_cb_auto(current, total, _iter=iteration):
+                        self.iteration_progress.emit(_iter, self.iterations, current, total)
+                        return True  # always continue
+
+                    register, raw_resp, usage = loop.run_until_complete(
+                        analyzer.analyze(
+                            self.dfd,
+                            self.system_name,
+                            progress_callback=progress_cb_auto,
+                            result_callback=lambda partial: self.partial_result_ready.emit(partial)
+                        )
+                    )
+                else:
+                    # Single iteration: use the original interactive prompt flow
+                    async def progress_cb(current, total):
+                        self._continue_event.clear()
+                        self.request_segment_continuation.emit(current, total)
+                        self._continue_event.wait()
+                        return self._should_continue_result
+
+                    register, raw_resp, usage = loop.run_until_complete(
+                        analyzer.analyze(
+                            self.dfd,
+                            self.system_name,
+                            progress_callback=progress_cb,
+                            result_callback=lambda partial: self.partial_result_ready.emit(partial)
+                        )
+                    )
+
+                if "Analysis cancelled by user" in raw_resp:
+                    self.failed.emit("Analysis cancelled by user.")
+                    return
+
+                # Log iteration info
+                iter_label = f"[Iteration {iteration}/{self.iterations}] " if auto_mode else ""
+                system_p = analyzer.builder.build_system_prompt()
+                user_p = analyzer.builder.build_user_prompt(self.dfd, self.system_name)
+                self.prompt_ready.emit(f"{iter_label}SYSTEM: {system_p}\n\nUSER: {user_p}")
+                self.response_ready.emit(f"{iter_label}{raw_resp}")
+
+                if usage:
+                    u = usage.get("usage", usage)
+                    in_t = u.get('promptTokenCount') or u.get('prompt_tokens') or u.get('prompt_eval_count') or 0
+                    out_t = u.get('candidatesTokenCount') or u.get('completion_tokens') or u.get('eval_count') or 0
+                    total_t = u.get('totalTokenCount') or u.get('total_tokens') or (in_t + out_t)
+                    finish_reason = usage.get("finish_reason", "SUCCESS")
+                    meta_log = f"{iter_label}METADATA: Tokens [In: {in_t} | Out: {out_t} | Total: {total_t}] | FinishReason: {finish_reason}"
+                    self.response_ready.emit(meta_log)
+
+                # Merge iteration results into the cumulative register
+                if all_register is None:
+                    all_register = register
+                else:
+                    for t in register.threats:
+                        all_register.add_threat(t)
+                    if hasattr(register, "new_vulnerabilities"):
+                        if not hasattr(all_register, "new_vulnerabilities"):
+                            all_register.new_vulnerabilities = []
+                        all_register.new_vulnerabilities.extend(register.new_vulnerabilities)
+
+            self.finished.emit(all_register)
         except Exception as exc:
             self.failed.emit(str(exc))
         finally:
@@ -490,7 +534,7 @@ class MainWindow(QMainWindow):
         self._threat_panel.threat_selected.connect(self._properties_panel.set_item)
         self._threat_panel.threat_added.connect(self._on_save_project)
         self._threat_panel.threat_removed.connect(self._on_save_project)
-        self._threat_panel.run_analysis_requested.connect(self._on_run_analysis)
+        self._threat_panel.run_analysis_requested.connect(lambda mode, iters: self._on_run_analysis(mode, iters))
         self._threat_panel_dock = self._create_dock(
             "Threat Ledger",
             self._threat_panel,
@@ -508,12 +552,12 @@ class MainWindow(QMainWindow):
         self._linddun_threat_ledger.reasoning_requested.connect(self._on_reasoning_requested)
         self._vulnerability_panel.reasoning_requested.connect(self._on_reasoning_requested)
 
-        self._stride_threat_ledger.run_analysis_requested.connect(self._on_run_analysis)
+        self._stride_threat_ledger.run_analysis_requested.connect(lambda mode, iters: self._on_run_analysis(mode, iters))
         self._stride_threat_ledger.threat_added.connect(self._on_save_project)
         self._stride_threat_ledger.threat_removed.connect(self._on_save_project)
         
         self._risk_assessment_panel.threat_edited.connect(self._on_save_project)
-        self._linddun_threat_ledger.run_analysis_requested.connect(self._on_run_analysis)
+        self._linddun_threat_ledger.run_analysis_requested.connect(lambda mode, iters: self._on_run_analysis(mode, iters))
         self._linddun_threat_ledger.threat_added.connect(self._on_save_project)
         self._linddun_threat_ledger.threat_removed.connect(self._on_save_project)
 
@@ -976,9 +1020,38 @@ class MainWindow(QMainWindow):
         dialog = AISettingsDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             config = dialog.get_config()
-            config.save()
+            try:
+                config.save()
+                
+                # Verify the save actually persisted the API key
+                reloaded = AIConfig.load()
+                saved_key = reloaded.gemini_api_key.get_secret_value()
+                entered_key = config.gemini_api_key.get_secret_value()
+                
+                if entered_key and not saved_key:
+                    from threatpilot.config.ai_config import _ENV_FILE
+                    QMessageBox.warning(
+                        self,
+                        "Settings Warning",
+                        f"Settings were saved but the API key could not be encrypted.\n\n"
+                        f"Config file: {_ENV_FILE.absolute()}\n\n"
+                        f"This is usually caused by a missing encryption backend or permission issue in the home directory.\n"
+                        f"Check the application logs for details."
+                    )
+                else:
+                    self.statusBar().showMessage(
+                        f"Settings updated (Auto-save: {config.autosave_interval} min)."
+                    )
+                    
+            except Exception as exc:
+                QMessageBox.critical(
+                    self,
+                    "Save Error",
+                    f"Failed to save AI settings:\n\n{exc}"
+                )
+                return
+            
             self._autosave_timer.setInterval(config.autosave_interval * 60000)
-            self.statusBar().showMessage(f"Settings updated (Auto-save: {config.autosave_interval} min).")
 
     def _on_prompt_config(self) -> None:
         """Edit the prompt generation parameters."""
@@ -1022,10 +1095,26 @@ class MainWindow(QMainWindow):
             dialog = RiskMatrixDialog(self._project.threat_register.threats, component_names=component_names, is_dark=self._is_dark_theme, project=self._project, parent=self)
             dialog.exec()
 
-    def _on_run_analysis(self, analysis_mode: str | None = None) -> None:
-        """Trigger AI-driven threat analysis using the configured provider."""
+    def _on_run_analysis(self, analysis_mode: str | None = None, iterations: int = 1) -> None:
+        """Trigger AI-driven threat analysis using the configured provider.
+        
+        Args:
+            analysis_mode: 'STRIDE', 'LINDDUN', or None for all.
+            iterations: Number of full analysis passes (1-5). When > 1,
+                all segments auto-continue without user prompts.
+        """
         if not self._project:
             return
+        
+        # Stop existing worker if any
+        if hasattr(self, "_worker") and self._worker.isRunning():
+            try:
+                self._worker.finished.disconnect()
+                self._worker.failed.disconnect()
+            except Exception:
+                pass
+            self._worker.terminate()
+            self._worker.wait()
         
         mode = analysis_mode if analysis_mode and analysis_mode != "ALL" else None
         
@@ -1059,12 +1148,13 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "AI Error", f"Could not create AI provider:\n{exc}")
             return
 
-        self._progress = QProgressDialog("Analyzing system architecture...", "Cancel", 0, 0, self)
+        iter_label = f" ({iterations} iterations)" if iterations > 1 else ""
+        self._progress = QProgressDialog(f"Analyzing system architecture{iter_label}...", "Cancel", 0, 0, self)
         self._progress.setWindowTitle("AI Threat Analysis")
         self._progress.setWindowModality(Qt.WindowModality.WindowModal)
         self._progress.setMinimumDuration(500)
         
-        self.statusBar().showMessage(f"Running threat analysis via {config.provider_type}...")
+        self.statusBar().showMessage(f"Running threat analysis via {config.provider_type}{iter_label}...")
         if hasattr(self._stride_threat_ledger, "_btn_run"):
             self._stride_threat_ledger._btn_run.setEnabled(False)
         if hasattr(self._linddun_threat_ledger, "_btn_run"):
@@ -1074,7 +1164,8 @@ class MainWindow(QMainWindow):
             provider, 
             self._project.prompt_config, 
             dfd, 
-            self._project.project_name
+            self._project.project_name,
+            iterations=iterations
         )
         self._worker.finished.connect(lambda reg: self._on_analysis_finished(reg, self._project))
         self._worker.failed.connect(self._on_analysis_failed)
@@ -1086,8 +1177,11 @@ class MainWindow(QMainWindow):
         self._worker.response_ready.connect(lambda r: self.append_ai_log(r, "RESPONSE"))
         self._worker.request_segment_continuation.connect(self._on_request_continuation)
         self._worker.partial_result_ready.connect(lambda reg: self._on_partial_analysis_result(reg, self._project))
+        self._worker.iteration_progress.connect(self._on_iteration_progress)
         
         self.append_ai_log("SECURITY WARNING: Logs may contain architectural details. Masking is active for identified API keys.", "SYSTEM")
+        if iterations > 1:
+            self.append_ai_log(f"Multi-iteration mode enabled: {iterations} full passes will run automatically.", "SYSTEM")
         
         self._ai_log_dock.show()
         self._ai_log_dock.raise_()
@@ -1211,6 +1305,26 @@ class MainWindow(QMainWindow):
         )
         should_continue = (reply == QMessageBox.StandardButton.Yes)
         self._worker.continue_analysis(should_continue)
+
+    def _on_iteration_progress(self, current_iter: int, total_iters: int, current_seg: int, total_segs: int) -> None:
+        """Update progress dialog and status bar during multi-iteration analysis.
+        
+        Args:
+            current_iter: The iteration currently being processed (1-based).
+            total_iters: Total number of iterations requested.
+            current_seg: The segment within the current iteration (0 = starting).
+            total_segs: Total number of segments per iteration.
+        """
+        if current_seg == 0:
+            label = f"Iteration {current_iter}/{total_iters}: Starting segmented analysis ({total_segs} segments)..."
+        else:
+            label = f"Iteration {current_iter}/{total_iters}: Segment {current_seg}/{total_segs} complete — continuing..."
+        
+        if hasattr(self, "_progress") and self._progress:
+            self._progress.setLabelText(label)
+        
+        self.statusBar().showMessage(label)
+        self.append_ai_log(label, "SYSTEM")
 
     def _on_analysis_finished(self, new_register, origin_project: Project | None = None) -> None:
         """Merge new threats into the project and refresh UI."""
@@ -1411,6 +1525,16 @@ class MainWindow(QMainWindow):
             or (prov_type == "gemini" and config.api_key)
         )
         if has_valid_config:
+            # Safely stop existing worker if running
+            if hasattr(self, "_worker_ai_vision") and self._worker_ai_vision.isRunning():
+                try:
+                    self._worker_ai_vision.finished.disconnect()
+                    self._worker_ai_vision.failed.disconnect()
+                except Exception:
+                    pass
+                self._worker_ai_vision.terminate()
+                self._worker_ai_vision.wait()
+
             self.statusBar().showMessage(f"Using AI Vision ({prov_type.capitalize()}) to detect components...")
             provider = create_ai_provider(config)
             self._worker_ai_vision = AIVisionWorker(
