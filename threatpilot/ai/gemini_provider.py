@@ -12,18 +12,14 @@ import json
 import logging
 import socket
 from typing import Any, Dict, Optional
-from threatpilot.ai.ai_provider_interface import AIProviderInterface
+from threatpilot.ai.ai_provider_interface import AIProviderInterface, TokenUsage
 from threatpilot.config.ai_config import AIConfig
 from threatpilot.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 class GeminiProvider(AIProviderInterface):
-    """Integrates with Google's Gemini models via REST API.
-
-    Features automated fallback between v1 (Stable) and v1beta (Preview)
-    to handle various model availability states.
-    """
+    """Integrates with Google's Gemini family of models via REST API, supporting v1/v1beta fallback."""
 
     def __init__(self, config: AIConfig) -> None:
         super().__init__(config)
@@ -34,12 +30,10 @@ class GeminiProvider(AIProviderInterface):
         prompt: str,
         system_instructions: Optional[str] = None,
         **kwargs: Any
-    ) -> tuple[str, dict]:
-        """Send a request to Gemini and return the choice text."""
+    ) -> tuple[str, TokenUsage]:
+        """Sends a text-based chat completion request to the Gemini API."""
         contents = [{"role": "user", "parts": [{"text": prompt}]}]
-        
         max_out = max(self.config.max_tokens, 16384)
-        
         mime_type = kwargs.get("response_mime_type", "application/json")
         
         payload: Dict[str, Any] = {
@@ -53,21 +47,29 @@ class GeminiProvider(AIProviderInterface):
             }
         }
 
-        model_name = (self.config.model_name or "").lower()
-        if "2.0" in model_name or "2-0" in model_name:
-            payload["generationConfig"]["thinkingConfig"] = {
-                "thinkingBudget": 2048
-            }
-        
-        elif "2.5" in model_name or "2-5" in model_name:
-            payload["generationConfig"]["thinkingConfig"] = {
-                "thinkingBudget": 2048
-            }
+        model = (self.config.model_name or "").lower()
+        if any(x in model for x in ["2.0", "2-0", "2.5", "2-5"]):
+            payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": 2048}
+
+        is_debug = getattr(self.config, "application_mode", "Production") == "Debug"
+        if is_debug:
+            logger.info(f"GEMINI PROMPT:\n{prompt}")
+        else:
+            logger.info(f"GEMINI PROMPT: {prompt[:200]}...")
 
         if system_instructions:
             payload["system_instruction"] = {"parts": [{"text": system_instructions}]}
+            if is_debug:
+                logger.info(f"GEMINI SYSTEM INSTRUCTIONS:\n{system_instructions}")
+            else:
+                logger.info(f"GEMINI SYSTEM INSTRUCTIONS: {system_instructions[:200]}...")
 
-        return await self._execute_with_fallback(payload)
+        raw_text, usage = await self._execute_with_fallback(payload)
+        if is_debug:
+            logger.info(f"GEMINI RESPONSE ({len(raw_text)} chars):\n{raw_text}")
+        else:
+            logger.info(f"GEMINI RESPONSE RECEIVED ({len(raw_text)} chars): {raw_text[:200]}...")
+        return raw_text, usage
 
     async def vision_complete(
         self,
@@ -76,133 +78,86 @@ class GeminiProvider(AIProviderInterface):
         mime_type: str = "image/png",
         system_instructions: Optional[str] = None,
         **kwargs: Any
-    ) -> tuple[str, dict]:
-        """Send a request to Gemini including an image."""
-        image_b64 = base64.b64encode(image_bytes).decode("utf-8")
-        contents = [
-            {
-                "role": "user",
-                "parts": [
-                    {"text": prompt},
-                    {"inline_data": {"mime_type": mime_type, "data": image_b64}}
-                ]
-            }
-        ]
-
+    ) -> tuple[str, TokenUsage]:
+        """Sends a multimodal request containing image data to the Gemini API."""
+        contents = [{
+            "role": "user",
+            "parts": [
+                {"text": prompt},
+                {"inline_data": {"mime_type": mime_type, "data": base64.b64encode(image_bytes).decode("utf-8")}}
+            ]
+        }]
         payload: Dict[str, Any] = {
             "contents": contents,
             "generationConfig": {
                 "temperature": self.config.temperature,
                 "maxOutputTokens": max(self.config.max_tokens, 16384),
-                "topP": 0.95,
-                "topK": 40,
-                "responseMimeType": "application/json"
+                "topP": 0.95, "topK": 40, "responseMimeType": "application/json"
             }
         }
-
-        if system_instructions:
-            payload["system_instruction"] = {"parts": [{"text": system_instructions}]}
-
+        if system_instructions: payload["system_instruction"] = {"parts": [{"text": system_instructions}]}
         return await self._execute_with_fallback(payload)
 
-    async def _execute_with_fallback(self, payload: Dict[str, Any]) -> tuple[str, dict]:
-        """Execute request with automated URL version fallback (v1 -> v1beta)."""
+    async def _execute_with_fallback(self, payload: Dict[str, Any]) -> tuple[str, TokenUsage]:
+        """Executes the API request with automated URL version fallback and retry logic."""
         model = (self.config.model_name or "gemini-3.1-flash-lite-preview").strip().replace("\n", "").replace("\r", "")
-        if model.lower().startswith("models/"):
-            model = model[7:]
-            
+        if model.lower().startswith("models/"): model = model[7:]
         api_key = self.config.api_key.strip().replace("\n", "").replace("\r", "")
-        if not api_key:
-            raise RuntimeError("Gemini API key is missing.")
+        if not api_key: raise RuntimeError("Gemini API key is missing.")
 
-        last_error = None
-        
         custom_endpoint = self.config.endpoint_url.strip()
-        urls_to_try = []
-        
         if custom_endpoint and custom_endpoint != "http://localhost:11434":
-            if ":generateContent" in custom_endpoint:
-                urls_to_try = [custom_endpoint]
-            else:
-                host = custom_endpoint.rstrip("/")
-                urls_to_try = [
-                    f"{host}/v1beta/models/{model}:generateContent",
-                    f"{host}/v1/models/{model}:generateContent"
-                ]
-        else:
-            urls_to_try = [
-                f"{self._api_host}/v1beta/models/{model}:generateContent",
-                f"{self._api_host}/v1/models/{model}:generateContent"
-            ]
+            urls = [custom_endpoint] if ":generateContent" in custom_endpoint else [f"{custom_endpoint.rstrip('/')}/v1beta/models/{model}:generateContent", f"{custom_endpoint.rstrip('/')}/v1/models/{model}:generateContent"]
+        else: urls = [f"{self._api_host}/v1beta/models/{model}:generateContent", f"{self._api_host}/v1/models/{model}:generateContent"]
             
-        headers = {
-            "Content-Type": "application/json",
-            "x-goog-api-key": api_key
-        }
-            
-        for url in urls_to_try:
-            response = None
+        headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
+        last_error = None
+        for url in urls:
             try:
-                async with httpx.AsyncClient(timeout=self.config.timeout) as client:
-                    retries = 3
-                    for attempt in range(retries):
-                        logger.debug(f"Sending request to Gemini: {url}")
-                        response = await client.post(url, json=payload, headers=headers)
-                        
-                        if response.status_code in [500, 502, 503, 504] and attempt < retries - 1:
-                            logger.warning(f"Gemini server error {response.status_code}. Retrying...")
-                            await asyncio.sleep(2 ** attempt)
-                            continue
-                            
-                        if response.status_code in [400, 404]:
-                            last_error = f"HTTP {response.status_code} on {url}"
-                            break
-                            
-                        response.raise_for_status()
-                        
-                        data = response.json()
-                        usage = data.get("usageMetadata", {})
-                        if "candidates" in data and len(data["candidates"]) > 0:
+                async with httpx.AsyncClient(timeout=float(self.config.timeout)) as client:
+                    for attempt in range(3):
+                        resp = await client.post(url, json=payload, headers=headers)
+                        if resp.status_code != 200:
+                            error_body = resp.text
+                            logger.error(f"Gemini API Error ({resp.status_code}) on {url}: {error_body}")
+                            if resp.status_code in [500, 502, 503, 504] and attempt < 2:
+                                await asyncio.sleep(2 ** attempt); continue
+                            resp.raise_for_status()
+                        data = resp.json(); meta = data.get("usageMetadata", {})
+                        usage = TokenUsage(
+                            prompt_tokens=meta.get("promptTokenCount", 0),
+                            completion_tokens=meta.get("candidatesTokenCount", 0),
+                            total_tokens=meta.get("totalTokenCount", 0)
+                        )
+                        text = ""
+                        if "candidates" in data and data["candidates"]:
                             candidate = data["candidates"][0]
-                            finish_reason = candidate.get("finishReason", "COMPLETED")
-                            parts = candidate.get("content", {}).get("parts", [])
-                            text = "".join(part.get("text", "") for part in parts if "text" in part)
-                            return text, {"usage": usage, "finish_reason": finish_reason}
-                        return "", {"usage": usage}
+                            content = candidate.get("content")
+                            if content and "parts" in content:
+                                text = "".join(p.get("text", "") for p in content["parts"] if "text" in p)
+                            elif candidate.get("finishReason") == "SAFETY":
+                                text = "AI response was blocked by safety filters. Please try a different prompt or adjust sensitivity."
+                        return text, usage
+            except Exception as exc: last_error = str(exc)
 
-                if response is not None and response.status_code in [400, 404]:
-                    continue
+        raise IOError(f"Gemini API request failed: {last_error}")
 
-            except httpx.HTTPError as exc:
-                if response is not None:
-                    try:
-                        error_msg = response.json().get("error", {}).get("message", response.text)
-                    except Exception:
-                        error_msg = response.text
-                    
-                    if response.status_code == 404:
-                        last_error = f"Model Not Found (404): The model '{model}' was not recognized. {error_msg}"
-                    elif response.status_code == 401:
-                        last_error = f"Invalid API Key (401): The provided key was rejected by Google. {error_msg}"
-                    elif response.status_code == 429:
-                        last_error = f"Rate Limit Exceeded (429): Too many requests to Gemini. {error_msg}"
-                    else:
-                        last_error = f"HTTP {response.status_code}: {error_msg}"
-                else:
-                    last_error = f"Connection Failed: {type(exc).__name__} - {exc}"
-                
-                if response is not None and response.status_code not in [400, 404, 500, 502, 503, 504]:
-                    break
-
-        error_context = url if 'url' in locals() else 'unknown URL'
-        error_msg = f"Gemini API request failed. Last attempted URL: {error_context}. Error: {last_error}"
-        logger.error(error_msg)
-        raise IOError(error_msg)
+    async def get_available_models(self) -> List[str]:
+        """Retrieves common Gemini models or lists them if the API key is set."""
+        defaults = ["gemini-1.5-pro", "gemini-1.5-flash", "gemini-2.0-flash-exp"]
+        if not self.config.api_key: return defaults
+        try:
+            url = f"{self._api_host}/v1beta/models?key={self.config.api_key}"
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(url)
+                if resp.status_code == 200:
+                    return [m["name"].replace("models/", "") for m in resp.json().get("models", []) if "generateContent" in m.get("supportedGenerationMethods", [])]
+        except Exception: pass
+        return defaults
 
     def is_available(self) -> bool:
-        """Check if the Gemini API host is reachable."""
+        """Checks if the Google Generative Language API is reachable."""
         try:
             socket.create_connection(("generativelanguage.googleapis.com", 443), timeout=3)
             return True
-        except (socket.error, socket.timeout):
-            return False
+        except Exception: return False

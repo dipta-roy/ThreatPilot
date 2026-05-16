@@ -11,22 +11,20 @@
     color: #c9d1d9;
 }
 
-/* 2. Primary Dark Backgrounds (Forcing all containers) */
+/* 2. Primary Dark Backgrounds (Consolidated) */
 QMainWindow, QDialog, QDockWidget, QScrollArea, QGraphicsView, QTabWidget, QTabBar,
 QAbstractScrollArea, QWizard, QWizardPage, QMessageBox,
-#properties_container, #prop_widget_container, #assessment_container, #threat_panel, #central_tabs_container {
+QWidget#properties_container, QWidget#prop_widget_container, QWidget#assessment_container, 
+QWidget#threat_panel, QWidget#central_tabs_container {
     background-color: #0d1117;
-    background: #0d1117;
     border: none;
 }
 
-/* 3. Deep-Nested Background Overrides */
-QWidget#properties_container QWidget, QWidget#assessment_container QWidget, QWizardPage QWidget {
-    background-color: #0d1117;
-}
-
-/* Viewports for Scroll Areas */
-QAbstractScrollArea > QWidget > QWidget {
+/* 3. Nested Background Consistency */
+QAbstractScrollArea > QWidget > QWidget,
+QWidget#properties_container QWidget, 
+QWidget#assessment_container QWidget, 
+QWizardPage QWidget {
     background-color: #0d1117;
 }
 
@@ -144,6 +142,14 @@ QComboBox QAbstractItemView {
     outline: none;
 }
 
+#combo_iterations {
+    padding: 4px 8px;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    background: #0d1117;
+    color: #c9d1d9;
+}
+
 /* Fix for dropdowns inside table cells — strip extra spacing so they sit flush */
 QTableWidget QComboBox {
     background-color: #161b22;
@@ -251,6 +257,12 @@ QLabel {
     color: #58a6ff;
 }
 
+#threat_summary_label {
+    color: #8b949e;
+    font-weight: bold;
+    margin-bottom: 5px;
+}
+
 /* 12. Checkboxes & Indicators */
 QCheckBox, QTableWidget::indicator, QListWidget::indicator, QTreeWidget::indicator {
     background-color: transparent;
@@ -275,3 +287,143 @@ QCheckBox::indicator:checked, QTableWidget::indicator:checked, QListWidget::indi
     background-color: #1f6feb;
     border: 2px solid #58a6ff;
 }
+
+/* 13. Utility Classes for Python Integration */
+.heading-blue {
+    color: #58a6ff;
+    font-weight: bold;
+}
+
+.subheading-gray {
+    color: #8b949e;
+    font-weight: 500;
+}
+
+.text-danger {
+    color: #d73a49;
+    font-style: italic;
+}
+
+/* Status Classes */
+.status-open { color: #ff8a8a; }
+.status-mitigated { color: #a3d9a5; }
+.status-accepted { color: #fdd663; }
+.status-in-progress { color: #8ab4f8; }
+
+.heading-blue {
+    font-size: 14px;
+    font-weight: bold;
+    color: #58a6ff;
+    margin-bottom: 5px;
+}
+
+.cvss-score-box {
+    padding: 15px;
+    background: #0d1117;
+    border-radius: 10px;
+    border: 2px solid #30363d;
+    font-size: 28px;
+    font-weight: bold;
+}
+
+.cvss-vector-text {
+    color: #8b949e;
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 11px;
+}
+
+/* 10. About Dialog Special Styling */
+QWidget#about_banner {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #0d1117, stop:0.5 #161b22, stop:1 #1a1e2e);
+}
+QLabel#about_app_name {
+    color: #58a6ff;
+    background: transparent;
+}
+QLabel#about_tagline {
+    color: #8b949e;
+    background: transparent;
+}
+QWidget#about_separator {
+    background-color: #30363d;
+}
+QWidget#about_content {
+    background-color: #0d1117;
+}
+QLabel#about_desc {
+    color: #c9d1d9;
+    background: transparent;
+}
+QLabel#about_info_label {
+    color: #58a6ff;
+    background: transparent;
+}
+QLabel#about_info_value {
+    color: #c9d1d9;
+    background: transparent;
+}
+QLabel#about_copyright {
+    color: #484f58;
+    background: transparent;
+}
+QWidget#about_btn_bar {
+    background-color: #161b22;
+    border-top: 1px solid #30363d;
+}
+QDialogButtonBox#about_btns QPushButton {
+    background-color: #21262d;
+    color: #c9d1d9;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 6px 20px;
+    font-weight: bold;
+}
+QDialogButtonBox#about_btns QPushButton:hover {
+    background-color: #30363d;
+    border-color: #58a6ff;
+}
+
+/* 11. Severity Badges */
+*[class="severity-critical"] { background-color: #da3633; color: #ffffff; border-radius: 4px; padding: 2px 4px; font-weight: bold; }
+*[class="severity-high"] { background-color: #e37e28; color: #ffffff; border-radius: 4px; padding: 2px 4px; font-weight: bold; }
+*[class="severity-medium"] { background-color: #d29922; color: #ffffff; border-radius: 4px; padding: 2px 4px; font-weight: bold; }
+*[class="severity-low"] { background-color: #238636; color: #ffffff; border-radius: 4px; padding: 2px 4px; font-weight: bold; }
+*[class="severity-info"] { background-color: #30363d; color: #8b949e; border-radius: 4px; padding: 2px 4px; font-weight: bold; }
+*[class="severity-none"] { background-color: #21262d; color: #8b949e; border-radius: 4px; padding: 2px 4px; font-weight: bold; }
+
+/* 12. Component Status Badges */
+*[class="status-open"] { background: #3c1518; color: #ff8a8a; border: 1px solid #da3633; border-radius: 4px; padding: 2px 6px; font-weight: bold; }
+*[class="status-mitigated"] { background: #1c4a2e; color: #a3d9a5; border: 1px solid #238636; border-radius: 4px; padding: 2px 6px; font-weight: bold; }
+*[class="status-progress"] { background: #1a5fb4; color: #e8f0fe; border: 1px solid #1f6feb; border-radius: 4px; padding: 2px 6px; font-weight: bold; }
+
+/* 13. Action Buttons */
+QPushButton[class="btn-primary"] { background: #1f6feb; color: #ffffff; font-weight: bold; border-radius: 4px; padding: 6px 12px; }
+QPushButton[class="btn-primary"]:hover { background-color: #388bfd; }
+QPushButton[class="btn-success"] { background: #238636; color: #ffffff; font-weight: bold; border-radius: 4px; padding: 6px 12px; }
+QPushButton[class="btn-success"]:hover { background-color: #2ea043; }
+QPushButton[class="btn-explain"] { background: #1f6feb; color: #ffffff; border: 1px solid #388bfd; font-weight: bold; font-size: 11px; border-radius: 4px; padding: 2px 6px; }
+QPushButton[class="btn-edit"] { background: #238636; color: #ffffff; border: 1px solid #2ea043; font-weight: bold; font-size: 11px; border-radius: 4px; padding: 2px 6px; }
+QPushButton[class="btn-delete-row"] { background: #da3633; color: #ffffff; border: 1px solid #f85149; font-weight: bold; font-size: 11px; border-radius: 4px; padding: 2px 6px; }
+QPushButton[class="btn-delete-row"]:hover { background-color: #b62324; }
+
+/* 14. CVSS/Risk Typography (Color only) */
+*[class="cvss-critical"] { color: #ff4444; }
+*[class="cvss-high"] { color: #ff8800; }
+*[class="cvss-medium"] { color: #ffbb33; }
+*[class="cvss-low"] { color: #00c851; }
+*[class="cvss-none"] { color: #888888; }
+
+/* 15. Risk Matrix Dialg */
+QWidget#matrix_side_panel { background-color: #161b22; border-radius: 8px; }
+QLabel#matrix_header { color: #58a6ff; }
+QLabel#matrix_desc { color: #8b949e; }
+*[class="matrix-cell-empty"] { color: #484f58; }
+
+/* 16. Utility Texts */
+QLabel[class="text-muted"] { color: #8b949e; }
+QLabel[class="text-accent"] { color: #58a6ff; }
+QLabel[class="text-error"] { color: #d73a49; }
+QLabel#placeholder_label { color: #8899aa; font-weight: 500; }
+
+/* 17. Diagram Canvas */
+QGraphicsView#diagram_canvas { background-color: #0d1117; border: none; }

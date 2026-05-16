@@ -11,6 +11,7 @@ from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -22,6 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from threatpilot.core.threat_model import STRIDECategory, Threat, ThreatRegister
+from threatpilot.risk.utils import get_risk_label
 
 # ---------------------------------------------------------------------------
 # Category sets
@@ -40,16 +42,7 @@ LINDDUN_CATEGORIES = {
 
 
 class ThreatPanel(QWidget):
-    """Panel for viewing and managing identified threats.
-
-    Displays threats in a flat table view with columns for category, severity,
-    title, affected component, and CVSS score.
-
-    Signals:
-        threat_selected: Emitted when a threat row is clicked. Carries the
-            ``Threat`` object.
-        run_analysis_requested: Emitted when the "Run Analysis" button is clicked.
-    """
+    """Provides a flat table view for managing STRIDE or LINDDUN threats."""
 
     threat_selected: Signal = Signal(object)
     threat_added: Signal = Signal(object)
@@ -64,100 +57,102 @@ class ThreatPanel(QWidget):
         self._is_dark_theme: bool = False
         self._setup_ui()
 
-    # ------------------------------------------------------------------
-    # UI setup
-    # ------------------------------------------------------------------
     def _setup_ui(self) -> None:
-        """Initialise table widget and control buttons."""
+        """Initializes the table layout, search filters, and control actions."""
         self.setObjectName("threat_panel")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 12, 8, 8)
         layout.setSpacing(10)
 
-        # --- Toolbar ---
         toolbar_layout = QHBoxLayout()
-        self._search_input = QLineEdit()
-        self._search_input.setPlaceholderText("Filter threats...")
-        self._search_input.setFixedWidth(250)
-        self._search_input.textChanged.connect(lambda: self.refresh())
-        toolbar_layout.addWidget(self._search_input)
-
-        self._btn_add = QPushButton("Add Manual Threat")
-        self._btn_add.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._btn_add.clicked.connect(self._on_add_threat)
-        toolbar_layout.addWidget(self._btn_add)
-
-        self._btn_delete = QPushButton("Delete Selected")
-        self._btn_delete.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._btn_delete.clicked.connect(self._on_delete_threat)
-        toolbar_layout.addWidget(self._btn_delete)
-
-        from PySide6.QtWidgets import QCheckBox
-        self._select_all = QCheckBox("Select All")
-        self._select_all.clicked.connect(self._on_select_all)
-        self._select_all.setStyleSheet("""
-            QCheckBox { color: #8b949e; margin-left: 10px; }
-            QCheckBox::indicator { width: 14px; height: 14px; border: 1px solid #30363d; border-radius: 3px; }
-            QCheckBox::indicator:checked { background-color: #238636; border: 1px solid #238636; }
-        """)
-        toolbar_layout.addWidget(self._select_all)
-
-        toolbar_layout.addStretch()
 
         self._filter_combo = QComboBox()
         self._filter_combo.addItems(["All Frameworks", "STRIDE (Security)", "LINDDUN (Privacy)"])
-        # Map the internal filter mode to the combo index
         mode_map = {"ALL": 0, "STRIDE": 1, "LINDDUN": 2}
         self._filter_combo.setCurrentIndex(mode_map.get(self._filter_mode, 0))
         self._filter_combo.currentTextChanged.connect(self._on_filter_mode_changed)
-        self._filter_combo.setFixedWidth(180)
+        self._filter_combo.setMinimumWidth(150)
+        self._filter_combo.setMaximumWidth(200)
         toolbar_layout.addWidget(self._filter_combo)
 
-        btn_text = "Run AI Analysis"
-        if self._filter_mode == "STRIDE":
-            btn_text = "Run STRIDE Analysis"
-        elif self._filter_mode == "LINDDUN":
-            btn_text = "Run LINDDUN Analysis"
+        self._search_input = QLineEdit()
+        self._search_input.setPlaceholderText("Filter threats...")
+        self._search_input.setMinimumWidth(180)
+        self._search_input.setMaximumWidth(300)
+        self._search_input.textChanged.connect(lambda: self.refresh())
+        toolbar_layout.addWidget(self._search_input)
 
-        # --- Iterations selector (only for STRIDE / LINDDUN tabs) ---
+        self._cat_filter_combo = QComboBox()
+        self._cat_filter_combo.setMinimumWidth(140)
+        self._cat_filter_combo.setMaximumWidth(180)
+        self._cat_filter_combo.currentTextChanged.connect(lambda: self.refresh())
+        toolbar_layout.addWidget(self._cat_filter_combo)
+
+        self._sev_filter_combo = QComboBox()
+        self._sev_filter_combo.addItems(["All Severities", "Critical", "High", "Medium", "Low", "Info", "None"])
+        self._sev_filter_combo.setMinimumWidth(110)
+        self._sev_filter_combo.setMaximumWidth(150)
+        self._sev_filter_combo.currentTextChanged.connect(lambda: self.refresh())
+        toolbar_layout.addWidget(self._sev_filter_combo)
+
+        self._update_category_filter_options()
+
+        sep1 = QFrame()
+        sep1.setFrameShape(QFrame.Shape.VLine)
+        sep1.setFrameShadow(QFrame.Shadow.Sunken)
+        toolbar_layout.addWidget(sep1)
+
+        btn_text = "Run AI Analysis"
+        if self._filter_mode == "STRIDE": btn_text = "Run STRIDE Analysis"
+        elif self._filter_mode == "LINDDUN": btn_text = "Run LINDDUN Analysis"
+
         if self._filter_mode in ("STRIDE", "LINDDUN"):
             iter_label = QLabel("Iterations:")
-            iter_label.setStyleSheet("font-weight: bold; margin-left: 10px; color: #8b949e;")
+            iter_label.setProperty("class", "text-muted")
+            iter_label.setStyleSheet("font-weight: bold; margin-left: 10px;")
             toolbar_layout.addWidget(iter_label)
 
             self._iterations_combo = QComboBox()
             self._iterations_combo.setObjectName("combo_iterations")
             self._iterations_combo.addItems([str(i) for i in range(1, 6)])
-            self._iterations_combo.setCurrentIndex(0)  # default = 1
-            self._iterations_combo.setMinimumWidth(85)
-            self._iterations_combo.setFixedWidth(85)
-            self._iterations_combo.setStyleSheet("""
-                QComboBox {
-                    padding: 4px 8px;
-                    border: 1px solid #30363d;
-                    border-radius: 4px;
-                    background: #0d1117;
-                    color: #c9d1d9;
-                }
-                QComboBox::drop-down {
-                    border: 0;
-                }
-            """)
-            self._iterations_combo.setToolTip(
-                "Number of full analysis passes to run.\n"
-                "Each iteration re-analyzes every segment, allowing the AI\n"
-                "to discover additional threats on subsequent passes."
-            )
+            self._iterations_combo.setCurrentIndex(0)
+            self._iterations_combo.setMinimumWidth(80)
+            self._iterations_combo.setMaximumWidth(100)
             toolbar_layout.addWidget(self._iterations_combo)
         else:
             self._iterations_combo = None
 
         self._btn_run = QPushButton(btn_text)
         self._btn_run.setObjectName("btn_run_threat_analysis")
-        self._btn_run.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._btn_run.setStyleSheet("background-color: #238636; color: white; font-weight: bold;")
+        self._btn_run.setProperty("class", "btn-primary")
         self._btn_run.clicked.connect(self._on_run_clicked)
         toolbar_layout.addWidget(self._btn_run)
+
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.Shape.VLine)
+        sep2.setFrameShadow(QFrame.Shadow.Sunken)
+        toolbar_layout.addWidget(sep2)
+
+        self._btn_add = QPushButton("Add Manual Threat")
+        self._btn_add.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_add.clicked.connect(self._on_add_threat)
+        toolbar_layout.addWidget(self._btn_add)
+
+        from PySide6.QtWidgets import QCheckBox
+        self._select_all = QCheckBox("Select All")
+        self._select_all.setObjectName("select_all_checkbox")
+        self._select_all.clicked.connect(self._on_select_all)
+        toolbar_layout.addWidget(self._select_all)
+
+        self._btn_delete = QPushButton("Delete Selected")
+        self._btn_delete.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_delete.clicked.connect(self._on_delete_threat)
+        toolbar_layout.addWidget(self._btn_delete)
+
+        self._btn_checklist = QPushButton("Generate Checklist")
+        self._btn_checklist.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_checklist.clicked.connect(lambda: self.run_analysis_requested.emit("CHECKLIST", 0))
+        toolbar_layout.addWidget(self._btn_checklist)
 
         toolbar_layout.addStretch()
         layout.addLayout(toolbar_layout)
@@ -165,22 +160,12 @@ class ThreatPanel(QWidget):
         self._btn_add.setEnabled(False)
         self._btn_delete.setEnabled(False)
 
-        # --- Summary label ---
         self._summary_label = QLabel("")
         self._summary_label.setObjectName("threat_summary_label")
         layout.addWidget(self._summary_label)
 
-        # --- Table ---
         self._table = QTableWidget(0, 7)
-        self._table.setHorizontalHeaderLabels([
-            "",
-            "SL #",
-            "Category",
-            "Severity",
-            "Threat Title",
-            "Affected Component",
-            "CVSS Score",
-        ])
+        self._table.setHorizontalHeaderLabels(["", "SL #", "Category", "Severity", "Threat Title", "Affected Component", "CVSS Score"])
 
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
@@ -192,308 +177,265 @@ class ThreatPanel(QWidget):
         self._table.setColumnWidth(5, 200)
         self._table.setColumnWidth(6, 100)
 
-        self._table.setHorizontalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
-        self._table.setVerticalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
-        self._table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self._table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._table.setAlternatingRowColors(True)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.verticalHeader().setDefaultSectionSize(38)
         self._table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
-        self._table.itemClicked.connect(self._on_item_clicked)
+        self._table.cellClicked.connect(self._on_cell_clicked)
+        self._table.itemSelectionChanged.connect(self._on_selection_changed)
         layout.addWidget(self._table)
 
         self.setEnabled(False)
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
     def set_theme(self, is_dark: bool) -> None:
-        """Update the panel's internal state for theme changes."""
+        """Updates the panel styling for theme transitions."""
         self._is_dark_theme = is_dark
         self.refresh()
 
     def set_register(self, register: Optional[ThreatRegister]) -> None:
-        """Load the threat list from the register into the table."""
+        """Binds a threat register to the panel and refreshes the view."""
         self._register = register
-
         has_reg = register is not None
         self.setEnabled(has_reg)
-
         if has_reg:
             self._btn_add.setEnabled(True)
             self._btn_delete.setEnabled(True)
-
+            if hasattr(self, "_btn_checklist"):
+                self._btn_checklist.setEnabled(True)
         self.refresh()
 
     def clear_filter(self) -> None:
-        """Reset search filters and show all results."""
+        """Clears the active search filter."""
         self._search_input.clear()
         self.refresh()
 
     def refresh(self) -> None:
-        """Clear and rebuild the table from the current register."""
-        # ── Preserve scroll & selection ──
+        """Synchronizes the table view with the current register state."""
+        if not self._register:
+            self._table.setRowCount(0)
+            self._summary_label.setText("")
+            return
+
         v_scroll = self._table.verticalScrollBar().value()
         h_scroll = self._table.horizontalScrollBar().value()
         prev_row = self._table.currentRow()
 
+        self._table.blockSignals(True)
         self._table.setRowCount(0)
 
-        if self._register is None:
-            self._summary_label.setText("")
-            return
+        visible_threats, category_counts = self._filter_threats()
+        self._update_summary(visible_threats, category_counts)
+        self._populate_table(visible_threats)
 
-        is_dark = self._is_dark_theme
-        search_text = self._search_input.text().strip().lower()
+        if 0 <= prev_row < self._table.rowCount():
+            self._table.selectRow(prev_row)
+        
+        self._table.verticalScrollBar().setValue(v_scroll)
+        self._table.horizontalScrollBar().setValue(h_scroll)
+        self._table.blockSignals(False)
 
-        # Determine which threats to show
+    def _filter_threats(self) -> tuple[list[Threat], dict[str, int]]:
+        """Applies active framework, category, severity, and search filters."""
         visible_threats: list[Threat] = []
-        category_counts: Dict[str, int] = {}
+        category_counts: dict[str, int] = {}
+        
+        search_text = self._search_input.text().strip().lower()
+        selected_cat = self._cat_filter_combo.currentText()
+        selected_sev = self._sev_filter_combo.currentText()
 
         for threat in self._register.threats:
-            # Filter by framework mode
             target_cat = self._resolve_category(threat.category)
-            if self._filter_mode == "STRIDE" and target_cat not in STRIDE_CATEGORIES:
-                continue
-            if self._filter_mode == "LINDDUN" and target_cat not in LINDDUN_CATEGORIES:
-                continue
+            if self._filter_mode == "STRIDE" and target_cat not in STRIDE_CATEGORIES: continue
+            if self._filter_mode == "LINDDUN" and target_cat not in LINDDUN_CATEGORIES: continue
+            
+            if selected_cat != "All Categories":
+                cat_name = target_cat.name.upper().replace("_PRIVACY", "").replace("_", " ")
+                if selected_cat.upper() != cat_name: continue
 
-            # Filter by search text
+            if selected_sev != "All Severities":
+                if selected_sev.upper() != get_risk_label(threat.cvss_score).upper(): continue
+
             if search_text:
-                sev_label = self._get_severity_label(threat.cvss_score).lower()
-                vuln_search_text = " ".join(getattr(threat, "vulnerability_ids", []))
-
-                matches_search = (
-                    search_text in threat.title.lower()
-                    or search_text in threat.description.lower()
-                    or search_text in vuln_search_text.lower()
-                    or search_text in threat.category.value.lower()
-                    or search_text in threat.affected_components.lower()
-                    or search_text in sev_label
+                sev_label = get_risk_label(threat.cvss_score).lower()
+                vuln_ids = " ".join(getattr(threat, "vulnerability_ids", []))
+                matches = (
+                    search_text in threat.title.lower() or
+                    search_text in threat.description.lower() or
+                    search_text in vuln_ids.lower() or
+                    search_text in threat.category.value.lower() or
+                    search_text in threat.affected_components.lower() or
+                    search_text in sev_label
                 )
-                if not matches_search:
-                    continue
+                if not matches: continue
 
             visible_threats.append(threat)
-            cat_name = target_cat.name.upper().replace("_PRIVACY", "")
-            category_counts[cat_name] = category_counts.get(cat_name, 0) + 1
+            cat_label = target_cat.name.upper().replace("_PRIVACY", "")
+            category_counts[cat_label] = category_counts.get(cat_label, 0) + 1
+            
+        return visible_threats, category_counts
 
-        # Build summary
-        parts = [f"{name}: {count}" for name, count in sorted(category_counts.items())]
-        total = len(visible_threats)
+    def _update_summary(self, threats: list[Threat], counts: dict[str, int]) -> None:
+        """Updates the status label with filtered threat metrics."""
+        parts = [f"{name}: {count}" for name, count in sorted(counts.items())]
+        total = len(threats)
         summary = f"{total} threat{'s' if total != 1 else ''}"
-        if parts:
-            summary += f"  •  {' | '.join(parts)}"
+        if parts: summary += f"  •  {' | '.join(parts)}"
         self._summary_label.setText(summary)
 
-        # Populate table
-        self._table.setRowCount(len(visible_threats))
-        bold_font = QFont()
-        bold_font.setBold(True)
+    def _populate_table(self, threats: list[Threat]) -> None:
+        """Constructs table rows for the provided threat list."""
+        self._table.setRowCount(len(threats))
+        is_dark = self._is_dark_theme
+        bold_font = QFont(); bold_font.setBold(True)
 
-        for row, threat in enumerate(visible_threats):
+        for row, threat in enumerate(threats):
+            sev_label = get_risk_label(threat.cvss_score)
             target_cat = self._resolve_category(threat.category)
-            sev_label = self._get_severity_label(threat.cvss_score)
             cat_name = target_cat.name.upper().replace("_PRIVACY", "")
 
-            # Checkbox
             chk_item = QTableWidgetItem()
             chk_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
             chk_item.setCheckState(Qt.CheckState.Unchecked)
             self._table.setItem(row, 0, chk_item)
 
-            # SL #
             sl_item = QTableWidgetItem(str(row + 1))
             sl_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             sl_item.setData(Qt.ItemDataRole.UserRole, threat)
             self._table.setItem(row, 1, sl_item)
 
-            # Category
-            cat_item = QTableWidgetItem(cat_name)
-            cat_item.setFont(bold_font)
-            if is_dark:
-                cat_item.setForeground(QColor("#58a6ff"))
-            else:
-                cat_item.setForeground(QColor("#0969da"))
-            self._table.setItem(row, 2, cat_item)
+            cat_lbl = QLabel(cat_name)
+            cat_lbl.setFont(bold_font)
+            cat_lbl.setProperty("class", "text-accent")
+            cat_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            cat_lbl.setContentsMargins(5, 0, 0, 0)
+            
+            cat_lbl.style().unpolish(cat_lbl)
+            cat_lbl.style().polish(cat_lbl)
+            self._table.setCellWidget(row, 2, cat_lbl)
 
-            # Severity (coloured table item)
-            sev_item = QTableWidgetItem(sev_label)
-            sev_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            sev_item.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
-            bg, fg = self._severity_colors(sev_label, is_dark)
-            sev_item.setBackground(bg)
-            sev_item.setForeground(fg)
-            self._table.setItem(row, 3, sev_item)
+            s_upper = sev_label.upper()
+            lbl = QLabel(sev_label)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            
+            if s_upper == "CRITICAL": lbl.setProperty("class", "severity-critical")
+            elif s_upper == "HIGH": lbl.setProperty("class", "severity-high")
+            elif s_upper == "MEDIUM": lbl.setProperty("class", "severity-medium")
+            elif s_upper == "LOW": lbl.setProperty("class", "severity-low")
+            else: lbl.setProperty("class", "severity-info")
+            
+            # Re-apply style to ensure class property is picked up
+            lbl.style().unpolish(lbl)
+            lbl.style().polish(lbl)
 
-            # Title
-            title_text = threat.title
-            if threat.is_accepted_risk:
-                title_text = f"[Accepted] {threat.title}"
+            container = QWidget()
+            layout = QHBoxLayout(container)
+            layout.setContentsMargins(4, 2, 4, 2)
+            layout.addWidget(lbl)
+            container.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            self._table.setCellWidget(row, 3, container)
+
+            title_text = f"[Accepted] {threat.title}" if threat.is_accepted_risk else threat.title
             title_item = QTableWidgetItem(title_text)
-            if threat.is_accepted_risk:
-                title_item.setForeground(QColor(Qt.GlobalColor.gray))
+            if threat.is_accepted_risk: title_item.setForeground(QColor(Qt.GlobalColor.gray))
             self._table.setItem(row, 4, title_item)
 
-            # Affected Component
             self._table.setItem(row, 5, QTableWidgetItem(threat.affected_components or "N/A"))
-
-            # CVSS Score
             score_item = QTableWidgetItem(f"{threat.cvss_score:.1f}")
             score_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self._table.setItem(row, 6, score_item)
 
-        # ── Restore scroll & selection ──
-        if prev_row >= 0 and prev_row < self._table.rowCount():
-            self._table.selectRow(prev_row)
-        self._table.verticalScrollBar().setValue(v_scroll)
-        self._table.horizontalScrollBar().setValue(h_scroll)
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
     @staticmethod
     def _resolve_category(category) -> STRIDECategory:
-        """Normalise a category value to a ``STRIDECategory`` enum member."""
-        if isinstance(category, STRIDECategory):
-            return category
+        """Resolves raw category input to a valid STRIDECategory enum."""
+        if isinstance(category, STRIDECategory): return category
         if isinstance(category, str):
             for member in STRIDECategory:
-                if category.lower() == member.value.lower():
-                    return member
-        return STRIDECategory.TAMPERING  # fallback
+                if category.lower() == member.value.lower(): return member
+        return STRIDECategory.TAMPERING
 
-    @staticmethod
-    def _get_severity_label(score: float) -> str:
-        """Map a numeric CVSS score to a qualitative severity label."""
-        if score >= 9.0:
-            return "CRITICAL"
-        if score >= 7.0:
-            return "HIGH"
-        if score >= 4.0:
-            return "MEDIUM"
-        if score > 0:
-            return "LOW"
-        return "NONE"
 
-    @staticmethod
-    def _severity_colors(sev_label: str, is_dark: bool) -> tuple:
-        """Return (background QColor, foreground QColor) for the severity level."""
-        if is_dark:
-            colors = {
-                "CRITICAL": (QColor("#7b1e1e"), QColor("white")),
-                "HIGH": (QColor("#cc0000"), QColor("white")),
-                "MEDIUM": (QColor("#e3b341"), QColor("white")),
-                "LOW": (QColor("#1f6feb"), QColor("white")),
-            }
-            default = (QColor("#30363d"), QColor("white"))
-        else:
-            colors = {
-                "CRITICAL": (QColor("#cf222e"), QColor("white")),
-                "HIGH": (QColor("#af4e00"), QColor("white")),
-                "MEDIUM": (QColor("#9a6700"), QColor("white")),
-                "LOW": (QColor("#0969da"), QColor("white")),
-            }
-            default = (QColor("#f6f8fa"), QColor("#57606a"))
-        return colors.get(sev_label, default)
-
-    # ------------------------------------------------------------------
-    # Slots
-    # ------------------------------------------------------------------
     def _on_filter_mode_changed(self, text: str) -> None:
-        """Update the internal filter mode and refresh the table."""
-        if "STRIDE" in text:
-            self._filter_mode = "STRIDE"
-        elif "LINDDUN" in text:
-            self._filter_mode = "LINDDUN"
-        else:
-            self._filter_mode = "ALL"
+        """Handles framework filter transitions and updates UI components."""
+        if "STRIDE" in text: self._filter_mode = "STRIDE"
+        elif "LINDDUN" in text: self._filter_mode = "LINDDUN"
+        else: self._filter_mode = "ALL"
             
-        # Update the analysis button text accordingly
         if hasattr(self, "_btn_run"):
             btn_text = "Run AI Analysis"
-            if self._filter_mode == "STRIDE":
-                btn_text = "Run STRIDE Analysis"
-            elif self._filter_mode == "LINDDUN":
-                btn_text = "Run LINDDUN Analysis"
+            if self._filter_mode == "STRIDE": btn_text = "Run STRIDE Analysis"
+            elif self._filter_mode == "LINDDUN": btn_text = "Run LINDDUN Analysis"
             self._btn_run.setText(btn_text)
             
+        self._update_category_filter_options()
         self.refresh()
+
+    def _update_category_filter_options(self) -> None:
+        """Populates category-specific filtering options based on the active framework."""
+        self._cat_filter_combo.blockSignals(True)
+        self._cat_filter_combo.clear()
+        options = ["All Categories"]
+        if self._filter_mode == "STRIDE":
+            options.extend([c.name.title().replace("_", " ") for c in sorted(list(STRIDE_CATEGORIES), key=lambda x: x.name)])
+        elif self._filter_mode == "LINDDUN":
+            options.extend([c.name.replace("_PRIVACY", "").title().replace("_", " ") for c in sorted(list(LINDDUN_CATEGORIES), key=lambda x: x.name)])
+        self._cat_filter_combo.addItems(options)
+        self._cat_filter_combo.setCurrentIndex(0)
+        self._cat_filter_combo.blockSignals(False)
 
     def _on_run_clicked(self) -> None:
-        """Emit the run analysis signal with the current iteration count."""
-        iterations = 1
-        if self._iterations_combo is not None:
-            iterations = int(self._iterations_combo.currentText())
-        self.run_analysis_requested.emit(self._filter_mode, iterations)
+        """Dispatches an analysis request with current iteration parameters."""
+        iters = int(self._iterations_combo.currentText()) if self._iterations_combo else 1
+        self.run_analysis_requested.emit(self._filter_mode, iters)
 
     def _on_add_threat(self) -> None:
-        """Create a new manual threat and add it to the register."""
-        if self._register is None:
-            return
-
-        new_threat = Threat(title="New Identified Risk", category=STRIDECategory.TAMPERING)
-        self._register.add_threat(new_threat, skip_duplicates=False)
+        """Inserts a new manual threat entry into the register."""
+        if self._register is None: return
+        new_t = Threat(title="New Identified Risk", category=STRIDECategory.TAMPERING)
+        self._register.add_threat(new_t, skip_duplicates=False)
         self.refresh()
-
-        self.threat_added.emit(new_threat)
-        self.threat_selected.emit(new_threat)
+        self.threat_added.emit(new_t)
+        self.threat_selected.emit(new_t)
 
     def _on_select_all(self, checked: bool) -> None:
+        """Toggles check state for all visible threats."""
         state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
         self._table.blockSignals(True)
-        for row in range(self._table.rowCount()):
-            item = self._table.item(row, 0)
-            if item:
-                item.setCheckState(state)
+        for r in range(self._table.rowCount()):
+            item = self._table.item(r, 0)
+            if item: item.setCheckState(state)
         self._table.blockSignals(False)
 
     def _on_delete_threat(self) -> None:
-        """Remove the selected threat(s) from the register."""
-        if self._register is None:
-            return
-
-        to_delete = []
-        for row in range(self._table.rowCount()):
-            chk_item = self._table.item(row, 0)
-            if chk_item and chk_item.checkState() == Qt.CheckState.Checked:
-                sl_item = self._table.item(row, 1)
-                threat = sl_item.data(Qt.ItemDataRole.UserRole)
-                if isinstance(threat, Threat):
-                    to_delete.append(threat)
+        """Removes selected or active threats from the register after confirmation."""
+        if self._register is None: return
+        to_del = [self._table.item(r, 1).data(Qt.ItemDataRole.UserRole) for r in range(self._table.rowCount()) if self._table.item(r, 0).checkState() == Qt.CheckState.Checked]
+        if not to_del and self._table.currentRow() >= 0:
+            to_del = [self._table.item(self._table.currentRow(), 1).data(Qt.ItemDataRole.UserRole)]
         
-        # Fallback to current row if none checked
-        if not to_delete:
-            row = self._table.currentRow()
-            if row >= 0:
-                sl_item = self._table.item(row, 1)
-                threat = sl_item.data(Qt.ItemDataRole.UserRole)
-                if isinstance(threat, Threat):
-                    to_delete.append(threat)
-        
-        if not to_delete:
-            return
-
-        reply = QMessageBox.question(
-            self,
-            "Delete Threats",
-            f"Are you sure you want to delete {len(to_delete)} selected threat(s)?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            for threat in to_delete:
-                self._register.remove_threat(threat.threat_id)
-                self.threat_removed.emit(threat.threat_id)
+        if not to_del: return
+        from PySide6.QtWidgets import QMessageBox
+        if QMessageBox.question(self, "Delete Threats", f"Delete {len(to_del)} selected threat(s)?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+            for t in to_del:
+                self._register.remove_threat(t.threat_id)
+                self.threat_removed.emit(t.threat_id)
             self.refresh()
             self._select_all.setCheckState(Qt.CheckState.Unchecked)
 
-    def _on_item_clicked(self, item: QTableWidgetItem) -> None:
-        """Handle selection of a threat row and emit signal."""
-        row = item.row()
+    def _on_cell_clicked(self, row: int, column: int) -> None:
+        """Handles explicit clicks on any cell to ensure the threat is selected."""
+        self._update_selection_from_row(row)
+
+    def _on_selection_changed(self) -> None:
+        """Handles selection changes (clicks or keyboard) to update the Attributes panel."""
+        row = self._table.currentRow()
+        if row >= 0:
+            self._update_selection_from_row(row)
+
+    def _update_selection_from_row(self, row: int) -> None:
+        """Extracts the threat from the specified row and emits the selection signal."""
         sl_item = self._table.item(row, 1)
         if sl_item:
             threat = sl_item.data(Qt.ItemDataRole.UserRole)

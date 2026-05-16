@@ -8,4 +8,5 @@ __all__ = [
     "ollama_provider",
     "prompt_builder",
     "response_parser",
+    "utils",
 ]

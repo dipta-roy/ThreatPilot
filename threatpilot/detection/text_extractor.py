@@ -5,20 +5,14 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
-class TextLabel(BaseModel):
-    """Represents a text snippet found in a diagram."""
+from threatpilot.detection.models import TextLabel
 
-    text: str
-    x: int
-    y: int
-    width: int
-    height: int
-    confidence: float
+logger = logging.getLogger(__name__)
 
 def extract_text_labels(image_path: str | Path) -> list[TextLabel]:
-    """OCR is disabled on this system because Tesseract-OCR is missing.
+    """OCR Text Extraction is disabled. 
     
-    Returns an empty list by default.
+    This function currently serves as a stub for potential AI-driven OCR.
     """
     logger.warning("OCR Text Extraction requested but Tesseract-OCR is disabled or removed.")
     return []

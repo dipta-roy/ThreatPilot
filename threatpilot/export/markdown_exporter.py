@@ -1,14 +1,14 @@
-"""Markdown report exporter module for ThreatPilot.
-
-Generates a structured, human-readable security analysis report in Markdown
-format based on the current project metadata and threat register.
-"""
-
 from __future__ import annotations
+import logging
 from datetime import datetime
 from pathlib import Path
+from collections import defaultdict
+
 from threatpilot.core.project_manager import Project
 from threatpilot.ai.response_parser import convert_reasoning_to_markdown
+from threatpilot.risk.cvss_calculator import get_cvss_severity
+
+logger = logging.getLogger(__name__)
 
 def sanitize_md(text: str | None, preserve_newlines: bool = False) -> str:
     """Escape Markdown special characters. If preserve_newlines is False, collapse to single line."""
@@ -59,7 +59,6 @@ def export_to_markdown(project: Project, output_path: str | Path) -> None:
         lines.append("")
         lines.append("## 4. Detailed Findings")
         
-        from collections import defaultdict
         grouped = defaultdict(list)
         for t in threats:
             grouped[t.category.value].append(t)
@@ -68,18 +67,10 @@ def export_to_markdown(project: Project, output_path: str | Path) -> None:
             lines.append(f"### {category}")
             for t in items:
                 status = "✅ [ACCEPTED]" if t.is_accepted_risk else "❌ [ACTIVE]"
-                from threatpilot.risk.cvss_calculator import get_cvss_severity
                 severity = get_cvss_severity(t.cvss_score)
-                comp_details = []
-                if t.affected_components:
-                    haystack = (f"{t.affected_components} {t.title} {t.description}").lower()
-                    for c in project.components:
-                        if c.name == t.affected_components or c.name.lower() in haystack:
-                            s_name = sanitize_md(c.name)
-                            s_el = sanitize_md(c.element_type.value)
-                            s_as = sanitize_md(c.asset_type.value)
-                            comp_details.append(f"{s_name} ({s_el} / {s_as})")
-                            # Don't break if there are multiple components in the haystack
+                
+                elem_name, asset_name = t.resolve_affected_elements(project)
+                affected_str = f"{elem_name} / {asset_name}" if elem_name != asset_name else elem_name
                 
                 lines.append(f"#### {status} {sanitize_md(t.title)}")
                 lines.append(f"- **Risk Level:** {severity} (Score: {t.cvss_score})")
@@ -90,22 +81,15 @@ def export_to_markdown(project: Project, output_path: str | Path) -> None:
                 if t.mitre_attack_id:
                     lines.append(f"- **MITRE ATT&CK:** {sanitize_md(t.mitre_attack_id)} ({sanitize_md(t.mitre_attack_technique)})")
                 
-                if comp_details:
-                    lines.append(f"- **Affected Assets:** {', '.join(comp_details)}")
-                elif t.affected_components:
-                    lines.append(f"- **Affected Components:** {sanitize_md(t.affected_components)}")
+                if affected_str:
+                    lines.append(f"- **Affected Architecture:** {sanitize_md(affected_str)}")
                 
                 lines.append(f"- **Description:** {sanitize_md(t.description)}")
                 v_ids = getattr(t, "vulnerability_ids", [])
                 if v_ids and hasattr(project, "vulnerability_register"):
-                    v_descs = []
-                    for vid in v_ids:
-                        v_obj = project.vulnerability_register.get_vulnerability(vid)
-                        if v_obj:
-                            v_descs.append(v_obj.description)
-                        else:
-                            v_descs.append(vid)
-                    lines.append(f"- **Vulnerabilities:** {sanitize_md('; '.join(v_descs))}")
+                    v_descs = [v.description for vid in v_ids if (v := project.vulnerability_register.get_vulnerability(vid))]
+                    if v_descs:
+                        lines.append(f"- **Vulnerabilities:** {sanitize_md('; '.join(v_descs))}")
                 lines.append(f"- **Impact:** {sanitize_md(t.impact)}")
                 lines.append(f"- **Mitigation Strategy:** {sanitize_md(t.mitigation)}")
                 

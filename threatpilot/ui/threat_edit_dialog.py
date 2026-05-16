@@ -235,12 +235,10 @@ class ThreatEditDialog(QDialog):
         vector = generate_cvss_vector(metrics)
         self._cvss_score_display.setText(str(score))
         self._cvss_vector_display.setText(vector)
-        if score >= 9.0: color = "#ff4444"
-        elif score >= 7.0: color = "#ff8800"
-        elif score >= 4.0: color = "#ffbb33"
-        elif score > 0: color = "#00c851"
-        else: color = "#888888"
-        self._cvss_score_display.setStyleSheet(f"color: {color};")
+        severity = "critical" if score >= 9.0 else "high" if score >= 7.0 else "medium" if score >= 4.0 else "low" if score > 0 else "none"
+        self._cvss_score_display.setProperty("class", f"cvss-{severity}")
+        self._cvss_score_display.style().unpolish(self._cvss_score_display)
+        self._cvss_score_display.style().polish(self._cvss_score_display)
 
     def accept(self) -> None:
         self._threat.title = self._title_input.text()

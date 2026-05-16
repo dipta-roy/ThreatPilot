@@ -33,14 +33,9 @@ if errorlevel 1 (
 echo [+] Dependencies are up to date.
 
 echo [3/3] Launching ThreatPilot...
-echo [!] Starting GUI. Please wait...
-python main.py
-
-:: If main.py crashes or exits, keep window open if it failed
-if errorlevel 1 (
-    echo [ERROR] ThreatPilot exited with an error.
-    pause
-)
+echo [!] Starting GUI. The background console will now close.
+start "" "%VENV_DIR%\Scripts\pythonw.exe" main.py
 
 deactivate
 endlocal
+exit /b 0

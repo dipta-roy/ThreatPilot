@@ -25,25 +25,135 @@ from threatpilot.core.project_manager import Project
 from threatpilot.core.domain_models import Component, Flow, TrustBoundary, ElementType, AssetType
 from threatpilot.ui import undo_commands
 
-class ElementsDialog(QDialog):
-    """Dialog for editing architectural elements (Process, Data Store, etc.)."""
-
+class BaseProjectTableDialog(QDialog):
+    """Base class for project-related table dialogs to reduce code duplication.
+    
+    Handles window setup, undo stack integration, scroll persistence,
+    and common UI patterns like 'Select All' and bulk deletion.
+    """
     project_modified = Signal()
 
-    def __init__(self, project: Project, undo_stack=None, parent=None) -> None:
+    def __init__(self, title: str, project: Project, undo_stack=None, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("System Elements")
-        
-        screen = QApplication.primaryScreen().availableGeometry()
-        width = int(screen.width() * 0.6)
-        height = int(screen.height() * 0.6)
-        self.resize(width, height)
-        self.setSizeGripEnabled(True)
+        self.setWindowTitle(title)
         self._project = project
         self._undo_stack = undo_stack
         self._is_internal_edit = False
+        
+        self._setup_window_size()
+        
         if self._undo_stack:
              self._undo_stack.indexChanged.connect(self._on_undo_redo_index_changed)
+
+    def _setup_window_size(self, width_factor=0.6, height_factor=0.6) -> None:
+        screen = QApplication.primaryScreen().availableGeometry()
+        width = int(screen.width() * width_factor)
+        height = int(screen.height() * height_factor)
+        self.resize(width, height)
+        self.setSizeGripEnabled(True)
+
+    def _on_undo_redo_index_changed(self, index: int) -> None:
+        if not self._is_internal_edit:
+            QTimer.singleShot(0, self._load_data)
+
+    def _load_data_generic(self, items: list, column_mappers: dict):
+        """Generic table loader.
+        
+        column_mappers: {col_idx: (attr_name, editable, is_checkbox)}
+        """
+        self._table.blockSignals(True)
+        self._table.setRowCount(len(items))
+        
+        for row, obj in enumerate(items):
+            # Selection Checkbox (Column 0)
+            chk_item = QTableWidgetItem("")
+            chk_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            chk_item.setCheckState(Qt.CheckState.Unchecked)
+            self._table.setItem(row, 0, chk_item)
+            
+            for col, (attr, editable, is_bool) in column_mappers.items():
+                val = getattr(obj, attr)
+                if is_bool:
+                    chk = QTableWidgetItem("")
+                    chk.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                    chk.setCheckState(Qt.CheckState.Checked if val else Qt.CheckState.Unchecked)
+                    self._table.setItem(row, col, chk)
+                else:
+                    item = QTableWidgetItem(str(val) if val is not None else "")
+                    if not editable:
+                        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    item.setData(Qt.ItemDataRole.UserRole, obj)
+                    self._table.setItem(row, col, item)
+        self._table.blockSignals(False)
+
+    def _on_item_changed_generic(self, item: QTableWidgetItem, field_map: dict):
+        """Generic item change handler for undo support."""
+        if self._is_internal_edit: return
+        
+        row = item.row()
+        col = item.column()
+        if col not in field_map: return
+        
+        field, is_bool = field_map[col]
+        obj = self._table.item(row, 1 if col != 1 else 1).data(Qt.ItemDataRole.UserRole)
+        if not obj: return
+        
+        new_val = (item.checkState() == Qt.CheckState.Checked) if is_bool else item.text()
+        old_val = getattr(obj, field)
+        
+        if new_val != old_val:
+            self._update_property(obj, field, new_val, old_val)
+
+    def _update_property(self, obj, field, new_val, old_val=None):
+        """Helper to update a property with undo support."""
+        if old_val is None:
+            old_val = getattr(obj, field)
+            
+        if new_val != old_val:
+            if self._undo_stack:
+                self._is_internal_edit = True
+                cmd = undo_commands.PropertyUpdateCommand(obj, field, old_val, new_val)
+                self._undo_stack.push(cmd)
+                self._is_internal_edit = False
+            else:
+                setattr(obj, field, new_val)
+            self.project_modified.emit()
+
+    def _on_select_all(self, checked: bool, table: QTableWidget) -> None:
+        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+        table.blockSignals(True)
+        for row in range(table.rowCount()):
+            item = table.item(row, 0)
+            if item:
+                item.setCheckState(state)
+        table.blockSignals(False)
+
+    def _get_selected_items(self, table: QTableWidget, data_role=Qt.ItemDataRole.UserRole):
+        """Retrieve data objects for all rows with a checked first column."""
+        items = []
+        for row in range(table.rowCount()):
+            chk_item = table.item(row, 0)
+            if chk_item and chk_item.checkState() == Qt.CheckState.Checked:
+                name_item = table.item(row, 1)
+                obj = name_item.data(data_role)
+                if obj:
+                    items.append(obj)
+        
+        # Fallback to current row if none checked
+        if not items:
+            row = table.currentRow()
+            if row >= 0:
+                name_item = table.item(row, 1)
+                obj = name_item.data(data_role)
+                if obj:
+                    items.append(obj)
+        return items
+
+class ElementsDialog(BaseProjectTableDialog):
+    """Dialog for editing architectural elements (Process, Data Store, etc.)."""
+
+    def __init__(self, project: Project, undo_stack=None, parent=None) -> None:
+        super().__init__("System Elements", project, undo_stack, parent)
         self._setup_ui()
         self._load_data()
 
@@ -70,7 +180,7 @@ class ElementsDialog(QDialog):
         ])
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        self._table.setColumnWidth(0, 30) # Checkbox column
+        self._table.setColumnWidth(0, 30)
         self._table.setColumnWidth(1, 180)
         self._table.setColumnWidth(2, 120)
         self._table.setColumnWidth(3, 180)
@@ -84,9 +194,9 @@ class ElementsDialog(QDialog):
         
         comp_btns = QHBoxLayout()
         from PySide6.QtWidgets import QCheckBox
-        self._select_all = QCheckBox("Select All")
-        self._select_all.clicked.connect(self._on_select_all)
-        comp_btns.addWidget(self._select_all)
+        self._select_all_cb = QCheckBox("Select All")
+        self._select_all_cb.clicked.connect(lambda chk: self._on_select_all(chk, self._table))
+        comp_btns.addWidget(self._select_all_cb)
         
         self._btn_add = QPushButton(" + Add New Element")
         self._btn_add.setMinimumHeight(35)
@@ -104,23 +214,22 @@ class ElementsDialog(QDialog):
         layout.addWidget(buttons)
 
     def _load_data(self) -> None:
+        v_scroll = self._table.verticalScrollBar().value()
+        h_scroll = self._table.horizontalScrollBar().value()
+        
+        column_mappers = {
+            1: ("name", True, False),
+            4: ("description", True, False),
+            5: ("is_out_of_scope", True, True),
+            6: ("out_of_scope_justification", True, False)
+        }
+        self._load_data_generic(self._project.components, column_mappers)
+        
+        # Add custom combo boxes for Type and Boundary
         self._table.blockSignals(True)
-        self._table.setRowCount(0)
         for row, comp in enumerate(self._project.components):
-            self._table.insertRow(row)
-            
-            chk_item = QTableWidgetItem()
-            chk_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
-            chk_item.setCheckState(Qt.CheckState.Unchecked)
-            self._table.setItem(row, 0, chk_item)
-
-            name_item = QTableWidgetItem(comp.name)
-            name_item.setData(Qt.ItemDataRole.UserRole, comp)
-            self._table.setItem(row, 1, name_item)
-            
             elem_combo = QComboBox()
-            elem_types = sorted([e.value for e in ElementType])
-            elem_combo.addItems(elem_types)
+            elem_combo.addItems(sorted([e.value for e in ElementType]))
             elem_combo.setCurrentText(comp.element_type.value)
             elem_combo.setProperty("row", row)
             elem_combo.currentTextChanged.connect(self._on_element_type_changed)
@@ -129,75 +238,21 @@ class ElementsDialog(QDialog):
             tb_combo = QComboBox()
             tb_names = ["None (External)"] + sorted([b.name for b in self._project.boundaries])
             tb_combo.addItems(tb_names)
-            curr_tb_name = "None (External)"
-            if comp.trust_boundary_id:
-                tb = next((b for b in self._project.boundaries if b.boundary_id == comp.trust_boundary_id), None)
-                if tb: curr_tb_name = tb.name
+            curr_tb_name = next((b.name for b in self._project.boundaries if b.boundary_id == comp.trust_boundary_id), "None (External)")
             tb_combo.setCurrentText(curr_tb_name)
             tb_combo.setProperty("row", row)
             tb_combo.currentTextChanged.connect(self._on_trust_boundary_changed)
             self._table.setCellWidget(row, 3, tb_combo)
-            
-            desc_item = QTableWidgetItem(comp.description)
-            self._table.setItem(row, 4, desc_item)
-            
-            oos_item = QTableWidgetItem()
-            oos_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-            oos_item.setCheckState(Qt.CheckState.Checked if comp.is_out_of_scope else Qt.CheckState.Unchecked)
-            self._table.setItem(row, 5, oos_item)
-            
-            just_item = QTableWidgetItem(comp.out_of_scope_justification)
-            self._table.setItem(row, 6, just_item)
-            
-            if comp.is_out_of_scope:
-                for col in range(7):
-                    it = self._table.item(row, col)
-                    if it: it.setBackground(QColor("#2d333b") if QApplication.instance().styleSheet().count("style.qss") else QColor("#f6f8fa"))
-                    if it: it.setForeground(QColor("#8b949e"))
-            
         self._table.blockSignals(False)
-        if hasattr(self, "_select_all") and self._select_all:
-            self._select_all.setCheckState(Qt.CheckState.Unchecked)
-
-    def _on_undo_redo_index_changed(self, index: int) -> None:
-        if not self._is_internal_edit:
-            QTimer.singleShot(0, self._load_data)
+        
+        self._table.verticalScrollBar().setValue(v_scroll)
+        self._table.horizontalScrollBar().setValue(h_scroll)
+        if hasattr(self, "_select_all_cb") and self._select_all_cb:
+            self._select_all_cb.setCheckState(Qt.CheckState.Unchecked)
 
     def _on_item_changed(self, item: QTableWidgetItem) -> None:
-        row = item.row()
-        name_item = self._table.item(row, 1)
-        if name_item:
-            comp = name_item.data(Qt.ItemDataRole.UserRole)
-            if comp:
-                field = ""
-                if item.column() == 1: field = "name"
-                elif item.column() == 4: field = "description"
-                elif item.column() == 5: field = "is_out_of_scope"
-                elif item.column() == 6: field = "out_of_scope_justification"
-                
-                if field:
-                    if field == "is_out_of_scope":
-                        new_val = (item.checkState() == Qt.CheckState.Checked)
-                        if new_val and not comp.out_of_scope_justification:
-                             # Auto-focus or remind to add justification
-                             item.setToolTip("Please add justification in the next column")
-                    else:
-                        new_val = item.text().strip()
-                        
-                    old_val = getattr(comp, field)
-                    if new_val != old_val:
-                        if self._undo_stack:
-                            self._is_internal_edit = True
-                            cmd = undo_commands.PropertyUpdateCommand(comp, field, old_val, new_val)
-                            self._undo_stack.push(cmd)
-                            self._is_internal_edit = False
-                        else:
-                            setattr(comp, field, new_val)
-                        
-                        if field == "is_out_of_scope":
-                            self._load_data()
-                            
-                        self.project_modified.emit()
+        field_map = {1: ("name", False), 4: ("description", False), 5: ("is_out_of_scope", True), 6: ("out_of_scope_justification", False)}
+        self._on_item_changed_generic(item, field_map)
 
     def _on_element_type_changed(self, new_val: str) -> None:
         sender = self.sender()
@@ -206,17 +261,8 @@ class ElementsDialog(QDialog):
         if name_item:
             comp = name_item.data(Qt.ItemDataRole.UserRole)
             if comp: 
-                old_val = comp.element_type
                 new_enum_val = next((et for et in ElementType if et.value == new_val), ElementType.PROCESS)
-                if new_enum_val != old_val:
-                    if self._undo_stack:
-                        self._is_internal_edit = True
-                        cmd = undo_commands.PropertyUpdateCommand(comp, "element_type", old_val, new_enum_val)
-                        self._undo_stack.push(cmd)
-                        self._is_internal_edit = False
-                    else:
-                        comp.element_type = new_enum_val
-                    self.project_modified.emit()
+                self._update_property(comp, "element_type", new_enum_val)
 
     def _on_trust_boundary_changed(self, new_val: str) -> None:
         sender = self.sender()
@@ -225,50 +271,14 @@ class ElementsDialog(QDialog):
         if name_item:
             comp = name_item.data(Qt.ItemDataRole.UserRole)
             if comp: 
-                old_val = comp.trust_boundary_id
                 new_tb_id = None
                 if new_val != "None (External)":
                     tb = next((b for b in self._project.boundaries if b.name == new_val), None)
                     if tb: new_tb_id = tb.boundary_id
-                
-                if new_tb_id != old_val:
-                    if self._undo_stack:
-                        self._is_internal_edit = True
-                        cmd = undo_commands.PropertyUpdateCommand(comp, "trust_boundary_id", old_val, new_tb_id)
-                        self._undo_stack.push(cmd)
-                        self._is_internal_edit = False
-                    else:
-                        comp.trust_boundary_id = new_tb_id
-                    self.project_modified.emit()
-
-    def _on_select_all(self, checked: bool) -> None:
-        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
-        self._table.blockSignals(True)
-        for row in range(self._table.rowCount()):
-            item = self._table.item(row, 0)
-            if item:
-                item.setCheckState(state)
-        self._table.blockSignals(False)
+                self._update_property(comp, "trust_boundary_id", new_tb_id)
 
     def _on_delete_selected(self) -> None:
-        to_delete = []
-        for row in range(self._table.rowCount()):
-            chk_item = self._table.item(row, 0)
-            if chk_item and chk_item.checkState() == Qt.CheckState.Checked:
-                name_item = self._table.item(row, 1)
-                comp = name_item.data(Qt.ItemDataRole.UserRole)
-                if comp:
-                    to_delete.append(comp)
-        
-        # Fallback to current row if none checked
-        if not to_delete:
-            row = self._table.currentRow()
-            if row >= 0:
-                name_item = self._table.item(row, 1)
-                comp = name_item.data(Qt.ItemDataRole.UserRole)
-                if comp:
-                    to_delete.append(comp)
-        
+        to_delete = self._get_selected_items(self._table)
         if not to_delete:
             return
 
@@ -306,25 +316,12 @@ class ElementsDialog(QDialog):
         self._load_data()
 
 
-class AssetsDialog(QDialog):
+class AssetsDialog(BaseProjectTableDialog):
     """Dialog for editing standalone assets (Physical, Informational)."""
 
-    project_modified = Signal()
-
     def __init__(self, project: Project, undo_stack=None, parent=None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("System Asset")
-        
-        screen = QApplication.primaryScreen().availableGeometry()
-        width = int(screen.width() * 0.7)
-        height = int(screen.height() * 0.6)
-        self.resize(width, height)
-        self.setSizeGripEnabled(True)
-        self._project = project
-        self._undo_stack = undo_stack
-        self._is_internal_edit = False
-        if self._undo_stack:
-             self._undo_stack.indexChanged.connect(self._on_undo_redo_index_changed)
+        super().__init__("System Asset", project, undo_stack, parent)
+        self._setup_window_size(0.7, 0.6)
         self._setup_ui()
         self._load_data()
 
@@ -366,7 +363,7 @@ class AssetsDialog(QDialog):
         asset_btns = QHBoxLayout()
         from PySide6.QtWidgets import QCheckBox
         self._select_all_assets = QCheckBox("Select All")
-        self._select_all_assets.clicked.connect(self._on_select_all_assets)
+        self._select_all_assets.clicked.connect(lambda chk: self._on_select_all(chk, self._table))
         asset_btns.addWidget(self._select_all_assets)
         
         self._btn_add_asset = QPushButton(" + Add New Asset")
@@ -386,90 +383,36 @@ class AssetsDialog(QDialog):
         layout.addWidget(buttons)
 
     def _load_data(self) -> None:
-        from threatpilot.core.domain_models import Asset, AssetType
+        v_scroll = self._table.verticalScrollBar().value()
+        h_scroll = self._table.horizontalScrollBar().value()
+        
+        column_mappers = {
+            1: ("name", True, False),
+            3: ("criticality", True, False),
+            4: ("is_out_of_scope", True, True),
+            5: ("out_of_scope_justification", True, False),
+            6: ("description", True, False)
+        }
+        self._load_data_generic(self._project.assets, column_mappers)
+        
         self._table.blockSignals(True)
-        self._table.setRowCount(0)
         for row, asset in enumerate(self._project.assets):
-            self._table.insertRow(row)
-            
-            chk_item = QTableWidgetItem()
-            chk_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
-            chk_item.setCheckState(Qt.CheckState.Unchecked)
-            self._table.setItem(row, 0, chk_item)
-
-            name_item = QTableWidgetItem(asset.name)
-            name_item.setData(Qt.ItemDataRole.UserRole, asset)
-            self._table.setItem(row, 1, name_item)
-            
             asset_combo = QComboBox()
-            asset_types = ["Physical", "Informational"]
-            asset_combo.addItems(asset_types)
+            asset_combo.addItems(["Physical", "Informational"])
             asset_combo.setCurrentText(asset.type.value)
             asset_combo.setProperty("row", row)
             asset_combo.currentTextChanged.connect(self._on_asset_type_changed)
             self._table.setCellWidget(row, 2, asset_combo)
-            
-            crit_item = QTableWidgetItem(asset.criticality)
-            self._table.setItem(row, 3, crit_item)
-            
-            oos_item = QTableWidgetItem()
-            oos_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-            oos_item.setCheckState(Qt.CheckState.Checked if asset.is_out_of_scope else Qt.CheckState.Unchecked)
-            self._table.setItem(row, 4, oos_item)
-            
-            just_item = QTableWidgetItem(asset.out_of_scope_justification)
-            self._table.setItem(row, 5, just_item)
-            
-            desc_item = QTableWidgetItem(asset.description)
-            self._table.setItem(row, 6, desc_item)
-            
-            if asset.is_out_of_scope:
-                for col in range(7):
-                    it = self._table.item(row, col)
-                    if it: it.setBackground(QColor("#2d333b") if QApplication.instance().styleSheet().count("style.qss") else QColor("#f6f8fa"))
-                    if it: it.setForeground(QColor("#8b949e"))
-            
         self._table.blockSignals(False)
+        
+        self._table.verticalScrollBar().setValue(v_scroll)
+        self._table.horizontalScrollBar().setValue(h_scroll)
         if hasattr(self, "_select_all_assets") and self._select_all_assets:
             self._select_all_assets.setCheckState(Qt.CheckState.Unchecked)
 
-    def _on_undo_redo_index_changed(self, index: int) -> None:
-        if not self._is_internal_edit:
-            QTimer.singleShot(0, self._load_data)
-
     def _on_item_changed(self, item: QTableWidgetItem) -> None:
-        row = item.row()
-        name_item = self._table.item(row, 1)
-        if name_item:
-            asset = name_item.data(Qt.ItemDataRole.UserRole)
-            if asset:
-                field = ""
-                if item.column() == 1: field = "name"
-                elif item.column() == 3: field = "criticality"
-                elif item.column() == 4: field = "is_out_of_scope"
-                elif item.column() == 5: field = "out_of_scope_justification"
-                elif item.column() == 6: field = "description"
-                
-                if field:
-                    if field == "is_out_of_scope":
-                        new_val = (item.checkState() == Qt.CheckState.Checked)
-                    else:
-                        new_val = item.text().strip()
-                        
-                    old_val = getattr(asset, field)
-                    if new_val != old_val:
-                        if self._undo_stack:
-                            self._is_internal_edit = True
-                            cmd = undo_commands.PropertyUpdateCommand(asset, field, old_val, new_val)
-                            self._undo_stack.push(cmd)
-                            self._is_internal_edit = False
-                        else:
-                            setattr(asset, field, new_val)
-                        
-                        if field == "is_out_of_scope":
-                            self._load_data()
-                            
-                        self.project_modified.emit()
+        field_map = {1: ("name", False), 3: ("criticality", False), 4: ("is_out_of_scope", True), 5: ("out_of_scope_justification", False), 6: ("description", False)}
+        self._on_item_changed_generic(item, field_map)
 
     def _on_asset_type_changed(self, new_val: str) -> None:
         from threatpilot.core.domain_models import AssetType
@@ -479,17 +422,8 @@ class AssetsDialog(QDialog):
         if name_item:
             asset = name_item.data(Qt.ItemDataRole.UserRole)
             if asset: 
-                old_val = asset.type
                 new_enum_val = AssetType.PHYSICAL if new_val == "Physical" else AssetType.INFORMATIONAL
-                if new_enum_val != old_val:
-                    if self._undo_stack:
-                        self._is_internal_edit = True
-                        cmd = undo_commands.PropertyUpdateCommand(asset, "type", old_val, new_enum_val)
-                        self._undo_stack.push(cmd)
-                        self._is_internal_edit = False
-                    else:
-                        asset.type = new_enum_val
-                    self.project_modified.emit()
+                self._update_property(asset, "type", new_enum_val)
 
     def _on_add_asset(self) -> None:
         from threatpilot.core.domain_models import Asset, AssetType
@@ -502,34 +436,8 @@ class AssetsDialog(QDialog):
         self.project_modified.emit()
         self._load_data()
 
-    def _on_select_all_assets(self, checked: bool) -> None:
-        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
-        self._table.blockSignals(True)
-        for row in range(self._table.rowCount()):
-            item = self._table.item(row, 0)
-            if item:
-                item.setCheckState(state)
-        self._table.blockSignals(False)
-
     def _on_delete_selected(self) -> None:
-        to_delete = []
-        for row in range(self._table.rowCount()):
-            chk_item = self._table.item(row, 0)
-            if chk_item and chk_item.checkState() == Qt.CheckState.Checked:
-                name_item = self._table.item(row, 1)
-                asset = name_item.data(Qt.ItemDataRole.UserRole)
-                if asset:
-                    to_delete.append(asset)
-        
-        # Fallback to selection if none checked
-        if not to_delete:
-            row = self._table.currentRow()
-            if row >= 0:
-                name_item = self._table.item(row, 1)
-                asset = name_item.data(Qt.ItemDataRole.UserRole)
-                if asset:
-                    to_delete.append(asset)
-        
+        to_delete = self._get_selected_items(self._table)
         if not to_delete:
             return
 
@@ -549,23 +457,12 @@ class AssetsDialog(QDialog):
         self._load_data()
 
 
-class DataFlowDialog(QDialog):
+class DataFlowDialog(BaseProjectTableDialog):
     """Dialog for editing data flow connections and protocols."""
 
-    project_modified = Signal()
-
     def __init__(self, project: Project, undo_stack=None, parent=None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Data Flow Mapping")
-        self.resize(1000, 600)
-        self.setSizeGripEnabled(True)
-        self._project = project
-        self._undo_stack = undo_stack
-        self._is_internal_edit = False
-        
-        if self._undo_stack:
-             self._undo_stack.indexChanged.connect(self._on_undo_redo_index_changed)
-
+        super().__init__("Data Flow Mapping", project, undo_stack, parent)
+        self._setup_window_size(0.8, 0.6)
         self._setup_ui()
         self._load_data()
 
@@ -578,26 +475,28 @@ class DataFlowDialog(QDialog):
         flow_header.setFont(header_font)
         flow_header.setStyleSheet("color: #58a6ff; margin-bottom: 5px;")
         layout.addWidget(flow_header)
-        self._flow_table = QTableWidget(0, 6)
-        self._flow_table.setHorizontalHeaderLabels(["", "Flow Alias", "Source Element", "Destination Element", "Protocol / Port", "Bidirectional?"])
-        self._flow_table.setColumnWidth(0, 30) # Checkbox column
-        self._flow_table.setHorizontalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
-        self._flow_table.setVerticalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
-        self._flow_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        header = self._flow_table.horizontalHeader()
+        self._table = QTableWidget(0, 6)
+        self._table.setHorizontalHeaderLabels(["", "Flow Alias", "Source Element", "Destination Element", "Protocol / Port", "Bidirectional?"])
+        self._table.setColumnWidth(0, 30)
+        self._table.setHorizontalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
+        self._table.setVerticalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
+        self._table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        header = self._table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self._flow_table.setColumnWidth(1, 250)
-        self._flow_table.setColumnWidth(2, 250)
-        self._flow_table.setColumnWidth(3, 140)
-        self._flow_table.setColumnWidth(4, 100)
-        self._flow_table.setAlternatingRowColors(True)
-        self._flow_table.verticalHeader().setDefaultSectionSize(38)
-        layout.addWidget(self._flow_table)
+        self._table.setColumnWidth(1, 250)
+        self._table.setColumnWidth(2, 250)
+        self._table.setColumnWidth(3, 250)
+        self._table.setColumnWidth(4, 140)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+        self._table.setAlternatingRowColors(True)
+        self._table.verticalHeader().setDefaultSectionSize(38)
+        self._table.itemChanged.connect(self._on_flow_item_changed)
+        layout.addWidget(self._table)
+        
         flow_btns = QHBoxLayout()
         from PySide6.QtWidgets import QCheckBox
         self._select_all_flows = QCheckBox("Select All")
-        self._select_all_flows.clicked.connect(self._on_select_all_flows)
+        self._select_all_flows.clicked.connect(lambda chk: self._on_select_all(chk, self._table))
         flow_btns.addWidget(self._select_all_flows)
         
         self._btn_add_flow = QPushButton(" + Create Manual Flow")
@@ -606,55 +505,53 @@ class DataFlowDialog(QDialog):
         flow_btns.addWidget(self._btn_add_flow)
         self._btn_del_flow = QPushButton(" x Delete Selected")
         self._btn_del_flow.setMinimumHeight(35)
-        self._btn_del_flow.clicked.connect(self._on_delete_selected_flow)
+        self._btn_del_flow.clicked.connect(self._on_delete_selected)
         flow_btns.addWidget(self._btn_del_flow)
         flow_btns.addStretch()
         layout.addLayout(flow_btns)
+        
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
     def _load_data(self) -> None:
-        self._flow_table.blockSignals(True)
-        self._flow_table.setRowCount(0)
+        v_scroll = self._table.verticalScrollBar().value()
+        h_scroll = self._table.horizontalScrollBar().value()
+        
+        column_mappers = {
+            1: ("name", True, False),
+            4: ("protocol", True, False),
+            5: ("is_bidirectional", True, True)
+        }
+        self._load_data_generic(self._project.flows, column_mappers)
+        
+        self._table.blockSignals(True)
         comp_names = ["(Unlinked)"] + sorted([c.name for c in self._project.components])
         for row, flow in enumerate(self._project.flows):
-            self._flow_table.insertRow(row)
-            
-            chk_item = QTableWidgetItem()
-            chk_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
-            chk_item.setCheckState(Qt.CheckState.Unchecked)
-            self._flow_table.setItem(row, 0, chk_item)
-
-            name_item = QTableWidgetItem(flow.name)
-            name_item.setData(Qt.ItemDataRole.UserRole, flow)
-            self._flow_table.setItem(row, 1, name_item)
-            
             src_combo = QComboBox()
             src_combo.addItems(comp_names)
             src_name = self._get_comp_name_by_id(flow.source_id)
             src_combo.setCurrentText(src_name or "(Unlinked)")
             src_combo.currentTextChanged.connect(lambda val, f=flow: self._update_flow_source(f, val))
-            self._flow_table.setCellWidget(row, 2, src_combo)
+            self._table.setCellWidget(row, 2, src_combo)
             
             dst_combo = QComboBox()
             dst_combo.addItems(comp_names)
             dst_name = self._get_comp_name_by_id(flow.target_id)
             dst_combo.setCurrentText(dst_name or "(Unlinked)")
             dst_combo.currentTextChanged.connect(lambda val, f=flow: self._update_flow_target(f, val))
-            self._flow_table.setCellWidget(row, 3, dst_combo)
-            
-            proto_item = QTableWidgetItem(flow.protocol)
-            proto_item.setData(Qt.ItemDataRole.UserRole, flow)
-            self._flow_table.setItem(row, 4, proto_item)
-            
-            bi_item = QTableWidgetItem()
-            bi_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-            bi_item.setCheckState(Qt.CheckState.Checked if flow.is_bidirectional else Qt.CheckState.Unchecked)
-            self._flow_table.setItem(row, 5, bi_item)
+            self._table.setCellWidget(row, 3, dst_combo)
+        self._table.blockSignals(False)
+        
+        self._table.verticalScrollBar().setValue(v_scroll)
+        self._table.horizontalScrollBar().setValue(h_scroll)
+        if hasattr(self, "_select_all_flows") and self._select_all_flows:
+            self._select_all_flows.setCheckState(Qt.CheckState.Unchecked)
 
-        self._flow_table.itemChanged.connect(self._on_flow_item_changed)
-        self._flow_table.blockSignals(False)
+        # Restore scroll position
+        self._table.verticalScrollBar().setValue(v_scroll)
+        self._table.horizontalScrollBar().setValue(h_scroll)
+
         if hasattr(self, "_select_all_flows") and self._select_all_flows:
             self._select_all_flows.setCheckState(Qt.CheckState.Unchecked)
 
@@ -669,59 +566,15 @@ class DataFlowDialog(QDialog):
         return ""
 
     def _update_flow_source(self, flow, name):
-        old_val = flow.source_id
         new_val = self._get_comp_id_by_name(name)
-        if new_val != old_val:
-            if self._undo_stack:
-                self._is_internal_edit = True
-                cmd = undo_commands.PropertyUpdateCommand(flow, "source_id", old_val, new_val)
-                self._undo_stack.push(cmd)
-                self._is_internal_edit = False
-            else:
-                flow.source_id = new_val
-            self.project_modified.emit()
+        self._update_property(flow, "source_id", new_val)
 
     def _update_flow_target(self, flow, name):
-        old_val = flow.target_id
         new_val = self._get_comp_id_by_name(name)
-        if new_val != old_val:
-            if self._undo_stack:
-                self._is_internal_edit = True
-                cmd = undo_commands.PropertyUpdateCommand(flow, "target_id", old_val, new_val)
-                self._undo_stack.push(cmd)
-                self._is_internal_edit = False
-            else:
-                flow.target_id = new_val
-            self.project_modified.emit()
+        self._update_property(flow, "target_id", new_val)
 
-    def _on_select_all_flows(self, checked: bool) -> None:
-        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
-        self._flow_table.blockSignals(True)
-        for row in range(self._flow_table.rowCount()):
-            item = self._flow_table.item(row, 0)
-            if item:
-                item.setCheckState(state)
-        self._flow_table.blockSignals(False)
-
-    def _on_delete_selected_flow(self) -> None:
-        to_delete = []
-        for row in range(self._flow_table.rowCount()):
-            chk_item = self._flow_table.item(row, 0)
-            if chk_item and chk_item.checkState() == Qt.CheckState.Checked:
-                name_item = self._flow_table.item(row, 1)
-                flow = name_item.data(Qt.ItemDataRole.UserRole)
-                if flow:
-                    to_delete.append(flow)
-        
-        # Fallback to selection
-        if not to_delete:
-            row = self._flow_table.currentRow()
-            if row >= 0:
-                name_item = self._flow_table.item(row, 1)
-                flow = name_item.data(Qt.ItemDataRole.UserRole)
-                if flow:
-                    to_delete.append(flow)
-        
+    def _on_delete_selected(self) -> None:
+        to_delete = self._get_selected_items(self._table)
         if not to_delete:
             return
 
@@ -750,57 +603,18 @@ class DataFlowDialog(QDialog):
         self.project_modified.emit()
         self._load_data()
 
-    def _on_undo_redo_index_changed(self, index: int) -> None:
-        if not self._is_internal_edit:
-            QTimer.singleShot(0, self._load_data)
-
     def _on_flow_item_changed(self, item: QTableWidgetItem) -> None:
-        row = item.row()
-        name_item = self._flow_table.item(row, 1)
-        if not name_item: return
-        flow = name_item.data(Qt.ItemDataRole.UserRole)
-        if not flow: return
-
-        field = ""
-        if item.column() == 1: field = "name"
-        elif item.column() == 4: field = "protocol"
-        elif item.column() == 5: field = "is_bidirectional"
-
-        if field:
-            if field == "is_bidirectional":
-                new_val = (item.checkState() == Qt.CheckState.Checked)
-            else:
-                new_val = item.text().strip()
-            old_val = getattr(flow, field)
-            if new_val != old_val:
-                if self._undo_stack:
-                    self._is_internal_edit = True
-                    cmd = undo_commands.PropertyUpdateCommand(flow, field, old_val, new_val)
-                    self._undo_stack.push(cmd)
-                    self._is_internal_edit = False
-                else:
-                    setattr(flow, field, new_val)
-                self.project_modified.emit()
+        field_map = {1: ("name", False), 4: ("protocol", False), 5: ("is_bidirectional", True)}
+        self._on_item_changed_generic(item, field_map)
 
 
 
-class TrustBoundaryDialog(QDialog):
+class TrustBoundaryDialog(BaseProjectTableDialog):
     """Dialog for managing trust boundaries (Zones, VPCs, Cloud, etc.) with nesting support."""
 
-    project_modified = Signal()
-
     def __init__(self, project: Project, undo_stack=None, parent=None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("System Trust Boundaries")
-        self.resize(900, 500)
-        self.setSizeGripEnabled(True)
-        self._project = project
-        self._undo_stack = undo_stack
-        self._is_internal_edit = False
-        
-        if self._undo_stack:
-             self._undo_stack.indexChanged.connect(self._on_undo_redo_index_changed)
-
+        super().__init__("System Trust Boundaries", project, undo_stack, parent)
+        self._setup_window_size(0.7, 0.5)
         self._setup_ui()
         self._load_data()
 
@@ -837,9 +651,9 @@ class TrustBoundaryDialog(QDialog):
         
         btns = QHBoxLayout()
         from PySide6.QtWidgets import QCheckBox
-        self._select_all_tb = QCheckBox("Select All")
-        self._select_all_tb.clicked.connect(self._on_select_all_tb)
-        btns.addWidget(self._select_all_tb)
+        self._select_all_cb = QCheckBox("Select All")
+        self._select_all_cb.clicked.connect(lambda chk: self._on_select_all(chk, self._table))
+        btns.addWidget(self._select_all_cb)
         
         self._btn_add = QPushButton(" + Create Trust Boundary")
         self._btn_add.setMinimumHeight(35)
@@ -858,75 +672,41 @@ class TrustBoundaryDialog(QDialog):
         layout.addWidget(buttons)
 
     def _load_data(self) -> None:
-        self._table.blockSignals(True)
-        self._table.setRowCount(0)
+        v_scroll = self._table.verticalScrollBar().value()
+        h_scroll = self._table.horizontalScrollBar().value()
         
+        column_mappers = {
+            1: ("name", True, False),
+            2: ("type", True, False),
+            4: ("description", True, False)
+        }
+        self._load_data_generic(self._project.boundaries, column_mappers)
+        
+        self._table.blockSignals(True)
         for row, tb in enumerate(self._project.boundaries):
-            self._table.insertRow(row)
-            
-            chk_item = QTableWidgetItem()
-            chk_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
-            chk_item.setCheckState(Qt.CheckState.Unchecked)
-            self._table.setItem(row, 0, chk_item)
-
-            name_item = QTableWidgetItem(tb.name)
-            name_item.setData(Qt.ItemDataRole.UserRole, tb)
-            self._table.setItem(row, 1, name_item)
-            
-            type_item = QTableWidgetItem(tb.type)
-            self._table.setItem(row, 2, type_item)
-            
             parent_combo = QComboBox()
             options = ["None"] + sorted([b.name for b in self._project.boundaries if b.boundary_id != tb.boundary_id])
             parent_combo.addItems(options)
             
-            parent_name = "None"
-            if tb.parent_boundary_id:
-                parent = next((b for b in self._project.boundaries if b.boundary_id == tb.parent_boundary_id), None)
-                if parent: parent_name = parent.name
+            parent_name = next((b.name for b in self._project.boundaries if b.boundary_id == tb.parent_boundary_id), "None")
             
             parent_combo.setCurrentText(parent_name)
             parent_combo.setProperty("row", row)
             parent_combo.currentTextChanged.connect(self._on_parent_changed)
             self._table.setCellWidget(row, 3, parent_combo)
             
-            desc_item = QTableWidgetItem(tb.description)
-            self._table.setItem(row, 4, desc_item)
-            
         self._table.blockSignals(False)
-        if hasattr(self, "_select_all_tb") and self._select_all_tb:
-            self._select_all_tb.setCheckState(Qt.CheckState.Unchecked)
 
-    def _on_undo_redo_index_changed(self, index: int) -> None:
-        if not self._is_internal_edit:
-            QTimer.singleShot(0, self._load_data)
+        # Restore scroll position
+        self._table.verticalScrollBar().setValue(v_scroll)
+        self._table.horizontalScrollBar().setValue(h_scroll)
 
-    def _on_item_changed(self, item) -> None:
-        row = item.row()
-        name_item = self._table.item(row, 1)
-        if name_item:
-            tb = name_item.data(Qt.ItemDataRole.UserRole)
-            if tb:
-                field = ""
-                if item.column() == 1: field = "name"
-                elif item.column() == 2: field = "type"
-                elif item.column() == 4: field = "description"
-                
-                if field:
-                    new_val = item.text().strip()
-                    old_val = getattr(tb, field)
-                    if new_val != old_val:
-                        if self._undo_stack:
-                            self._is_internal_edit = True
-                            from threatpilot.ui import undo_commands
-                            cmd = undo_commands.PropertyUpdateCommand(tb, field, old_val, new_val)
-                            self._undo_stack.push(cmd)
-                            self._is_internal_edit = False
-                        else:
-                            setattr(tb, field, new_val)
-                        self.project_modified.emit()
-                        if field == "name":
-                            self._load_data()
+        if hasattr(self, "_select_all_cb") and self._select_all_cb:
+            self._select_all_cb.setCheckState(Qt.CheckState.Unchecked)
+
+    def _on_item_changed(self, item: QTableWidgetItem) -> None:
+        field_map = {1: ("name", False), 2: ("type", False), 4: ("description", False)}
+        self._on_item_changed_generic(item, field_map)
 
     def _on_parent_changed(self, new_val: str) -> None:
         sender = self.sender()
@@ -935,26 +715,14 @@ class TrustBoundaryDialog(QDialog):
         if name_item:
             tb = name_item.data(Qt.ItemDataRole.UserRole)
             if tb:
-                old_val = tb.parent_boundary_id
                 new_pid = None
                 if new_val != "None":
                     parent = next((b for b in self._project.boundaries if b.name == new_val), None)
                     if parent: new_pid = parent.boundary_id
-                
-                if new_pid != old_val:
-                    if self._undo_stack:
-                        self._is_internal_edit = True
-                        from threatpilot.ui import undo_commands
-                        cmd = undo_commands.PropertyUpdateCommand(tb, "parent_boundary_id", old_val, new_pid)
-                        self._undo_stack.push(cmd)
-                        self._is_internal_edit = False
-                    else:
-                        tb.parent_boundary_id = new_pid
-                    self.project_modified.emit()
+                self._update_property(tb, "parent_boundary_id", new_pid)
 
     def _on_add_boundary(self) -> None:
         from threatpilot.core.domain_models import TrustBoundary
-        from threatpilot.ui import undo_commands
         new_tb = TrustBoundary(name="New Trust Boundary", x=50, y=50)
         if self._undo_stack:
             cmd = undo_commands.AddTrustBoundaryCommand(self._project, new_tb)
@@ -964,34 +732,8 @@ class TrustBoundaryDialog(QDialog):
         self.project_modified.emit()
         self._load_data()
 
-    def _on_select_all_tb(self, checked: bool) -> None:
-        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
-        self._table.blockSignals(True)
-        for row in range(self._table.rowCount()):
-            item = self._table.item(row, 0)
-            if item:
-                item.setCheckState(state)
-        self._table.blockSignals(False)
-
     def _on_delete_selected(self) -> None:
-        to_delete = []
-        for row in range(self._table.rowCount()):
-            chk_item = self._table.item(row, 0)
-            if chk_item and chk_item.checkState() == Qt.CheckState.Checked:
-                name_item = self._table.item(row, 1)
-                tb = name_item.data(Qt.ItemDataRole.UserRole)
-                if tb:
-                    to_delete.append(tb)
-        
-        # Fallback to selection
-        if not to_delete:
-            row = self._table.currentRow()
-            if row >= 0:
-                name_item = self._table.item(row, 1)
-                tb = name_item.data(Qt.ItemDataRole.UserRole)
-                if tb:
-                    to_delete.append(tb)
-        
+        to_delete = self._get_selected_items(self._table)
         if not to_delete:
             return
 

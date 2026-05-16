@@ -9,6 +9,7 @@ from typing import Optional
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
+    QComboBox,
     QDialog,
     QHBoxLayout,
     QHeaderView,
@@ -50,9 +51,24 @@ class RiskAssessmentPanel(QWidget):
         
         header_layout.addStretch()
         
+        self._filter_combo = QComboBox()
+        self._filter_combo.addItems(["All Frameworks", "STRIDE (Security)", "LINDDUN (Privacy)"])
+        self._filter_combo.setMinimumWidth(150)
+        self._filter_combo.setMaximumWidth(200)
+        self._filter_combo.currentTextChanged.connect(lambda: self._on_filter_changed(self._filter_input.text()))
+        header_layout.addWidget(self._filter_combo)
+
+        self._sev_filter_combo = QComboBox()
+        self._sev_filter_combo.addItems(["All Severities", "Critical", "High", "Medium", "Low", "Info", "None"])
+        self._sev_filter_combo.setMinimumWidth(110)
+        self._sev_filter_combo.setMaximumWidth(150)
+        self._sev_filter_combo.currentTextChanged.connect(lambda: self._on_filter_changed(self._filter_input.text()))
+        header_layout.addWidget(self._sev_filter_combo)
+
         self._filter_input = QLineEdit()
         self._filter_input.setPlaceholderText("Filter matrix...")
-        self._filter_input.setFixedWidth(250)
+        self._filter_input.setMinimumWidth(180)
+        self._filter_input.setMaximumWidth(300)
         self._filter_input.textChanged.connect(self._on_filter_changed)
         header_layout.addWidget(self._filter_input)
         
@@ -241,34 +257,26 @@ class RiskAssessmentPanel(QWidget):
             sev_text = f"{severity} ({t.cvss_score})"
             sev_item = QTableWidgetItem(sev_text)
             self._table.setItem(row, 10, sev_item)
+            
             lbl = QLabel(sev_text)
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-            lbl.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
             
             s_upper = severity.upper()
-            if is_dark:
-                if s_upper == "CRITICAL":
-                    lbl.setStyleSheet("background-color: #7b1e1e; color: white; border-radius: 4px; padding: 3px;")
-                elif s_upper == "HIGH":
-                    lbl.setStyleSheet("background-color: #cc0000; color: white; border-radius: 4px; padding: 3px;")
-                elif s_upper == "MEDIUM":
-                    lbl.setStyleSheet("background-color: #e3b341; color: white; border-radius: 4px; padding: 3px;")
-                elif s_upper == "LOW":
-                    lbl.setStyleSheet("background-color: #1f6feb; color: white; border-radius: 4px; padding: 3px;")
-                else:
-                    lbl.setStyleSheet("background-color: #30363d; color: white; border-radius: 4px; padding: 3px;")
+            if s_upper == "CRITICAL":
+                lbl.setProperty("class", "severity-critical")
+            elif s_upper == "HIGH":
+                lbl.setProperty("class", "severity-high")
+            elif s_upper == "MEDIUM":
+                lbl.setProperty("class", "severity-medium")
+            elif s_upper == "LOW":
+                lbl.setProperty("class", "severity-low")
             else:
-                if s_upper == "CRITICAL":
-                    lbl.setStyleSheet("background-color: #cf222e; color: white; border-radius: 4px; padding: 3px;")
-                elif s_upper == "HIGH":
-                    lbl.setStyleSheet("background-color: #af4e00; color: white; border-radius: 4px; padding: 3px;")
-                elif s_upper == "MEDIUM":
-                    lbl.setStyleSheet("background-color: #9a6700; color: white; border-radius: 4px; padding: 3px;")
-                elif s_upper == "LOW":
-                    lbl.setStyleSheet("background-color: #0969da; color: white; border-radius: 4px; padding: 3px;")
-                else:
-                    lbl.setStyleSheet("background-color: #f6f8fa; color: #57606a; border-radius: 4px; padding: 3px;")
+                lbl.setProperty("class", "severity-info")
+            
+            # Re-apply style to ensure class property is picked up
+            lbl.style().unpolish(lbl)
+            lbl.style().polish(lbl)
 
             container = QWidget()
             layout = QHBoxLayout(container)
@@ -289,17 +297,7 @@ class RiskAssessmentPanel(QWidget):
             del_btn = QPushButton("Delete")
             del_btn.setFixedSize(90, 28)
             del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            if is_dark:
-                del_btn.setStyleSheet("""
-                    QPushButton { color: #ff6b6b; background-color: #2a1515; border: 1px solid #7b1e1e; border-radius: 4px; font-weight: bold; }
-                    QPushButton:hover { background-color: #7b1e1e; color: white; }
-                """)
-            else:
-                del_btn.setStyleSheet("""
-                    QPushButton { color: #cf222e; background-color: #ffebe9; border: 1px solid #d73a49; border-radius: 4px; font-weight: bold; }
-                    QPushButton:hover { background-color: #d73a49; color: white; }
-                """)
-                
+            del_btn.setProperty("class", "btn-delete-row")                
             del_btn.clicked.connect(lambda checked=False, tid=t.threat_id: self._on_delete_threat_id(tid))
             actions_layout.addWidget(del_btn)
             self._table.setCellWidget(row, 12, actions_container)
@@ -322,6 +320,10 @@ class RiskAssessmentPanel(QWidget):
                 self._table.selectRow(prev_row)
             self._table.verticalScrollBar().setValue(v_scroll)
             self._table.horizontalScrollBar().setValue(h_scroll)
+        
+        # Re-apply filter if active
+        if self._filter_input.text():
+            self._on_filter_changed(self._filter_input.text())
 
 
     def _edit_threat(self, threat: Threat) -> None:
@@ -410,19 +412,57 @@ class RiskAssessmentPanel(QWidget):
                 self.refresh()
                 self.threat_edited.emit()
 
-    def _on_filter_changed(self, text: str) -> None:
-        """Filter the table rows based on the text."""
+    def _on_filter_changed(self, text: str = "") -> None:
+        """Filter the table rows based on the text, framework, and severity."""
         text = text.lower()
+        framework = self._filter_combo.currentText()
+        severity_filter = self._sev_filter_combo.currentText().upper()
+        
         visible_row_count = 1
         for row in range(self._table.rowCount()):
-            match = False
-            for col in range(self._table.columnCount()):
-                item = self._table.item(row, col)
-                if item and text in item.text().lower():
-                    match = True
-                    break
+            # UserData in column 1 holds the threat
+            id_item = self._table.item(row, 1)
+            threat = id_item.data(Qt.ItemDataRole.UserRole) if id_item else None
+            
+            # 1. Framework Filter
+            if threat and framework != "All Frameworks":
+                is_stride = getattr(threat.category, "name", "").upper() in [
+                    "SPOOFING", "TAMPERING", "REPUDIATION", 
+                    "INFORMATION_DISCLOSURE", "DENIAL_OF_SERVICE", "ELEVATION_OF_PRIVILEGE"
+                ]
+                if framework == "STRIDE (Security)" and not is_stride:
+                    self._table.setRowHidden(row, True)
+                    continue
+                if framework == "LINDDUN (Privacy)" and is_stride:
+                    self._table.setRowHidden(row, True)
+                    continue
+
+            # 2. Severity Filter
+            if threat and severity_filter != "ALL SEVERITIES":
+                s_upper = get_cvss_severity(threat.cvss_score).upper()
+                if s_upper != severity_filter:
+                    self._table.setRowHidden(row, True)
+                    continue
+
+            # 3. Text Search
+            match = not text
+            if text:
+                for col in range(self._table.columnCount()):
+                    item = self._table.item(row, col)
+                    if item and text in item.text().lower():
+                        match = True
+                        break
+                    
+                    cw = self._table.cellWidget(row, col)
+                    if cw and cw.layout():
+                        for i in range(cw.layout().count()):
+                            w = cw.layout().itemAt(i).widget()
+                            if isinstance(w, QLabel) and text in w.text().lower():
+                                match = True
+                                break
+                    if match: break
             
             self._table.setRowHidden(row, not match)
             if match:
-                self._table.item(row, 0).setText(str(visible_row_count))
+                self._table.item(row, 1).setText(str(visible_row_count))
                 visible_row_count += 1

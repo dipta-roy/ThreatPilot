@@ -9,90 +9,103 @@ import base64
 import json
 from typing import Any, Dict, List, Optional
 import httpx
-from threatpilot.ai.ai_provider_interface import AIProviderInterface
+from threatpilot.ai.ai_provider_interface import AIProviderInterface, TokenUsage
 from threatpilot.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 class OllamaProvider(AIProviderInterface):
-    """Local Ollama instance provider.
+    """Integrates with a local Ollama instance via its REST API."""
 
-    Expects the Ollama server to be running (e.g. ``ollama serve``).
-    """
+    def __init__(self, config: AIConfig) -> None:
+        super().__init__(config)
+        self._base_url = (self.config.endpoint_url or "http://localhost:11434").rstrip("/")
+
     async def chat_complete(
         self,
         prompt: str,
         system_instructions: Optional[str] = None,
         **kwargs: Any
-    ) -> tuple[str, dict]:
-        """Send a chat completion request to the local Ollama instance.
-
-        Args:
-            prompt: The text containing DFD elements and instructions.
-            system_instructions: The structured prompt metadata context.
-            **kwargs: Extra parameters like temperature, top_p etc.
-
-        Returns:
-            The raw text content of the assistant message.
-
-        Raises:
-            IOError: If Ollama is not reachable.
-            RuntimeError: If the model request fails.
-        """
-        messages: List[Dict[str, str]] = []
+    ) -> tuple[str, TokenUsage]:
+        """Sends a text-based chat completion request to the local Ollama service."""
+        lang_directive = "LANGUAGE DIRECTIVE: You MUST respond exclusively in English. DO NOT use Chinese or any other language for any field.\n\n"
+        
+        messages = []
         if system_instructions:
-            messages.append({"role": "system", "content": system_instructions})
-        messages.append({"role": "user", "content": prompt})
+            sys_content = lang_directive + system_instructions
+            messages.append({"role": "system", "content": sys_content})
+        else:
+            messages.append({"role": "system", "content": lang_directive + "You are an expert security analyst."})
+
+        usr_content = f"{lang_directive}{prompt}\n\nREMEMBER: RESPOND IN ENGLISH ONLY."
+        messages.append({"role": "user", "content": usr_content})
+
+        valid_options = {
+            "num_ctx", "temperature", "num_predict", "top_k", "top_p", 
+            "repeat_penalty", "seed", "stop", "tfs_z", "typical_p", 
+            "presence_penalty", "frequency_penalty", "mirostat", 
+            "mirostat_tau", "mirostat_eta", "penalize_newline", 
+            "num_keep", "num_thread"
+        }
+        
+        options = {
+            "temperature": self.config.temperature,
+            "num_predict": self.config.max_tokens,
+            "num_ctx": 8192,
+        }
+        for k, v in kwargs.items():
+            if k in valid_options:
+                options[k] = v
 
         payload = {
-            "model": self.config.model_name,
+            "model": self.config.model_name or "llama3",
             "messages": messages,
             "stream": False,
-            "options": {
-                "temperature": self.config.temperature,
-                "num_predict": self.config.max_tokens,
-                "num_ctx": 16384,
-                **kwargs
-            }
+            "options": options
         }
+        
+        mime_type = kwargs.get("response_mime_type", "application/json")
+        if mime_type == "application/json":
+            payload["format"] = "json"
 
+        logger.info(f"Ollama Request: model={payload['model']}, tokens={self.config.max_tokens}, format={payload.get('format', 'text')}")
         try:
-            async with httpx.AsyncClient(timeout=self.config.timeout) as client:
-                response = await client.post(
-                    f"{self.config.endpoint_url}/api/chat",
-                    json=payload
-                )
+            async with httpx.AsyncClient(timeout=float(self.config.timeout)) as client:
+                resp = await client.post(f"{self._base_url}/api/chat", json=payload)
+                actual_model = payload.get("model", "unknown")
+                if resp.status_code == 404: 
+                    logger.error(f"Ollama Model Not Found: {actual_model}")
+                    raise RuntimeError(f"Ollama Model Not Found: '{actual_model}'. Please ensure the model is pulled (run 'ollama pull {actual_model}') or select a valid model in AI Settings.")
                 
-                if response.status_code == 404:
+                if resp.status_code != 200:
                     try:
-                        error_text = response.json().get("error", response.text)
+                        err_data = resp.json()
+                        err_msg = err_data.get("error", resp.text)
                     except Exception:
-                        error_text = response.text
-                    raise RuntimeError(f"Ollama Model Not Found (404): The model '{self.config.model_name}' is not downloaded. Run 'ollama pull {self.config.model_name}' in your terminal. Details: {error_text}")
-                
-                response.raise_for_status()
-                data = response.json()
-                text = str(data.get("message", {}).get("content", ""))
-                return text, {"usage": data}
+                        err_msg = resp.text
+                    logger.error(f"Ollama API Error ({resp.status_code}): {err_msg}")
+                    raise RuntimeError(f"Ollama request failed with status {resp.status_code}: {err_msg}")
 
-        except httpx.ConnectError:
-            raise IOError(f"Connection Failed: Could not reach Ollama at {self.config.endpoint_url}. Ensure 'ollama serve' is running.")
-        except httpx.TimeoutException:
-            raise IOError(f"Request Timeout: Ollama took too long to respond. You may need to increase the timeout in AI Settings.")
-        except httpx.HTTPStatusError as exc:
-            if exc.response.status_code == 500:
-                hint = (
-                    "\n\nHINT: A 500 Internal Server Error in Ollama usually means:\n"
-                    "1. Out of Memory (OOM): Try closing other apps.\n"
-                    "2. Context Window: The request might be too large for the model's current configuration.\n"
-                    "3. Model Crash: Try restarting the Ollama service."
+                data = resp.json()
+                text = str(data.get("message", {}).get("content", ""))
+                
+                is_debug = getattr(self.config, "application_mode", "Production") == "Debug"
+                if is_debug:
+                    logger.info(f"OLLAMA PROMPT:\n{prompt}")
+                    if system_instructions:
+                        logger.info(f"OLLAMA SYSTEM INSTRUCTIONS:\n{system_instructions}")
+                    logger.info(f"OLLAMA RESPONSE ({len(text)} chars):\n{text}")
+                else:
+                    logger.info(f"OLLAMA PROMPT: {prompt[:200]}...")
+                    logger.info(f"OLLAMA RESPONSE RECEIVED ({len(text)} chars): {text[:200]}...")
+                
+                usage = TokenUsage(
+                    prompt_tokens=data.get("prompt_eval_count", 0),
+                    completion_tokens=data.get("eval_count", 0),
+                    total_tokens=data.get("prompt_eval_count", 0) + data.get("eval_count", 0)
                 )
-                raise RuntimeError(f"Ollama API Error (500): {exc}{hint}")
-            raise RuntimeError(f"Ollama API Error: {exc}")
-        except httpx.HTTPError as exc:
-            raise RuntimeError(f"Ollama API Error: {exc}")
-        except Exception as exc:
-            raise RuntimeError(f"Ollama request failed: {exc}")
+                return text, usage
+        except Exception as exc: raise RuntimeError(f"Ollama request failed: {exc}")
 
     async def vision_complete(
         self,
@@ -101,114 +114,90 @@ class OllamaProvider(AIProviderInterface):
         mime_type: str = "image/png",
         system_instructions: Optional[str] = None,
         **kwargs: Any
-    ) -> tuple[str, dict]:
-        """Send a multimodal vision request to a local Ollama vision model.
+    ) -> tuple[str, TokenUsage]:
+        """Sends a multimodal request containing image data to the local Ollama service."""
+        lang_directive = "LANGUAGE DIRECTIVE: You MUST respond exclusively in English. DO NOT use Chinese or any other language.\n\n"
         
-        Ollama supports vision models (e.g. llava, qwen2.5vl) by passing
-        base64-encoded images in the ``images`` field of the user message.
-
-        Args:
-            prompt: The text prompt describing what to extract from the image.
-            image_bytes: Raw binary data of the image.
-            mime_type: MIME type of the image (unused by Ollama).
-            system_instructions: Optional system context.
-            **kwargs: Extra generation parameters.
-
-        Returns:
-            A tuple of (raw text content, metadata dict).
-        """
-        b64_image = base64.b64encode(image_bytes).decode("utf-8")
-
-        full_content = prompt
-        if system_instructions:
-            full_content = f"INSTRUCTIONS:\n{system_instructions}\n\nUSER REQUEST:\n{prompt}"
-            
-        messages = [{
-            "role": "user",
-            "content": full_content,
-            "images": [b64_image],
-        }]
-
-        # Ensure we have enough context for image + prompt + response.
-        ctx_size = 32768
+        content = f"{lang_directive}INSTRUCTIONS:\n{system_instructions}\n\nUSER REQUEST:\n{prompt}\n\nREMEMBER: RESPOND IN ENGLISH ONLY." if system_instructions else f"{lang_directive}{prompt}\n\nREMEMBER: RESPOND IN ENGLISH ONLY."
+        messages = [{"role": "user", "content": content, "images": [base64.b64encode(image_bytes).decode("utf-8")]}]
         
-        # We must leave room for the image tokens (typically 4k-8k for high res).
-        # We also want a large enough output window for 45+ elements in JSON.
-        predict_size = max(self.config.max_tokens, 8192)
+        valid_options = {
+            "num_ctx", "temperature", "num_predict", "top_k", "top_p", 
+            "repeat_penalty", "seed", "stop", "tfs_z", "typical_p", 
+            "presence_penalty", "frequency_penalty", "mirostat", 
+            "mirostat_tau", "mirostat_eta", "penalize_newline", 
+            "num_keep", "num_thread"
+        }
         
+        options = {
+            "temperature": self.config.temperature,
+            "num_predict": min(max(self.config.max_tokens, 4096), 8192),
+            "num_ctx": 4096,
+        }
+        for k, v in kwargs.items():
+            if k in valid_options:
+                options[k] = v
+
         payload = {
-            "model": self.config.model_name,
+            "model": self.config.model_name or "llava",
             "messages": messages,
             "stream": False,
-            "options": {
-                "temperature": self.config.temperature,
-                "num_predict": predict_size,
-                "num_ctx": ctx_size,
-                **kwargs,
-            },
+            "options": options
         }
 
+        mime_type = kwargs.get("response_mime_type", "application/json")
+        if mime_type == "application/json":
+            payload["format"] = "json"
+
+        logger.info(f"Ollama Vision Request: model={payload['model']}, image_size={len(image_bytes)} bytes")
         try:
-            async with httpx.AsyncClient(timeout=self.config.timeout) as client:
-                response = await client.post(
-                    f"{self.config.endpoint_url}/api/chat",
-                    json=payload,
-                )
+            timeout_val = float(self.config.timeout)
+            limits = httpx.Limits(max_keepalive_connections=5, max_connections=10)
+            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_val, read=timeout_val), limits=limits) as client:
+                resp = await client.post(f"{self._base_url}/api/chat", json=payload)
+                actual_model = payload.get("model", "unknown")
+                if resp.status_code == 404:
+                    logger.error(f"Ollama Vision Model Not Found: {actual_model}")
+                    raise RuntimeError(f"Ollama Vision Model Not Found: '{actual_model}'. Please ensure the model is pulled (run 'ollama pull {actual_model}') or select a vision-capable model in AI Settings.")
                 
-                if response.status_code >= 500:
+                if resp.status_code != 200:
                     try:
-                        error_data = response.json()
-                        error_msg = error_data.get("error", "")
-                        if "out of memory" in error_msg.lower():
-                            raise RuntimeError(f"Ollama Out Of Memory: The model '{self.config.model_name}' exceeded available VRAM. Try a smaller model (llava:7b) or close other GPU-intensive apps.")
-                        if "ggml_assert" in error_msg.lower():
-                            raise RuntimeError(f"Ollama Model Assertion Error: {error_msg}\n\nThis often happens when sending images to a NON-VISION model (like gemma2 or llama3) or if the image resolution is incompatible with the model's KV cache. Please ensure you are using a vision-capable model (llava, paligemma, etc.).")
-                        if error_msg:
-                            raise RuntimeError(f"Ollama Server Failure: {error_msg}")
-                    except (ValueError, TypeError, json.JSONDecodeError):
-                        pass
-
-                if response.status_code == 404:
-                    try:
-                        error_text = response.json().get("error", response.text)
+                        err_data = resp.json()
+                        err_msg = err_data.get("error", resp.text)
                     except Exception:
-                        error_text = response.text
-                    raise RuntimeError(f"Ollama Vision Model Not Found (404): The vision model '{self.config.model_name}' is not downloaded. Run 'ollama pull {self.config.model_name}' in your terminal. Details: {error_text}")
-                
-                response.raise_for_status()
-                data = response.json()
+                        err_msg = resp.text
+                    logger.error(f"Ollama Vision API Error ({resp.status_code}): {err_msg}")
+                    raise RuntimeError(f"Ollama vision request failed with status {resp.status_code}: {err_msg}")
+                    
+                data = resp.json()
                 text = str(data.get("message", {}).get("content", ""))
-                return text, {"usage": data}
-
-        except httpx.ConnectError:
-            raise IOError(f"Connection Failed: Could not reach Ollama at {self.config.endpoint_url}. Ensure 'ollama serve' is running.")
-        except httpx.TimeoutException:
-            raise IOError(f"Request Timeout: Ollama took too long to respond. You may need to increase the timeout in AI Settings.")
-        except httpx.HTTPStatusError as exc:
-            if exc.response.status_code == 500:
-                hint = (
-                    "\n\nDIAGNOSTIC HINTS:\n"
-                    "1. Model Type: Ensure you are using a VISION model (llava, qwen2-vl). "
-                    "Sending images to models like 'qwen2.5:72b' (non-vision) will crash Ollama with a 500 error.\n"
-                    "2. VRAM: Images require significant EXTRA memory. Try closing browsers or secondary monitors.\n"
-                    "3. Model Swap: Try 'ollama pull moondream:latest' (very lightweight) to verify if vision logic is working."
+                logger.debug(f"Ollama Vision Response received: {len(text)} chars")
+                usage = TokenUsage(
+                    prompt_tokens=data.get("prompt_eval_count", 0),
+                    completion_tokens=data.get("eval_count", 0),
+                    total_tokens=data.get("prompt_eval_count", 0) + data.get("eval_count", 0)
                 )
-                raise RuntimeError(f"Ollama Vision API Error (500): {exc}{hint}")
-            raise RuntimeError(f"Ollama Vision API Error: {exc}")
-        except httpx.HTTPError as exc:
-            raise RuntimeError(f"Ollama Vision API Error: {exc}")
-        except Exception as exc:
+                return text, usage
+        except httpx.ReadError as exc:
+            logger.error(f"Ollama connection closed during vision task: {exc}")
+            raise RuntimeError(f"Ollama connection reset. The vision model might be struggling with the image size or out of memory. Try a smaller image or a different model.")
+        except Exception as exc: 
+            logger.exception(f"Ollama vision request failed: {exc}")
             raise RuntimeError(f"Ollama vision request failed: {exc}")
 
+    async def get_available_models(self) -> List[str]:
+        """Retrieves the list of locally pulled models from Ollama."""
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(f"{self._base_url}/api/tags")
+                resp.raise_for_status()
+                return [m["name"] for m in resp.json().get("models", [])]
+        except Exception: return []
+
     def is_available(self) -> bool:
-        """Test if Ollama is running and accessible."""
+        """Verifies if the local Ollama service is running and reachable."""
         try:
             with httpx.Client(timeout=5.0) as client:
-                response = client.get("http://localhost:11434/api/tags")
-                response.raise_for_status()
-                return True
-        except (httpx.ConnectError, httpx.TimeoutException, httpx.RequestError):
-            return False
-        except Exception as e:
-            logger.error(f"Ollama connection test failed: {e}")
-            return False
+                resp = client.get(f"{self._base_url}/api/tags")
+                resp.raise_for_status(); return True
+        except Exception: return False

@@ -7,7 +7,7 @@ currently selected architectural item (Component, Flow, or Trust Boundary).
 from __future__ import annotations
 from datetime import datetime
 from typing import Any
-from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtCore import Qt, Signal, QTimer, QSize
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QProgressBar,
     QScrollArea,
+    QSizePolicy,
     QTabWidget,
     QTextEdit,
     QVBoxLayout,
@@ -30,16 +31,7 @@ from threatpilot.ai.response_parser import convert_reasoning_to_markdown
 from threatpilot.utils.logger import sanitize_text
 
 class PropertiesPanel(QWidget):
-    """A dynamic property editor panel for project elements.
-
-    Displays a form with fields dependent on the object's type.
-    Changes are updated back to the model object immediately as they're
-    typed/chosen.
-
-    Signals:
-        property_changed: Emitted when any field is edited. Carries the
-            modified item object.
-    """
+    """Provides a dynamic attribute editor for selected project elements."""
 
     property_changed: Signal = Signal(object)
     reasoning_requested: Signal = Signal(object)
@@ -50,6 +42,9 @@ class PropertiesPanel(QWidget):
         self._undo_stack = undo_stack
         self._project = None
         
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMinimumWidth(100) # Allow shrinking
+
         self._debounce_timer = QTimer(self)
         self._debounce_timer.setSingleShot(True)
         self._debounce_timer.setInterval(1000)
@@ -60,8 +55,12 @@ class PropertiesPanel(QWidget):
 
         self._setup_ui()
 
+    def sizeHint(self) -> QSize:
+        """Suggests a default width for the panel while remaining resizable."""
+        return QSize(350, 700)
+
     def _setup_ui(self) -> None:
-        """Initialise the layout with the Properties form."""
+        """Initializes the property form layout and scrolling container."""
         self.setObjectName("properties_container")
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(0, 0, 0, 0)
@@ -91,20 +90,16 @@ class PropertiesPanel(QWidget):
         root_layout.addWidget(self._security_warning)
 
     def set_theme(self, is_dark: bool) -> None:
-        """Update the panel's internal state for theme changes."""
+        """Updates the panel styling for theme transitions."""
         self._is_dark_theme = is_dark
-        if self._current_item:
-            self.set_item(self._current_item)
+        if self._current_item: self.set_item(self._current_item)
 
     def set_project(self, project: object) -> None:
+        """Binds a project instance to the panel."""
         self._project = project
 
     def set_item(self, item: Any | None) -> None:
-        """Load the properties of the given item into the panel.
-
-        Args:
-            item: The object whose properties should be edited, or ``None`` to clear.
-        """
+        """Populates the property form for the specified project element."""
         self._current_item = item
         self._clear_form()
 
@@ -114,10 +109,7 @@ class PropertiesPanel(QWidget):
             return
 
         from threatpilot.core.threat_model import Threat
-        if isinstance(item, Threat):
-            self._security_warning.setVisible(True)
-        else:
-            self._security_warning.setVisible(False)
+        self._security_warning.setVisible(isinstance(item, Threat))
 
         if isinstance(item, Component):
             self._header.setText("Component Properties")
@@ -128,13 +120,10 @@ class PropertiesPanel(QWidget):
             self._add_combo_row("Element Type:", "element_type", item.element_type.value, [e.value for e in ElementType])
             self._add_combo_row("Asset Type:", "asset_type", item.asset_type.value, [a.value for a in AssetType])
             
-            # Trust Boundary Selection
             tb_options = ["None (External)"]
-            tb_map = {"None (External)": None}
             if hasattr(self.parent(), "project") and self.parent().project:
                 for b in self.parent().project.boundaries:
                     tb_options.append(b.name)
-                    tb_map[b.name] = b.boundary_id
             
             current_tb_name = "None (External)"
             if item.trust_boundary_id and hasattr(self.parent(), "project") and self.parent().project:
@@ -142,7 +131,6 @@ class PropertiesPanel(QWidget):
                 if tb: current_tb_name = tb.name
             
             self._add_combo_row("Trust Boundary:", "trust_boundary_id", current_tb_name, tb_options)
-
             self._add_textarea_row("Description:", "description", item.description)
             self._add_checkbox_row("High Value Asset:", "is_high_value_asset", item.is_high_value_asset)
             self._add_textarea_row("Criticality Desc:", "criticality_description", item.criticality_description)
@@ -167,107 +155,46 @@ class PropertiesPanel(QWidget):
             self._add_text_row("Type:", "type", item.type)
             
             parent_options = ["None"]
-            parent_map = {"None": None}
             for b in self._project.boundaries:
-                if b.boundary_id != item.boundary_id:
-                    parent_options.append(b.name)
-                    parent_map[b.name] = b.boundary_id
+                if b.boundary_id != item.boundary_id: parent_options.append(b.name)
             
             current_parent_name = "None"
             if item.parent_boundary_id:
                 p = next((b for b in self._project.boundaries if b.boundary_id == item.parent_boundary_id), None)
                 if p: current_parent_name = p.name
                 
-            self._add_combo_row("Parent Boundary:", "parent_boundary_id", current_parent_name, parent_options, parent_map)
+            self._add_combo_row("Parent Boundary:", "parent_boundary_id", current_parent_name, parent_options)
             self._add_textarea_row("Description:", "description", item.description)
             self._add_readonly_row("ID:", item.boundary_id)
 
         elif isinstance(item, Threat):
             self._header.setText("Threat Details")
             self._add_text_row("Title:", "title", item.title)
-            
             self._add_combo_row("Category:", "category", item.category.value, [c.value for c in STRIDECategory])
-            
             self._add_textarea_row("Description:", "description", item.description)
             
             vuln_display = ""
             if self._project and self._project.vulnerability_register:
-                v_ids = getattr(item, "vulnerability_ids", [])
-                v_texts = []
-                for vid in v_ids:
-                    v_obj = self._project.vulnerability_register.get_vulnerability(vid)
-                    if v_obj:
-                        v_texts.append(f"• {v_obj.description}")
-                    else:
-                        v_texts.append(f"• [Unknown: {vid}]")
+                v_texts = [f"• {v.description}" if (v := self._project.vulnerability_register.get_vulnerability(vid)) else f"• [Unknown: {vid}]" for vid in getattr(item, "vulnerability_ids", [])]
                 vuln_display = "\n".join(v_texts)
             
             self._add_readonly_textarea_row("Vulnerabilities:", "vulnerability_ids", vuln_display)
             self._add_textarea_row("Impact:", "impact", item.impact)
             self._add_textarea_row("Mitigation:", "mitigation", item.mitigation)
-            
             self._add_combo_row("Likelihood Score:", "likelihood", str(item.likelihood), ["1", "2", "3", "4", "5"])
             self._add_text_row("CVSS Score:", "cvss_score", str(item.cvss_score))
             self._add_text_row("CVSS Vector:", "cvss_vector", item.cvss_vector)
             self._add_text_row("MITRE ATT&CK ID:", "mitre_attack_id", item.mitre_attack_id)
             self._add_text_row("MITRE Technique:", "mitre_attack_technique", item.mitre_attack_technique)
-            
             self._add_textarea_row("Affected Components:", "affected_components", item.affected_components)
             
-            component_names = []
-            if self._project:
-                component_names = sorted(list(set(
-                    [c.name for c in self._project.components]
-                )))
-            
-            display_elem = item.affected_element_type or ""
-            display_asset = item.affected_asset_type or ""
-            
-            generic_types = ["data flow", "informational", "physical", "process", "data store", "external entity", "n/a", ""]
-            if (display_elem.lower() in generic_types or display_asset.lower() in generic_types) and self._project:
-                res_elem = ""
-                res_asset = ""
-                if item.affected_components:
-                    haystack = (f"{item.affected_components} {item.title} {item.description}").lower()
-                    for cname in [n.strip() for n in item.affected_components.split(",")]:
-                        flow_match = next((f for f in self._project.flows if f.name == cname), None)
-                        if flow_match:
-                            src = next((c for c in self._project.components if c.component_id == flow_match.source_id), None)
-                            dst = next((c for c in self._project.components if c.component_id == flow_match.target_id), None)
-                            res_elem = src.name if src else ""
-                            res_asset = dst.name if dst else ""
-                            break
-                        
-                        comp_match = next((c for c in self._project.components if c.name == cname), None)
-                        if comp_match:
-                            res_elem = comp_match.name
-                            res_asset = comp_match.name
-                            break
-                    
-                    if not res_elem:
-                        for f in self._project.flows:
-                            src = next((c for c in self._project.components if c.component_id == f.source_id), None)
-                            dst = next((c for c in self._project.components if c.component_id == f.target_id), None)
-                            if src and dst and src.name.lower() in haystack and dst.name.lower() in haystack:
-                                res_elem = src.name
-                                res_asset = dst.name
-                                break
-                    
-                    if not res_elem:
-                        for c in self._project.components:
-                            if c.name.lower() in haystack:
-                                res_elem = c.name
-                                res_asset = c.name
-                                break
-                
-                display_elem = display_elem if display_elem.lower() not in generic_types else (res_elem or display_elem)
-                display_asset = display_asset if display_asset.lower() not in generic_types else (res_asset or display_asset)
+            component_names = sorted(list(set([c.name for c in self._project.components]))) if self._project else []
+            display_elem, display_asset = item.resolve_affected_elements(self._project)
 
             self._add_editable_combo_row("Affected Element:", "affected_element_type", display_elem, component_names)
             self._add_editable_combo_row("Affected Asset:", "affected_asset_type", display_asset, component_names)
             self._add_checkbox_row("Accepted Risk:", "is_accepted_risk", item.is_accepted_risk)
             self._add_textarea_row("Acceptance Rationale:", "acceptance_justification", item.acceptance_justification)
-            
             self._add_readonly_textarea_row("XAI Reasoning:", "reasoning", item.reasoning or "Reasoning not yet generated.")
             
             self._btn_xai = QPushButton("Analyze Reasoning using XAI")
@@ -277,141 +204,93 @@ class PropertiesPanel(QWidget):
             self._form_layout.addRow("", self._btn_xai)
             
             self._xai_progress = QProgressBar()
-            self._xai_progress.setRange(0, 0)
-            self._xai_progress.setTextVisible(False)
-            self._xai_progress.setFixedHeight(4)
-            self._xai_progress.setVisible(False)
+            self._xai_progress.setRange(0, 0); self._xai_progress.setTextVisible(False); self._xai_progress.setFixedHeight(4); self._xai_progress.setVisible(False)
             self._form_layout.addRow("", self._xai_progress)
-            
             self._add_readonly_row("Threat ID:", item.threat_id)
-
         else:
             self._header.setText(f"{type(item).__name__} Unknown")
 
     def set_reasoning_progress(self, busy: bool) -> None:
-        """Update the UI state to reflect an active XAI reasoning pass."""
+        """Toggles the visual state of the XAI reasoning button and progress indicator."""
         if hasattr(self, "_btn_xai"):
             self._btn_xai.setEnabled(not busy)
             self._btn_xai.setText("Analyzing Reasoning..." if busy else "Analyze Reasoning using XAI")
-        
-        if hasattr(self, "_xai_progress"):
-            self._xai_progress.setVisible(busy)
+        if hasattr(self, "_xai_progress"): self._xai_progress.setVisible(busy)
 
     def _clear_form(self) -> None:
-        """Remove all rows from the layout."""
-        while self._form_layout.rowCount() > 0:
-            self._form_layout.removeRow(0)
+        """Removes all property fields from the panel."""
+        while self._form_layout.rowCount() > 0: self._form_layout.removeRow(0)
 
     def _add_text_row(self, label: str, field: str, value: Any) -> None:
-        """Add an editable text row that updates the model on change."""
+        """Inserts an editable text field for a model property."""
         edit = QLineEdit(str(value))
-        
         if field == "cvss_vector":
-            edit.setReadOnly(True)
-            edit.setCursor(Qt.CursorShape.PointingHandCursor)
-            edit.setToolTip("Click to launch interactive CVSS 3.1 Calculator")
-            edit.setObjectName("cvss_vector_edit")
-            
+            edit.setReadOnly(True); edit.setCursor(Qt.CursorShape.PointingHandCursor); edit.setObjectName("cvss_vector_edit")
             def launch_calc():
                 dialog = CVSSCalculatorDialog(edit.text(), self)
                 if dialog.exec():
                     score, vector = dialog.get_result()
-                    edit.setText(vector)
-                    self._on_field_changed("cvss_vector", vector)
-                    self._on_field_changed("cvss_score", score)
+                    edit.setText(vector); self._on_field_changed("cvss_vector", vector); self._on_field_changed("cvss_score", score)
                     self.set_item(self._current_item)
-
             edit.mousePressEvent = lambda e: launch_calc()
-
         edit.editingFinished.connect(lambda: self._on_field_changed(field, edit.text()))
         self._form_layout.addRow(label, edit)
 
     def _add_textarea_row(self, label: str, field: str, value: str) -> None:
-        """Add a multiline text environment row with debounced updates."""
-        edit = QTextEdit(str(value))
-        edit.setFixedHeight(100)
-        
+        """Inserts a multiline editor with debounced model synchronization."""
+        edit = QTextEdit(str(value)); edit.setFixedHeight(100)
         def _on_text_changed():
-            self._pending_field = field
-            self._pending_getter = edit.toPlainText
-            self._debounce_timer.start()
-
+            self._pending_field = field; self._pending_getter = edit.toPlainText; self._debounce_timer.start()
         edit.textChanged.connect(_on_text_changed)
         self._form_layout.addRow(label, edit)
 
     def _add_readonly_textarea_row(self, label: str, field: str, value: str) -> None:
-        """Add a multiline readonly text row (Markdown supported)."""
-        edit = QTextEdit()
-        edit.setReadOnly(True)
-
+        """Inserts a non-editable multiline viewer with Markdown support."""
+        edit = QTextEdit(); edit.setReadOnly(True)
         if field == "reasoning":
-            value = convert_reasoning_to_markdown(value)
-            self._reasoning_view = edit
-
-        edit.setMarkdown(value)
-        edit.setFixedHeight(150)
-        edit.setObjectName(f"readonly_{field}")
-
+            value = convert_reasoning_to_markdown(value); self._reasoning_view = edit
+        edit.setMarkdown(value); edit.setFixedHeight(150); edit.setObjectName(f"readonly_{field}")
         self._form_layout.addRow(label, edit)
 
     def _add_readonly_row(self, label: str, value: str) -> None:
-        """Add a non-editable text row for information/IDs."""
-        edit = QLineEdit(str(value))
-        edit.setReadOnly(True)
-        edit.setObjectName("readonly_edit")
+        """Inserts a non-editable text field for metadata or identifiers."""
+        edit = QLineEdit(str(value)); edit.setReadOnly(True); edit.setObjectName("readonly_edit")
         self._form_layout.addRow(label, edit)
 
     def _add_checkbox_row(self, label: str, field: str, checked: bool) -> None:
-        """Add a checkbox row that updates the model on change."""
-        cb = QCheckBox()
-        cb.setChecked(checked)
+        """Inserts a toggle switch for boolean model properties."""
+        cb = QCheckBox(); cb.setChecked(checked)
         cb.toggled.connect(lambda state: self._on_field_changed(field, state))
         self._form_layout.addRow(label, cb)
 
     def _add_combo_row(self, label: str, field: str, value: str, options: list[str]) -> None:
-        """Add a dropdown combobox row that updates the model on change."""
-        cb = QComboBox()
-        cb.addItems(options)
-        if value not in options:
-            cb.addItem(value)
-        cb.setCurrentText(value)
-        cb.currentTextChanged.connect(lambda text: self._on_field_changed(field, text))
+        """Inserts a dropdown selector for enumerated model properties."""
+        cb = QComboBox(); cb.addItems(options)
+        if value not in options: cb.addItem(value)
+        cb.setCurrentText(value); cb.currentTextChanged.connect(lambda text: self._on_field_changed(field, text))
         self._form_layout.addRow(label, cb)
 
     def _add_editable_combo_row(self, label: str, field: str, value: str, options: list[str]) -> None:
-        """Add an editable dropdown with autocompletion support."""
-        cb = QComboBox()
-        cb.setEditable(True)
-        cb.addItems(options)
-        
-        if value and value not in options:
-            cb.addItem(value)
-            
+        """Inserts an editable dropdown with autocompletion support."""
+        cb = QComboBox(); cb.setEditable(True); cb.addItems(options)
+        if value and value not in options: cb.addItem(value)
         cb.setCurrentText(value)
-        
-        completer = QCompleter(options)
-        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
-        cb.setCompleter(completer)
-        
-        cb.currentTextChanged.connect(lambda text: self._on_field_changed(field, text))
+        completer = QCompleter(options); completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive); completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        cb.setCompleter(completer); cb.currentTextChanged.connect(lambda text: self._on_field_changed(field, text))
         self._form_layout.addRow(label, cb)
 
     def _on_request_reasoning(self) -> None:
-        """Inform the controller that reasoning analysis should be executed for the current threat."""
+        """Dispatches an XAI reasoning request for the active threat."""
         from threatpilot.core.threat_model import Threat
         if isinstance(self._current_item, Threat):
-            self._btn_xai.setEnabled(False)
-            self._reasoning_view.setPlaceholderText("Analyzing Reasoning with AI... Please wait.")
+            self._btn_xai.setEnabled(False); self._reasoning_view.setPlaceholderText("Analyzing Reasoning with AI... Please wait.")
             self.reasoning_requested.emit(self._current_item)
 
     def _on_field_changed(self, field: str, value: Any) -> None:
-        """Update the model object field and emit change signal with type awareness."""
+        """Commits property changes to the model and triggers UI synchronization."""
         if self._current_item is not None:
-            try:
-                old_val = getattr(self._current_item, field)
-            except AttributeError:
-                return
+            try: old_val = getattr(self._current_item, field)
+            except AttributeError: return
 
             if field in ("cvss_score",):
                 try: value = float(value)
@@ -422,53 +301,38 @@ class PropertiesPanel(QWidget):
             
             if field == "category":
                 for cat in STRIDECategory:
-                    if cat.value == value:
-                        value = cat
-                        break
+                    if cat.value == value: value = cat; break
 
             if field == "cvss_score":
-                value = round(float(value), 1)
-                old_val = round(float(old_val or 0.0), 1)
+                value = round(float(value), 1); old_val = round(float(old_val or 0.0), 1)
 
             if field == "trust_boundary_id":
-                if value == "None (External)":
-                    value = None
+                if value == "None (External)": value = None
                 elif hasattr(self.parent(), "project") and self.parent().project:
-                    tb = next((b for b in self.parent().project.boundaries if b.name == value), None)
-                    value = tb.boundary_id if tb else None
+                    tb = next((b for b in self.parent().project.boundaries if b.name == value), None); value = tb.boundary_id if tb else None
 
             if field == "element_type":
                 from threatpilot.core.domain_models import ElementType
                 for et in ElementType:
-                    if et.value == value:
-                        value = et
-                        break
+                    if et.value == value: value = et; break
             
             if field == "asset_type":
                 from threatpilot.core.domain_models import AssetType
                 for at in AssetType:
-                    if at.value == value:
-                        value = at
-                        break
+                    if at.value == value: value = at; break
 
             if value != old_val:
                 self._is_panel_editing = True
                 try:
                     if self._undo_stack:
                         from threatpilot.ui import undo_commands
-                        cmd = undo_commands.PropertyUpdateCommand(self._current_item, field, old_val, value)
-                        self._undo_stack.push(cmd)
-                    else:
-                        setattr(self._current_item, field, value)
-                    
+                        self._undo_stack.push(undo_commands.PropertyUpdateCommand(self._current_item, field, old_val, value))
+                    else: setattr(self._current_item, field, value)
                     self.property_changed.emit(self._current_item)
-                finally:
-                    self._is_panel_editing = False
+                finally: self._is_panel_editing = False
 
     def _on_debounced_timeout(self) -> None:
-        """Commit the pending field update after typing has stopped."""
+        """Finalizes pending field updates after the debounce interval expires."""
         if self._pending_field and self._pending_getter:
-            value = self._pending_getter()
-            self._on_field_changed(self._pending_field, value)
-            self._pending_field = None
-            self._pending_getter = None
+            self._on_field_changed(self._pending_field, self._pending_getter())
+            self._pending_field = self._pending_getter = None

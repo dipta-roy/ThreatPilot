@@ -1,14 +1,10 @@
-"""Project manager module for ThreatPilot.
-
-Handles creation, loading, and saving of threat modeling projects.
-Each project is stored as a directory containing a project.json metadata file.
-
-All data models use pydantic ``BaseModel`` for validation and serialisation.
-"""
+"""Project lifecycle and persistence management for ThreatPilot."""
 
 from __future__ import annotations
 import json
+import os
 import re
+import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,23 +12,13 @@ from typing import Any
 from pydantic import BaseModel, Field
 from threatpilot.config.prompt_config import PromptConfig
 from threatpilot.core.diagram_model import Diagram
-from threatpilot.core.threat_model import ThreatRegister, VulnerabilityRegister, Vulnerability
 from threatpilot.core.domain_models import Component, Flow, TrustBoundary, Asset
+from threatpilot.core.threat_model import ThreatRegister, VulnerabilityRegister
+from threatpilot.core.migrations import migrate_legacy_data, migrate_vulnerabilities
+from threatpilot.core.constants import PROJECT_FILE_NAME, RESTRICTED_PATH_KEYWORDS
 
 class Project(BaseModel):
-    """Represents a ThreatPilot project.
-
-    Attributes:
-        project_id: Unique identifier for the project.
-        project_name: Human-readable project name.
-        created_at: ISO-8601 creation timestamp.
-        updated_at: ISO-8601 last-updated timestamp.
-        ai_config: AI provider configuration.
-        prompt_config: Prompt generation configuration.
-        project_path: Filesystem path to the project directory
-            (runtime-only, excluded from serialisation).
-    """
-
+    """Data model representing a ThreatPilot project and its security state."""
     project_id: str = ""
     project_name: str = ""
     created_at: str = ""
@@ -49,103 +35,29 @@ class Project(BaseModel):
     project_path: str = Field(default="", exclude=True)
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert the project to a JSON-serialisable dictionary.
-
-        The ``project_path`` field is excluded because it is runtime-only.
-
-        Returns:
-            A dictionary containing all project metadata.
-        """
-        data = self.model_dump(exclude={"project_path"})
-            
-        return data
+        """Serializes the project to a dictionary, excluding runtime-only fields."""
+        return self.model_dump(exclude={"project_path"})
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], project_path: str = "") -> Project:
-        """Construct a Project instance from a dictionary.
-
-        Args:
-            data: Dictionary previously produced by ``to_dict``.
-            project_path: Filesystem path to the project directory.
-
-        Returns:
-            A fully populated ``Project`` instance.
-        """
-        if "ai_config" in data:
-            del data["ai_config"]
-            
-        # Migration: If project has old components that were actually assets, move them
-        components = data.get("components", [])
-        assets = data.get("assets", [])
-        
-        new_components = []
-        migrated_any = False
-        
-        # We'll use a set to track names already in assets to avoid duplicates
-        existing_asset_names = {a.get("name") for a in assets}
-        
-        for c in components:
-            # All components are preserved as elements
-            new_components.append(c)
-            
-            a_name = c.get("name", "Unknown Element")
-            a_type_raw = c.get("asset_type")
-            
-            # If assets list is empty/missing this component, mirror it as an Asset
-            if a_name not in existing_asset_names:
-                # Determine type: if it was Informational in legacy, keep it, else Physical
-                a_type = "Informational" if str(a_type_raw).lower() == "informational" else "Physical"
-                
-                asset_dict = {
-                    "asset_id": uuid.uuid4().hex, # Use new ID to ensure independence
-                    "name": a_name,
-                    "type": a_type,
-                    "description": c.get("description", ""),
-                    "criticality": c.get("criticality_description") or c.get("criticality", "Medium"),
-                    "is_out_of_scope": c.get("is_out_of_scope", False),
-                    "out_of_scope_justification": c.get("out_of_scope_justification", "")
-                }
-                assets.append(asset_dict)
-                existing_asset_names.add(a_name)
-                migrated_any = True
-        
-        if migrated_any:
-            data["components"] = new_components
-            data["assets"] = assets
-
+        """Hydrates a Project instance from a dictionary and applies data migrations."""
+        data = migrate_legacy_data(data)
         project = cls.model_validate(data)
         project.project_path = project_path
-        
-        # Migration: Decouple vulnerabilities from threats
-        raw_threat_reg = data.get("threat_register")
-        if isinstance(raw_threat_reg, dict):
-            raw_threats = raw_threat_reg.get("threats", [])
-            for i, rt in enumerate(raw_threats):
-                legacy_vulns = rt.get("vulnerabilities", [])
-                if legacy_vulns and i < len(project.threat_register.threats):
-                    target_threat = project.threat_register.threats[i]
-                    for lv in legacy_vulns:
-                        if isinstance(lv, dict):
-                            v_obj = Vulnerability.model_validate(lv)
-                            project.vulnerability_register.add_vulnerability(v_obj)
-                            if v_obj.vulnerability_id not in target_threat.vulnerability_ids:
-                                target_threat.vulnerability_ids.append(v_obj.vulnerability_id)
-        
+        migrate_vulnerabilities(project, data)
         return project
 
-
-_PROJECT_FILE = "project.json"
+_PROJECT_FILE = PROJECT_FILE_NAME
 
 def create_project(project_name: str, parent_dir: str | Path | None = None) -> Project:
-    """Create a new ThreatPilot project. (M.4)"""
+    """Creates a new project directory structure and metadata file."""
     if parent_dir is None:
         parent_dir = Path.cwd()
     else:
         parent_dir = Path(parent_dir).resolve()
 
     path_str = str(parent_dir).lower()
-    restricted_keywords = ["windows", "system32", "program files", "programdata", "etc", "var", "usr", "bin", "sbin", "tmp"]
-    for kw in restricted_keywords:
+    for kw in RESTRICTED_PATH_KEYWORDS:
         if f"\\{kw}" in path_str or f"/{kw}" in path_str or path_str.endswith(f"\\{kw}") or path_str.endswith(f"/{kw}"):
             raise ValueError(f"Restricted directory detected: '{kw}'. Please choose a different workspace.")
 
@@ -160,13 +72,16 @@ def create_project(project_name: str, parent_dir: str | Path | None = None) -> P
     safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', project_name)
     if not safe_name.strip('_'):
         safe_name = "threatpilot_project"
+    
     project_dir = parent_dir / safe_name
     counter = 1
     while project_dir.exists():
         project_dir = parent_dir / f"{safe_name}_{counter}"
         counter += 1
+        
     project_dir.mkdir(parents=True, exist_ok=False)
     (project_dir / "diagrams").mkdir()
+    
     project = Project(
         project_id=project_id,
         project_name=project_name,
@@ -178,101 +93,64 @@ def create_project(project_name: str, parent_dir: str | Path | None = None) -> P
     _write_project_file(project)
     return project
 
-
 def load_project(project_path: str | Path) -> Project:
-    """Load an existing ThreatPilot project from disk.
-
-    Args:
-        project_path: Path to the project directory (must contain a
-            ``project.json`` file).
-
-    Returns:
-        The loaded ``Project`` instance.
-
-    Raises:
-        FileNotFoundError: If ``project.json`` does not exist.
-        json.JSONDecodeError: If the file contains invalid JSON.
-    """
+    """Loads project metadata and sidecar data from a given directory."""
     project_dir = Path(project_path)
     project_file = project_dir / _PROJECT_FILE
 
     if not project_file.exists():
-        raise FileNotFoundError(
-            f"Project file not found: {project_file}"
-        )
+        raise FileNotFoundError(f"Project file not found: {project_file}")
 
     with project_file.open("r", encoding="utf-8") as fh:
         data: dict[str, Any] = json.load(fh)
 
-    arch_file = project_dir / "architecture.json"
-    if arch_file.exists():
-        with arch_file.open("r", encoding="utf-8") as fh:
-            data.update(json.load(fh))
-    threats_file = project_dir / "threats.json"
-    if threats_file.exists():
-        with threats_file.open("r", encoding="utf-8") as fh:
-            data.update(json.load(fh))
-            
-    vuln_file = project_dir / "vulnerabilities.json"
-    if vuln_file.exists():
-        with vuln_file.open("r", encoding="utf-8") as fh:
-            data.update(json.load(fh))
+    for sidecar in ["architecture.json", "threats.json", "vulnerabilities.json"]:
+        sidecar_path = project_dir / sidecar
+        if sidecar_path.exists():
+            with sidecar_path.open("r", encoding="utf-8") as fh:
+                data.update(json.load(fh))
 
     return Project.from_dict(data, project_path=str(project_dir))
 
 def save_project(project: Project) -> None:
-    """Persist the project metadata to disk.
-
-    The ``updated_at`` timestamp is refreshed automatically.
-
-    Args:
-        project: The ``Project`` instance to save.
-
-    Raises:
-        ValueError: If the project has no ``project_path`` set.
-        OSError: If the file cannot be written.
-    """
+    """Persists the current project state to disk with an updated timestamp."""
     if not project.project_path:
         raise ValueError("Cannot save a project without a project_path.")
 
     project.updated_at = datetime.now(timezone.utc).isoformat()
     _write_project_file(project)
 
-def _write_project_file(project: Project) -> None:
-    """Write the project metadata to ``project.json``.
+def _atomic_write_json(file_path: Path, data: dict[str, Any]) -> None:
+    """Writes data to a temporary file and then atomically replaces the target file."""
+    # Use the same directory as the target file to ensure os.replace works (must be same filesystem)
+    temp_fd, temp_path = tempfile.mkstemp(dir=file_path.parent, prefix=file_path.name, suffix=".tmp")
+    try:
+        with os.fdopen(temp_fd, 'w', encoding='utf-8') as fh:
+            json.dump(data, fh, indent=2, ensure_ascii=False)
+            fh.flush()
+            os.fsync(fh.fileno())
+        # Atomic replacement
+        os.replace(temp_path, file_path)
+    except Exception:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise
 
-    Args:
-        project: The ``Project`` instance whose data is written.
-    """
+def _write_project_file(project: Project) -> None:
+    """Writes core metadata and specialized sidecar files to the project directory."""
     project_dir = Path(project.project_path)
     project_dir.mkdir(parents=True, exist_ok=True)
 
     data = project.to_dict()
 
-    # Extract data for sidecar files
     arch_keys = ["diagrams", "components", "flows", "boundaries", "assets", "custom_component_types"]
     arch_data = {k: data.pop(k, []) for k in arch_keys}
-
-    threats_keys = ["threat_register"]
-    threats_data = {k: data.pop(k, {}) for k in threats_keys}
     
-    vuln_keys = ["vulnerability_register"]
-    vuln_data = {k: data.pop(k, {}) for k in vuln_keys}
+    threats_data = {"threat_register": data.pop("threat_register", {})}
+    vuln_data = {"vulnerability_register": data.pop("vulnerability_register", {})}
 
-    # Write project metadata (core config only)
-    project_file = project_dir / _PROJECT_FILE
-    with project_file.open("w", encoding="utf-8") as fh:
-        json.dump(data, fh, indent=2, ensure_ascii=False)
-        
-    # Write specialized sidecar files
-    arch_file = project_dir / "architecture.json"
-    with arch_file.open("w", encoding="utf-8") as fh:
-        json.dump(arch_data, fh, indent=2, ensure_ascii=False)
-
-    threats_file = project_dir / "threats.json"
-    with threats_file.open("w", encoding="utf-8") as fh:
-        json.dump(threats_data, fh, indent=2, ensure_ascii=False)
-
-    vuln_file = project_dir / "vulnerabilities.json"
-    with vuln_file.open("w", encoding="utf-8") as fh:
-        json.dump(vuln_data, fh, indent=2, ensure_ascii=False)
+    # Perform atomic writes for all project files
+    _atomic_write_json(project_dir / _PROJECT_FILE, data)
+    _atomic_write_json(project_dir / "architecture.json", arch_data)
+    _atomic_write_json(project_dir / "threats.json", threats_data)
+    _atomic_write_json(project_dir / "vulnerabilities.json", vuln_data)

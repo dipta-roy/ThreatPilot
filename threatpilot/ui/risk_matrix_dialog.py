@@ -46,11 +46,11 @@ class RiskMatrixDialog(QDialog):
         layout.setSpacing(15)
         header = QLabel("Visual Risk Heat Map")
         header.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
-        header.setStyleSheet("color: #58a6ff;")
+        header.setObjectName("matrix_header")
         layout.addWidget(header)
 
         desc = QLabel("Threats are plotted by Likelihood (AI identified) vs. Impact (CVSS-derived).")
-        desc.setStyleSheet("color: #8b949e;")
+        desc.setObjectName("matrix_desc")
         layout.addWidget(desc)
         main_h = QHBoxLayout()
         self._matrix = QTableWidget(5, 5)
@@ -84,19 +84,12 @@ class RiskMatrixDialog(QDialog):
         main_h.addWidget(self._matrix, 3)
         self._side_panel = QFrame()
         self._side_panel.setFrameShape(QFrame.Shape.StyledPanel)
-        if self._is_dark_theme:
-            self._side_panel.setStyleSheet("background-color: #161b22; border-radius: 8px;")
-            title_color = "#f0f6fc"
-            table_color = "#f0f6fc"
-        else:
-            self._side_panel.setStyleSheet("background-color: #f6f8fa; border-radius: 8px; border: 1px solid #d0d7de;")
-            title_color = "#24292f"
-            table_color = "#24292f"
+        self._side_panel.setObjectName("matrix_side_panel")
         side_layout = QVBoxLayout(self._side_panel)
         
         self._cell_title = QLabel("Select a cell to view threats")
         self._cell_title.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        self._cell_title.setStyleSheet(f"color: {title_color}; padding-top: 5px;")
+        self._cell_title.setStyleSheet("padding-top: 5px;")
         side_layout.addWidget(self._cell_title)
         
         self._threat_table = QTableWidget(0, 2)
@@ -104,7 +97,7 @@ class RiskMatrixDialog(QDialog):
         self._threat_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self._threat_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
         self._threat_table.setColumnWidth(1, 80)
-        self._threat_table.setStyleSheet(f"background: transparent; border: none; color: {table_color};")
+        self._threat_table.setStyleSheet("background: transparent; border: none;")
         self._threat_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._threat_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._threat_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -129,38 +122,24 @@ class RiskMatrixDialog(QDialog):
             self._edit_threat(threats[row])
 
 
-    def _get_impact_score(self, cvss: float) -> int:
-        """Map 0-10 CVSS to 1-5 Impact scale."""
-        if cvss >= 9.0: return 5
-        if cvss >= 7.0: return 4
-        if cvss >= 4.0: return 3
-        if cvss >= 2.0: return 2
-        return 1
-
-    def _get_cell_color(self, row: int, col: int) -> QColor:
+    def _get_cell_colors(self, row: int, col: int) -> tuple[QColor, QColor]:
+        """Get (background, foreground) QColor for a matrix cell."""
+        from threatpilot.risk.utils import calculate_risk_rating, get_risk_color
+        
         likelihood = 5 - row
         impact = col + 1
-        risk_score = likelihood * impact
+        risk_score = calculate_risk_rating(likelihood, impact)
+        bg_hex, fg_hex = get_risk_color(risk_score)
         
-        if self._is_dark_theme:
-            if risk_score >= 15: return QColor("#8b0000")
-            if risk_score >= 10: return QColor("#d73a49")
-            if risk_score >= 6:  return QColor("#d29922")
-            if risk_score >= 3:  return QColor("#30363d")
-            return QColor("#238636")
-        else:
-            if risk_score >= 15: return QColor("#cf222e")
-            if risk_score >= 10: return QColor("#ffcccc")
-            if risk_score >= 6:  return QColor("#fff8c5")
-            if risk_score >= 3:  return QColor("#ddf4ff")
-            return QColor("#dafbe1")
+        return QColor(bg_hex), QColor(fg_hex)
 
     def _populate_matrix(self) -> None:
         """Group threats into matrix cells and update counts."""
+        from threatpilot.risk.utils import score_to_impact_score
         self._data: Dict[tuple[int, int], List[Threat]] = {}
         
         for t in self._threats:
-            impact = self._get_impact_score(t.cvss_score)
+            impact = score_to_impact_score(t.cvss_score)
             likelihood = t.likelihood
             row = 5 - likelihood
             col = impact - 1
@@ -177,22 +156,15 @@ class RiskMatrixDialog(QDialog):
                 font = QFont()
                 font.setBold(True)
                 item.setFont(font)
-                bg = self._get_cell_color(r, c)
-                item.setBackground(bg)
-                if self._is_dark_theme:
-                    if count > 0:
-                        item.setForeground(QColor("white"))
-                    else:
-                        item.setForeground(QColor("#484f58"))
+                
+                bg_color, fg_color = self._get_cell_colors(r, c)
+                item.setBackground(bg_color)
+                
+                if count > 0:
+                    item.setForeground(fg_color)
                 else:
-                    if count > 0:
-                        if r + c <= 2: 
-                            pass
-                        item.setForeground(QColor("#1a7f37") if (r >= 4 and c <= 0) else QColor("#1a1a1a"))
-                        if r == 0 and c == 4: 
-                            item.setForeground(QColor("white"))
-                    else:
-                        item.setForeground(QColor("#cccccc"))
+                    # Subtle color for empty cells
+                    item.setForeground(QColor("#484f58") if self._is_dark_theme else QColor("#cccccc"))
                 
                 self._matrix.setItem(r, c, item)
 
@@ -215,7 +187,7 @@ class RiskMatrixDialog(QDialog):
             
             edit_btn = QPushButton("Edit")
             edit_btn.setFixedSize(60, 32)
-            edit_btn.setStyleSheet("background-color: #238636; color: white; border-radius: 4px; font-weight: bold;")
+            edit_btn.setProperty("class", "btn-edit")
             edit_btn.clicked.connect(lambda checked=False, threat=t: self._edit_threat(threat))
             self._threat_table.setCellWidget(row_idx, 1, edit_btn)
 

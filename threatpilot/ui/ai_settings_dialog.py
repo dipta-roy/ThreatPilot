@@ -13,6 +13,8 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
+    QFrame,
+    QLabel,
     QLineEdit,
     QPushButton,
     QMessageBox,
@@ -64,6 +66,9 @@ class AISettingsDialog(QDialog):
         config: The current ``AIConfig`` to modify.
         parent: The parent widget.
     """
+    
+    _active_threads: list[QThread] = []
+    _active_workers: list[QObject] = []
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -87,8 +92,14 @@ class AISettingsDialog(QDialog):
         layout = QVBoxLayout(self)
 
         self._form = QFormLayout()
+        self._form.setSpacing(10)
+
+        provider_header = QLabel("AI Engine Configuration")
+        provider_header.setProperty("class", "heading-blue")
+        self._form.addRow(provider_header)
 
         self._provider_type = QComboBox()
+        self._provider_type.setMinimumHeight(35)
         self._provider_type.addItems(["ollama", "gemini"])
         self._provider_type.setCurrentText(self._config.provider_type)
         self._provider_type.currentTextChanged.connect(self._on_provider_changed)
@@ -119,7 +130,6 @@ class AISettingsDialog(QDialog):
         self._timeout.setRange(1, 86400)
         self._timeout.setValue(self._config.timeout)
         self._form.addRow("Timeout (sec):", self._timeout)
-        from PySide6.QtWidgets import QFrame, QLabel
         line_sec = QFrame()
         line_sec.setFrameShape(QFrame.Shape.HLine)
         line_sec.setFrameShadow(QFrame.Shadow.Sunken)
@@ -129,23 +139,28 @@ class AISettingsDialog(QDialog):
             "will be sent to Google Cloud for analysis. Ensure this complies with your security policy."
         )
         self._privacy_warning.setWordWrap(True)
-        self._privacy_warning.setStyleSheet("color: #d73a49; font-style: italic; font-size: 10px; margin: 4px;")
+        self._privacy_warning.setProperty("class", "text-error")
+        self._privacy_warning.setStyleSheet("font-style: italic; font-size: 10px; margin: 4px;")
         self._privacy_warning.setVisible(False)
         self._form.addRow(self._privacy_warning)
-        from PySide6.QtWidgets import QFrame, QLabel
         line = QFrame()
         line.setFrameShape(QFrame.Shape.HLine)
         line.setFrameShadow(QFrame.Shadow.Sunken)
         self._form.addRow(line)
 
         lbl_general = QLabel("General Application Settings")
-        lbl_general.setStyleSheet("font-weight: bold; color: #58a6ff; margin-top: 10px;")
+        lbl_general.setProperty("class", "heading-blue")
         self._form.addRow(lbl_general)
         self._autosave = QSpinBox()
         self._autosave.setRange(1, 60)
         self._autosave.setSuffix(" min")
         self._autosave.setValue(self._config.autosave_interval)
         self._form.addRow("Auto-save Interval:", self._autosave)
+
+        self._app_mode = QComboBox()
+        self._app_mode.addItems(["Production", "Debug"])
+        self._app_mode.setCurrentText(self._config.application_mode)
+        self._form.addRow("Application Mode:", self._app_mode)
         layout.addLayout(self._form)
         self._btn_test = QPushButton("Test Connection")
         self._btn_test.clicked.connect(self._on_test_connection)
@@ -220,9 +235,12 @@ class AISettingsDialog(QDialog):
             except RuntimeError:
                 pass
 
-        self._fetch_thread = QThread(self)
+        self._fetch_thread = QThread()  # Intentionally no parent
         self._fetch_worker = _OllamaFetchWorker(url)
         self._fetch_worker.moveToThread(self._fetch_thread)
+
+        AISettingsDialog._active_threads.append(self._fetch_thread)
+        AISettingsDialog._active_workers.append(self._fetch_worker)
 
         self._fetch_thread.started.connect(self._fetch_worker.run)
         self._fetch_worker.finished.connect(self._on_ollama_models_ready)
@@ -231,12 +249,19 @@ class AISettingsDialog(QDialog):
         self._fetch_worker.finished.connect(self._fetch_worker.deleteLater)
         self._fetch_thread.finished.connect(self._fetch_thread.deleteLater)
         
-        self._fetch_thread.finished.connect(self._on_fetch_cleanup)
+        t = self._fetch_thread
+        w = self._fetch_worker
+        self._fetch_thread.finished.connect(
+            lambda: AISettingsDialog._active_threads.remove(t) if t in AISettingsDialog._active_threads else None
+        )
+        self._fetch_thread.finished.connect(
+            lambda: AISettingsDialog._active_workers.remove(w) if w in AISettingsDialog._active_workers else None
+        )
 
         self._fetch_thread.start()
 
     def _on_fetch_cleanup(self) -> None:
-        """Clear references to finished background tasks."""
+        """Clear local references to background tasks."""
         self._fetch_thread = None
         self._fetch_worker = None
 
@@ -286,7 +311,14 @@ class AISettingsDialog(QDialog):
 
         self._config.provider_type = self._provider_type.currentText()
         self._config.endpoint_url = self._endpoint_url.text()
-        self._config.model_name = self._model_name.currentText()
+        
+        m_name = self._model_name.currentText()
+        if m_name in ("No Connection", "Fetching models…", ""):
+             if self._config.provider_type == "ollama":
+                  QMessageBox.warning(self, "Validation Error", "Please select a valid Ollama model. If none are listed, check your connection.")
+                  return self._config
+        
+        self._config.model_name = m_name
         from pydantic import SecretStr
         self._config.gemini_api_key = SecretStr(self._gemini_key.text())
         
@@ -294,4 +326,47 @@ class AISettingsDialog(QDialog):
         self._config.max_tokens = int(self._max_tokens.currentText())
         self._config.timeout = self._timeout.value()
         self._config.autosave_interval = self._autosave.value()
+        self._config.application_mode = self._app_mode.currentText()
         return self._config
+
+    def _cleanup_threads(self) -> None:
+        """Safely orphan background threads so they don't crash when dialog closes."""
+        try:
+            if self._fetch_thread and self._fetch_thread.isRunning():
+                if self._fetch_worker:
+                    try:
+                        self._fetch_worker.finished.disconnect()
+                    except (Exception, RuntimeError):
+                        pass
+                
+                # If the thread was created with a parent, clear it
+                try:
+                    self._fetch_thread.setParent(None)
+                except (Exception, RuntimeError):
+                    pass
+                    
+                if self._fetch_worker:
+                    try:
+                        self._fetch_worker.setParent(None)
+                    except (Exception, RuntimeError):
+                        pass
+        except RuntimeError:
+            # C++ object already deleted
+            pass
+        except Exception:
+            pass
+        finally:
+            self._fetch_thread = None
+            self._fetch_worker = None
+
+    def closeEvent(self, event) -> None:
+        self._cleanup_threads()
+        super().closeEvent(event)
+
+    def accept(self) -> None:
+        self._cleanup_threads()
+        super().accept()
+
+    def reject(self) -> None:
+        self._cleanup_threads()
+        super().reject()

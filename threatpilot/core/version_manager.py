@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 from typing import List, Optional
 from pydantic import BaseModel
+from threatpilot.core.constants import PROJECT_FILE_NAME
 
 class ProjectVersion(BaseModel):
     """Metadata for a project version snapshot.
@@ -51,7 +52,7 @@ def create_version_snapshot(
         OSError: If snapshot folder creation or file copying fails.
     """
     root = Path(project_path)
-    source_file = root / "project.json"
+    source_file = root / PROJECT_FILE_NAME
     if not source_file.exists():
         raise FileNotFoundError(f"Project metadata not found at {source_file}")
 

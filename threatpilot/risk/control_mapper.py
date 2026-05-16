@@ -79,6 +79,34 @@ DEFAULT_CONTROL_LIBRARY: Dict[STRIDECategory, List[SecurityControl]] = {
             name="Least Privilege",
             description="Employ the principle of least privilege, allowing only necessary access."
         )
+    ],
+    STRIDECategory.LINKABILITY: [
+        SecurityControl(
+            code="ISO 29100",
+            name="Anonymization",
+            description="Use techniques like k-anonymity or differential privacy to prevent linking data to individuals."
+        )
+    ],
+    STRIDECategory.IDENTIFIABILITY: [
+        SecurityControl(
+            code="NIST PR.IP-1",
+            name="Identity Masking",
+            description="Obfuscate or mask identifiers to prevent direct identification of data subjects."
+        )
+    ],
+    STRIDECategory.UNAWARENESS: [
+        SecurityControl(
+            code="GDPR Art. 12",
+            name="Transparency & Notice",
+            description="Provide clear and accessible information to subjects about data processing activities."
+        )
+    ],
+    STRIDECategory.NON_COMPLIANCE: [
+        SecurityControl(
+            code="ISO 27701",
+            name="Compliance Management",
+            description="Establish a Privacy Information Management System (PIMS) to ensure legal and regulatory adherence."
+        )
     ]
 }
 

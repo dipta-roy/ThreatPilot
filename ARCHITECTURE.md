@@ -36,6 +36,7 @@ graph TD
         JSON[(Project JSON)]
         ENV[config.env]
         CRY[Crypto Utils]
+        CON[Constants & Paths]
     end
 
     DC <--> PM
@@ -43,6 +44,7 @@ graph TD
     MW <--> TA
     AP <--> ENV
     ENV <--> CRY
+    MW <--> CON
 ```
 
 ---
@@ -78,6 +80,7 @@ A sophisticated pipeline that transforms architectural diagrams into structured 
 - **Project Files**: Projects are stored as structured JSON files.
 - **Credential Storage**: API keys are encrypted using Fernet (AES-128-CBC) and stored in `config.env`.
 - **Key Management**: Uses PBKDF2 for key derivation, supporting both OS `keyring` and session-based environment variables for encryption.
+- **Centralized Infrastructure**: All application thresholds, UI defaults, and AI mappings are centralized in `core/constants.py`, while filesystem path logic is unified in `utils/paths.py`.
 
 ---
 

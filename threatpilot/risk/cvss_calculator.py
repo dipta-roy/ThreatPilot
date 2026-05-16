@@ -83,12 +83,15 @@ def get_cvss_severity(score: float) -> str:
 
 
 def parse_cvss_vector(vector: str) -> CVSSMetrics:
-    """Parse a CVSS v3.1 vector string into CVSSMetrics."""
+    """Parse a CVSS v3.1 vector string into CVSSMetrics, with flexibility for missing prefixes."""
     metrics = CVSSMetrics()
-    if not vector or not vector.startswith("CVSS:3.1/"):
+    if not vector:
         return metrics
     
     parts = vector.split("/")
+    # If the vector doesn't start with the standard prefix, it might just be the metrics
+    start_idx = 1 if vector.startswith("CVSS:") else 0
+    
     mapping = {
         "AV": ("attack_vector", {"N": "Network", "A": "Adjacent", "L": "Local", "P": "Physical"}),
         "AC": ("attack_complexity", {"L": "Low", "H": "High"}),
@@ -100,13 +103,17 @@ def parse_cvss_vector(vector: str) -> CVSSMetrics:
         "A": ("availability", {"N": "None", "L": "Low", "H": "High"}),
     }
     
-    for part in parts[1:]:
+    found_any = False
+    for part in parts[start_idx:]:
         if ":" in part:
             key, val = part.split(":", 1)
+            key = key.strip().upper()
+            val = val.strip().upper()
             if key in mapping:
                 attr, val_map = mapping[key]
                 if val in val_map:
                     setattr(metrics, attr, val_map[val])
+                    found_any = True
                     
     return metrics
 

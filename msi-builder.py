@@ -27,10 +27,10 @@ if icon_png.exists() and not icon_ico.exists():
         print(f"Error converting icon: {e}")
 
 version_str = "1.0.0"
-main_path = Path("main.py")
-if main_path.exists():
-    content = main_path.read_text(encoding="utf-8")
-    m = re.search(r'app\.setApplicationVersion\("([^"]+)"\)', content)
+init_path = Path("threatpilot/__init__.py")
+if init_path.exists():
+    content = init_path.read_text(encoding="utf-8")
+    m = re.search(r'__version__\s*=\s*"([^"]+)"', content)
     if m:
         raw_version = m.group(1)
         numeric_only = re.sub(r'[^\d\.]', '', raw_version).strip('.')

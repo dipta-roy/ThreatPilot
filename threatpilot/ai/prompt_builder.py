@@ -10,46 +10,44 @@ from threatpilot.config.prompt_config import PromptConfig
 from threatpilot.core.dfd_converter import DFDModel
 
 class PromptBuilder:
-    """Formatter that converts project models into AI-readable prompts.
-
-    Handles construction of both global 'system' instructions and
-    specific system-description 'user' prompts.
-    """
+    """Translates project models and user configurations into structured AI prompts."""
 
     def __init__(self, config: PromptConfig, analysis_mode: str = "STRIDE") -> None:
         self.config = config
         self.analysis_mode = analysis_mode.upper()
 
     def _sanitize(self, text: str | None) -> str:
-        """Escape XML delimiters and control characters (C.1)."""
-        if not text:
-            return ""
-        str_val = str(text)
-        str_val = str_val.replace("<", "[").replace(">", "]")
-        str_val = str_val.replace("\n", " ").replace("\r", " ").replace("\t", " ")
-        return str_val
+        """Escapes XML-sensitive characters and control symbols."""
+        if not text: return ""
+        s = str(text).replace("<", "[").replace(">", "]")
+        return s.replace("\n", " ").replace("\r", " ").replace("\t", " ")
 
     def build_system_prompt(self) -> str:
-        """Construct the context-setting system prompt."""
+        """Constructs the high-level operational context for the AI security analyst."""
         role = "Cyber Security Architect" if self.analysis_mode == "STRIDE" else "Privacy Architect"
         methodology = "STRIDE" if self.analysis_mode == "STRIDE" else "LINDDUN"
         
         prompt = (
-            "LANGUAGE DIRECTIVE: You MUST respond exclusively in English.\n\n"
+            "LANGUAGE DIRECTIVE: You MUST respond exclusively in English. DO NOT use Chinese or any other language for any field.\n\n"
             f"You are 'ThreatPilot', an expert {role}. "
-            f"Your goal is to perform a detailed {methodology} analysis on "
-            "the provided Data Flow Diagram (DFD).\n\n"
+            f"Perform a detailed {methodology} analysis on the provided Data Flow Diagram (DFD).\n\n"
+            "STRICT QUALITY GUIDELINES:\n"
+            "1. DESCRIPTIVE TITLES: The 'title' field MUST be a unique, descriptive name (e.g., 'Bypass of Authentication on Login API'). "
+            "It MUST NOT be the same as the threat category.\n"
+            "2. ENGLISH ONLY: All descriptions, titles, and mitigations must be in plain English.\n"
+            "3. CVSS VERSION: You MUST use CVSS version 3.1 for all vectors. DO NOT use version 2.0 or 4.0.\n"
+            "4. ARCHITECTURAL FOCUS: Focus on data flows crossing Trust Boundaries.\n\n"
             "DEFINITIONS:\n"
             f"1. THREAT: A technical weakness in the system architecture (following {methodology} principles).\n"
             "2. VULNERABILITY: A description of HOW an exploit can be used on the identified threat/weakness to perform an attack.\n"
-            "3. TRUST BOUNDARY: A perimeter of control. Elements with 'trust_boundary: None (External)' are beyond your control and should be treated as untrusted sources/sinks.\n"
-            "4. NESTED BOUNDARY: Boundaries can be nested (e.g., App Zone inside Mobile Device Zone). This creates layers of defense-in-depth. Analyze threats considering the cumulative protections and exposures of the entire hierarchy.\n"
-            "5. BIDIRECTIONAL FLOW: If a flow is marked 'is_bidirectional: True', it means communication occurs in both directions. You MUST identify threats for both the primary (Source -> Destination) and return (Destination -> Source) paths.\n\n"
+            "3. TRUST BOUNDARY: elements with 'trust_boundary: None (External)' are beyond your control and should be treated as untrusted.\n"
+            "4. NESTED BOUNDARY: Cumulative protections and exposures of the entire hierarchy must be considered.\n"
+            "5. BIDIRECTIONAL FLOW: If 'is_bidirectional: True', identify threats for both primary and return paths.\n\n"
         )
 
         if self.analysis_mode == "STRIDE":
             prompt += (
-                "STRIDE Threat Categories (Weaknesses):\n"
+                "STRIDE Threat Categories:\n"
                 "- Spoofing: Impersonating something or someone else.\n"
                 "- Tampering: Modifying data or code.\n"
                 "- Repudiation: Claiming to not have performed an action.\n"
@@ -59,8 +57,8 @@ class PromptBuilder:
             )
         else:
             prompt += (
-                "LINDDUN Privacy Threat Definitions (Weaknesses):\n"
-                "- Linkability: Linking actions/data to a user without identifying them.\n"
+                "LINDDUN Privacy Threat Categories (Use these exact terms):\n"
+                "- Linkability: Linking actions/data to a user.\n"
                 "- Identifiability: Identifying a user from a set.\n"
                 "- Non-repudiation: User cannot deny an action.\n"
                 "- Detectability: Distinguishing whether an item exists.\n"
@@ -73,112 +71,78 @@ class PromptBuilder:
             f"Industry: {self._sanitize(self.config.industry_context)}\n"
             f"Risk: {self._sanitize(self.config.risk_preference.upper())}\n"
             f"Posture: {self._sanitize(self.config.security_posture)}\n\n"
-            "OUTPUT FORMAT: Return a JSON list of threats.\n"
-            "Each threat MUST have these fields:\n"
-            f"- threat_id: UUID\n"
-            f"- category: {methodology} category\n"
-            "- title: Short name of the weakness\n"
-            "- description: Technical detail of the weakness\n"
-            "- vulnerabilities: List of specific exploit paths/flaws. Each description MUST be a concise, complete sentence. Format: [{\"description\": \"...\", \"mitigation\": \"...\"}]\n"
-            "- impact: Technical/business impact\n"
-            "- likelihood: 1-5\n"
-            "- recommended_mitigation: Remediation steps\n"
-            "- affected_components: The EXACT name of the component or data flow as provided in the DFD (e.g., 'Payment Gateway')\n"
-            "- affected_element_type: (Process, Data Store, Data Flow, or Entity)\n"
-            "- affected_asset_type: (Physical or Informational)\n"
-            "- cvss_score: 0.0-10.0\n"
-            "- cvss_vector: Full CVSS 3.1 vector string (FORMAT: 'CVSS:3.1/AV:[N/A]/AC:[N/A]/PR:[N/A]/UI:[N/A]/S:[N/A]/C:[N/A]/I:[N/A]/A:[N/A]')\n"
-            "- mitre_attack_id: MITRE Technique ID\n\n"
-            "COMPREHENSIVENESS RULE:\n"
-            "Identify as many relevant threats as possible for EACH element. "
-            "Do not stop at the first threat. For each component and flow, explore all relevant categories (e.g. for a database, check Tampering, Information Disclosure, and Denial of Service). "
-            "Aim for a detailed and exhaustive register. If an element has multiple data flows, analyze each interaction separately.\n\n"
-            "CRITICAL: Cross-boundary data flows (crossing from None to a named TB) are extremely high risk."
-        )
+            "OUTPUT FORMAT: Return a JSON list of threats with the following fields (ALL STRINGS MUST BE IN ENGLISH):\n"
+            f"- threat_id, category ({methodology}), title (Unique descriptive name in English, NOT the category name), description (English),\n"
+            "- vulnerabilities (list of concise sentence objects in English), impact (English), likelihood (1-5), recommended_mitigation (English),\n"
+            "- affected_components (EXACT NAME), affected_element_type, affected_asset_type,\n"
+            "- cvss_score (float), cvss_vector (CVSS 3.1), mitre_attack_id\n\n"
+            "CVSS GUIDELINE: Always provide a CVSS 3.1 vector string (e.g., CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H) and its corresponding base score.\n"
+            "COMPREHENSIVENESS: Explore all relevant categories for each element; cross-boundary flows are high risk. REMEMBER: ENGLISH ONLY."
 
+        )
         return prompt
 
     def build_user_prompt(self, dfd: DFDModel, system_name: str = "Target System") -> str:
-        """Construct the user prompt describing the specific DFD."""
-        prompt = f"Analyze the following architectural DFD for {system_name}:\n\n"
-        prompt += "<architecture_context>\n"
-
+        """Serializes the architectural model into a detailed natural language description."""
+        prompt = "LANGUAGE DIRECTIVE: You MUST respond exclusively in English.\n\n"
+        prompt += f"Analyze the following architectural DFD for {system_name}:\n\n<architecture_context>\n"
         prompt += "\n--- ASSETS ---\n"
         if dfd.assets:
             for a in dfd.assets:
-                prompt += f"- Name: {a.name} | Type: {a.type} | Criticality: {a.criticality} | Scope: {'Out of Scope' if a.is_out_of_scope else 'In Scope'}\n"
-                if a.is_out_of_scope and a.out_of_scope_justification:
-                    prompt += f"  Justification: {a.out_of_scope_justification}\n"
-        else:
-            prompt += "- No standalone assets defined.\n"
+                prompt += f"- {a.name} | Type: {a.type} | Criticality: {a.criticality} | Scope: {'Out' if a.is_out_of_scope else 'In'}\n"
+                if a.is_out_of_scope and a.out_of_scope_justification: prompt += f"  Justification: {a.out_of_scope_justification}\n"
+        else: prompt += "- No assets defined.\n"
         
-        prompt += "\n--- DFD NODES (Elements) ---\n"
+        prompt += "\n--- DFD NODES ---\n"
         for node in dfd.nodes:
-            tb_str = node.trust_boundary or "None"
-            if node.parent_trust_boundary:
-                tb_str = f"{tb_str} (Nested within {node.parent_trust_boundary})"
-            
-            prompt += f"- Element: {self._sanitize(node.name)}\n"
-            prompt += f"  Properties: Type: {self._sanitize(node.type)} | Class: {node.element_type} | Asset: {node.asset_type} | Boundary: {tb_str}\n"
-            if node.description:
-                prompt += f"  Description: {self._sanitize(node.description)}\n"
+            tb = node.trust_boundary or "None"
+            if node.parent_trust_boundary: tb = f"{tb} (Nested in {node.parent_trust_boundary})"
+            prompt += f"- Element: {self._sanitize(node.name)}\n  Properties: Type: {self._sanitize(node.type)} | Class: {node.element_type} | Asset: {node.asset_type} | Boundary: {tb}\n"
+            if node.description: prompt += f"  Description: {self._sanitize(node.description)}\n"
 
-        prompt += "\n--- DFD EDGES (Data Flows) ---\n"
+        prompt += "\n--- DFD EDGES ---\n"
         for edge in dfd.edges:
-            src_name = next((n.name for n in dfd.nodes if n.id == edge.source_id), "(Unknown/Out-of-Scope)")
-            dst_name = next((n.name for n in dfd.nodes if n.id == edge.target_id), "(Unknown/Out-of-Scope)")
-            bi_tag = " (Bidirectional)" if edge.is_bidirectional else ""
-            prompt += f"- Flow: {self._sanitize(edge.name)}{bi_tag} ({self._sanitize(src_name)} -> {self._sanitize(dst_name)})\n"
-            prompt += f"  Protocol: {self._sanitize(edge.protocol)} | Boundary Context: {edge.trust_boundary}\n"
+            src = next((n.name for n in dfd.nodes if n.id == edge.source_id), "(Unknown)")
+            dst = next((n.name for n in dfd.nodes if n.id == edge.target_id), "(Unknown)")
+            prompt += f"- Flow: {self._sanitize(edge.name)}{' (Bi)' if edge.is_bidirectional else ''} ({self._sanitize(src)} -> {self._sanitize(dst)})\n  Protocol: {self._sanitize(edge.protocol)} | Boundary: {edge.trust_boundary}\n"
 
-        prompt += "</architecture_context>\n"
-        prompt += "\nIdentify threats focusing on the transition between trust boundaries."
+        prompt += "</architecture_context>\n\n"
+        prompt += "LANGUAGE DIRECTIVE: Respond EXCLUSIVELY in English. All field values must be in English. Provide unique, descriptive titles for every threat identified."
         return prompt
 
     def build_vision_detection_prompt(self, system_name: str) -> str:
-        """Construct the user prompt for visual architecture detection."""
+        """Constructs the visual detection prompt for image-based architecture extraction."""
         return (
-            f"Analyze the attached architecture diagram for the system: '{system_name}'.\n\n"
-            "STRICT GROUNDING RULES (Anti-Hallucination Protocol):\n"
-            "1. NO INFERENCE: Do not assume the existence of items (Internet, Firewall, User) unless they are explicitly drawn and labeled.\n"
-            "2. BE EXHAUSTIVE: Capture every single labeled component, data flow, and trust boundary. For large diagrams (40+ elements), do not truncate the list; ensure every visible node is included in the JSON.\n"
-            "3. NO GUESSING: If text is completely unreadable, skip it, but if it is identifiable, include it.\n"
-            "4. EMPTY STATE: If the image is not a diagram, return an empty JSON object.\n\n"
-            "TASK: Extract all architectural components (c), data flows (f), trust boundaries (tb), and assets (a).\n"
-            "For each item, identify its position and size using a normalized bounding box [x, y, width, height] where coordinates are from 0 to 1000.\n\n"
-            "JSON OUTPUT FORMAT (MANDATORY):\n"
+            f"Analyze the attached architecture diagram for: '{system_name}'.\n\n"
+            "LANGUAGE DIRECTIVE: You MUST respond exclusively in English. All field values and names must be in English.\n"
+            "STRICT GROUNDING: Do not assume items not explicitly labeled. Be exhaustive; do not truncate output for large diagrams.\n"
+            "TASK: Extract components (c), flows (f), boundaries (tb), and assets (a) with [x, y, w, h] bounding boxes (0-1000).\n\n"
+            "JSON FORMAT (ONLY RAW JSON):\n"
             "{\n"
-            '  "c": [\n'
-            '    {"n": "Name", "t": "Service/DB", "et": "Process/Data Store/Entity", "tb": "TB Name", "b": [x, y, w, h]}\n'
-            '  ],\n'
-            '  "f": [\n'
-            '    {"n": "Name", "s": "Source", "d": "Target", "p": "HTTPS", "b": [start_x, start_y, end_x, end_y]}\n'
-            '  ],\n'
-            '  "tb": [\n'
-            '    {"n": "Name", "b": [x, y, w, h]}\n'
-            '  ],\n'
-            '  "a": [\n'
-            '    {"n": "Name", "t": "Informational/Physical", "d": "Description"}\n'
-            '  ]\n'
-            "}\n\n"
-            "CRITICAL: Return ONLY the raw JSON object. No conversational text. "
-            "Ensure the output includes ALL components seen in the diagram, even if the architecture is large (e.g. 40+ elements)."
+            '  "c": [{"n": "Name", "t": "Type", "et": "ElementClass", "tb": "Boundary", "b": [x,y,w,h]}],\n'
+            '  "f": [{"n": "Name", "s": "Source", "d": "Target", "p": "Proto", "b": [sx,sy,ex,ey]}],\n'
+            '  "tb": [{"n": "Name", "b": [x,y,w,h]}],\n'
+            '  "a": [{"n": "Name", "t": "AssetType", "d": "Desc"}]\n'
+            "}"
         )
 
     def build_reasoning_prompt(self, threat: any) -> str:
-        """Construct a prompt to get the technical reasoning behind a single threat."""
-        return f"Provide deep technical reasoning for this threat:\nTitle: {threat.title}\nCategory: {threat.category}\nDescription: {threat.description}"
+        """Constructs a request for technical architectural reasoning for a specific threat."""
+        term = "threat" if self.analysis_mode == "STRIDE" else "privacy risk"
+        return (
+            "LANGUAGE DIRECTIVE: You MUST respond exclusively in English.\n\n"
+            f"Provide deep technical reasoning for this {term}:\n"
+            f"Title: {threat.title}\n"
+            f"Category: {threat.category}\n"
+            f"Description: {threat.description}\n"
+            f"Affected Components: {threat.affected_components}\n\n"
+            "Include technical justification for the classification and the potential impact on the system architecture."
+        )
 
     def build_vulnerability_reasoning_prompt(self, vuln: any) -> str:
-        """Construct a prompt to get technical reasoning for a specific vulnerability."""
-        prompt = (
-            "Explain this specific security vulnerability in detail:\n\n"
-            f"Vulnerability: {vuln.description}\n"
-            f"Current Status: {vuln.status}\n"
-            f"Current Mitigation: {vuln.mitigation}\n\n"
-            "Please provide:\n"
-            "1. Attack Scenario: How an attacker would exploit this.\n"
-            "2. Root Cause: The underlying architectural or configuration flaw.\n"
-            "3. Remediation Deep-Dive: Best practices for fixing this at scale."
+        """Constructs a request for root-cause analysis and remediation strategy for a vulnerability."""
+        return (
+            "LANGUAGE DIRECTIVE: You MUST respond exclusively in English.\n\n"
+            f"Vulnerability: {vuln.description}\nStatus: {vuln.status}\nMitigation: {vuln.mitigation}\n\n"
+            "Provide: 1. Attack Scenario, 2. Root Cause, 3. Remediation Deep-Dive (Markdown)."
         )
-        return prompt

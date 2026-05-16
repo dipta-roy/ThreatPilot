@@ -1,8 +1,4 @@
-"""Core domain models for Threat Modeling.
-
-Defines the ``Component``, ``Flow``, and ``TrustBoundary`` models that
-represent the final structure of the analyzed system.
-"""
+"""Core domain models for architectural components, data flows, and trust boundaries."""
 
 from __future__ import annotations
 import uuid
@@ -11,7 +7,7 @@ from typing import Any, Optional
 from pydantic import BaseModel, Field
 
 class ElementType(str, Enum):
-    """The standard DFD element types."""
+    """Standard Data Flow Diagram (DFD) element types."""
     PROCESS = "Process"
     DATA_STORE = "Data Store"
     DATA_FLOW = "Data Flow"
@@ -19,13 +15,13 @@ class ElementType(str, Enum):
     NONE = "None"
 
 class AssetType(str, Enum):
-    """Broad classification for assets."""
+    """Classification for physical and informational assets."""
     PHYSICAL = "Physical"
     INFORMATIONAL = "Informational"
     NONE = "None"
 
 class Asset(BaseModel):
-    """A high-value asset that may reside within components or flows."""
+    """A high-value asset residing within the system architecture."""
     asset_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     name: str = "New Asset"
     type: AssetType = AssetType.INFORMATIONAL
@@ -35,8 +31,7 @@ class Asset(BaseModel):
     out_of_scope_justification: str = ""
 
 class Component(BaseModel):
-    """A logical or physical component in the arch diagram (DFD Node)."""
-
+    """A logical or physical system component (DFD Node)."""
     component_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     name: str = "New Component"
     type: str = "Service"
@@ -52,8 +47,7 @@ class Component(BaseModel):
     height: float = 100.0
 
 class Flow(BaseModel):
-    """A data flow between two components."""
-
+    """A data flow representing communication between two components."""
     flow_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     name: str = "Data Flow"
     source_id: str = ""
@@ -70,8 +64,7 @@ class Flow(BaseModel):
     end_y: float = 0.0
 
 class TrustBoundary(BaseModel):
-    """A trust boundary encompassing multiple components."""
-
+    """A boundary group encompassing multiple components and flows."""
     boundary_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     name: str = "Trust Boundary"
     type: str = "Internal"

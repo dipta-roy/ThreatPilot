@@ -19,7 +19,7 @@ class QuickStartWizard(QWizard):
         super().__init__(parent)
         self.setWindowTitle("ThreatPilot Quick Start")
         self.setWizardStyle(QWizard.WizardStyle.ClassicStyle)
-        self._apply_theme(is_dark)
+
 
         self.addPage(WelcomePage(self))
         self.addPage(ProjectPage(self))
@@ -28,62 +28,7 @@ class QuickStartWizard(QWizard):
 
         self.resize(600, 450)
 
-    def _apply_theme(self, is_dark: bool) -> None:
-        """Apply a dark or light palette and stylesheet to the wizard."""
-        from PySide6.QtGui import QPalette, QColor
-        palette = self.palette()
 
-        if is_dark:
-            bg      = QColor("#0d1117")
-            fg      = QColor("#e6edf3")
-            btn_bg  = QColor("#21262d")
-            btn_fg  = QColor("#e6edf3")
-            border  = "#30363d"
-            lbl_style = (
-                "background-color: transparent; color: #e6edf3; font-size: 13px;"
-            )
-            btn_style = (
-                f"background-color: #21262d; color: #e6edf3; "
-                f"border: 1px solid {border}; padding: 6px 20px; border-radius: 4px;"
-            )
-            widget_bg = "#0d1117"
-            widget_fg = "#e6edf3"
-        else:
-            bg      = QColor("#ffffff")
-            fg      = QColor("#1f2328")
-            btn_bg  = QColor("#f6f8fa")
-            btn_fg  = QColor("#1f2328")
-            border  = "#d0d7de"
-            lbl_style = (
-                "background-color: transparent; color: #1f2328; font-size: 13px;"
-            )
-            btn_style = (
-                f"background-color: #f6f8fa; color: #1f2328; "
-                f"border: 1px solid {border}; padding: 6px 20px; border-radius: 4px;"
-            )
-            widget_bg = "#ffffff"
-            widget_fg = "#1f2328"
-
-        palette.setColor(QPalette.ColorRole.Window, bg)
-        palette.setColor(QPalette.ColorRole.WindowText, fg)
-        palette.setColor(QPalette.ColorRole.Base, bg)
-        palette.setColor(QPalette.ColorRole.Text, fg)
-        palette.setColor(QPalette.ColorRole.Button, btn_bg)
-        palette.setColor(QPalette.ColorRole.ButtonText, btn_fg)
-        self.setPalette(palette)
-
-        self.setStyleSheet(f"""
-            QWizard, QWizardPage, QWidget {{
-                background-color: {widget_bg};
-                color: {widget_fg};
-            }}
-            QLabel {{
-                {lbl_style}
-            }}
-            QPushButton {{
-                {btn_style}
-            }}
-        """)
 
 
 class WelcomePage(QWizardPage):

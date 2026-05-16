@@ -1,18 +1,29 @@
 import logging
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Any
+
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.drawing.image import Image
+
 from threatpilot.core.project_manager import Project
-from threatpilot.core.threat_model import Threat
+from threatpilot.core.threat_model import Threat, STRIDECategory
 from threatpilot.risk.cvss_calculator import get_cvss_severity
 from threatpilot.ai.response_parser import convert_reasoning_to_markdown
 
 logger = logging.getLogger(__name__)
 
 def export_to_excel(project: Project, output_path: str | Path) -> None:
-    """Generate a high-fidelity 8-tab Risk Assessment Excel workbook without using pandas."""
+    """Generate a high-fidelity 8-tab Risk Assessment Excel workbook.
+    
+    This exporter creates a comprehensive security report including system 
+    description, architecture diagrams, STRIDE/LINDDUN threat registers, 
+    and a visual risk matrix.
+
+    Args:
+        project: The active ThreatPilot project instance.
+        output_path: Destination path for the .xlsx file.
+    """
     
     def sanitize_excel(val):
         """Prevent Excel formula injection and handle None values (M.1)."""
@@ -90,7 +101,8 @@ def export_to_excel(project: Project, output_path: str | Path) -> None:
     ws_stride.append(["Category", "Threat Title", "Description"])
     for cell in ws_stride[1]: cell.font = header_font
     
-    stride_cats = ["Spoofing", "Tampering", "Repudiation", "Information Disclosure", "Denial of Service", "Elevation of Privilege"]
+    from threatpilot.core.threat_model import STRIDECategory
+    stride_cats = STRIDECategory.get_stride_values()
     
     for t in project.threat_register.threats:
          cat_val = t.category.value if hasattr(t.category, 'value') else str(t.category)
@@ -105,7 +117,7 @@ def export_to_excel(project: Project, output_path: str | Path) -> None:
     ws_linddun.append(["Category", "Threat Title", "Description"])
     for cell in ws_linddun[1]: cell.font = header_font
     
-    linddun_cats = ["Linkability", "Identifiability", "Non-repudiation", "Detectability", "Disclosure of Information", "Unawareness", "Non-compliance"]
+    linddun_cats = STRIDECategory.get_linddun_values()
     
     for t in project.threat_register.threats:
          cat_val = t.category.value if hasattr(t.category, 'value') else str(t.category)
@@ -123,11 +135,7 @@ def export_to_excel(project: Project, output_path: str | Path) -> None:
     for t in project.threat_register.threats:
          # Join vulnerability descriptions from the global register
          v_ids = getattr(t, "vulnerability_ids", [])
-         v_texts = []
-         for vid in v_ids:
-             v_obj = project.vulnerability_register.get_vulnerability(vid)
-             if v_obj:
-                 v_texts.append(v_obj.description)
+         v_texts = [v.description for vid in v_ids if (v := project.vulnerability_register.get_vulnerability(vid))]
          
          if v_texts:
              ws_vuln.append([
@@ -137,7 +145,7 @@ def export_to_excel(project: Project, output_path: str | Path) -> None:
 
     ws_risk = wb.create_sheet("Risk Assessment")
     headers_risk = [
-        "Risk ID", "Element Name", "Asset Name", 
+        "Risk ID", "Framework", "Element Name", "Asset Name", 
         "Threats", "Vulnerabilities", "Description", "Impact", 
         "CVSS Vector (3.1)", "Likelihood", "Severity", "Mitigation Strategy",
         "MITRE ATT&CK ID", "MITRE Technique", "XAI Reasoning"
@@ -152,78 +160,28 @@ def export_to_excel(project: Project, output_path: str | Path) -> None:
     white_font = Font(color="FFFFFF", bold=True)
     black_font = Font(color="000000", bold=True)
 
-    def _resolve_flow(f):
-        """Return (source_name, dest_name) for a flow, or ('', '')."""
-        src = next((c for c in project.components if c.component_id == f.source_id), None)
-        dst = next((c for c in project.components if c.component_id == f.target_id), None)
-        return (src.name if src else "", dst.name if dst else "")
-
     for i, t in enumerate(project.threat_register.threats):
         severity_label = get_cvss_severity(t.cvss_score)
         severity_full = f"{severity_label} ({t.cvss_score})"
 
         # Resolve Element Name (source/actor) and Asset Name (target/resource).
-        # Priority: manual user override → exact flow name → exact component → fuzzy flow → fuzzy component → type fields.
-        elem_name = t.affected_element_type or ""
-        asset_name = t.affected_asset_type or ""
-
-        generic_types = ["data flow", "informational", "physical", "process", "data store", "external entity", "n/a", ""]
-        if elem_name.lower() in generic_types or asset_name.lower() in generic_types:
-            res_elem = ""
-            res_asset = ""
-            if t.affected_components:
-                # Build a broad search haystack from all narrative fields
-                haystack = (f"{t.affected_components} {t.title} {t.description}").lower()
-                for cname in [n.strip() for n in t.affected_components.split(",")]:
-                    # 1. Exact flow name match
-                    flow_match = next((f for f in project.flows if f.name == cname), None)
-                    if flow_match:
-                        src = next((c for c in project.components if c.component_id == flow_match.source_id), None)
-                        dst = next((c for c in project.components if c.component_id == flow_match.target_id), None)
-                        res_elem = src.name if src else ""
-                        res_asset = dst.name if dst else ""
-                        break
-
-                    # 2. Exact component name match
-                    comp_match = next((c for c in project.components if c.name == cname), None)
-                    if comp_match:
-                        res_elem = comp_match.name
-                        res_asset = comp_match.name
-                        break
-
-                # 3. Fuzzy flow match
-                if not res_elem:
-                    for f in project.flows:
-                        src = next((c for c in project.components if c.component_id == f.source_id), None)
-                        dst = next((c for c in project.components if c.component_id == f.target_id), None)
-                        if src and dst and src.name.lower() in haystack and dst.name.lower() in haystack:
-                            res_elem = src.name
-                            res_asset = dst.name
-                            break
-
-                # 4. Fuzzy component match
-                if not res_elem:
-                    for c in project.components:
-                        if c.name.lower() in haystack:
-                            res_elem = c.name
-                            res_asset = c.name
-                            break
-            
-            # Apply resolution results to generic fields
-            elem_name = elem_name if elem_name.lower() not in generic_types else (res_elem or elem_name or t.affected_components or "N/A")
-            asset_name = asset_name if asset_name.lower() not in generic_types else (res_asset or asset_name or t.affected_components or "N/A")
+        elem_name, asset_name = t.resolve_affected_elements(project)
         
         # Join vulnerability descriptions
         v_ids = getattr(t, "vulnerability_ids", [])
-        v_texts = []
-        for vid in v_ids:
-            v_obj = project.vulnerability_register.get_vulnerability(vid)
-            if v_obj:
-                v_texts.append(v_obj.description)
+        v_texts = [v.description for vid in v_ids if (v := project.vulnerability_register.get_vulnerability(vid))]
         vuln_summary = "; ".join(v_texts) if v_texts else "N/A"
         
+        # Determine framework
+        is_stride = getattr(t.category, "name", "").upper() in [
+            "SPOOFING", "TAMPERING", "REPUDIATION", 
+            "INFORMATION_DISCLOSURE", "DENIAL_OF_SERVICE", "ELEVATION_OF_PRIVILEGE"
+        ]
+        framework_name = "STRIDE" if is_stride else "LINDDUN"
+
         ws_risk.append([
             i + 1,
+            framework_name,
             sanitize_excel(elem_name),
             sanitize_excel(asset_name),
             sanitize_excel(t.title),
@@ -240,7 +198,7 @@ def export_to_excel(project: Project, output_path: str | Path) -> None:
         ])
         
         row_idx = ws_risk.max_row
-        cell = ws_risk.cell(row=row_idx, column=10)
+        cell = ws_risk.cell(row=row_idx, column=11)
         u_val = severity_label.upper()
         if "CRITICAL" in u_val:
             cell.fill = fill_crit; cell.font = white_font
@@ -266,13 +224,11 @@ def export_to_excel(project: Project, output_path: str | Path) -> None:
     for i, label in enumerate(likelihood_labels):
         ws_matrix.cell(row=i+2, column=1, value=label).font = header_font
 
+    from threatpilot.risk.utils import score_to_impact_score, calculate_risk_rating, get_risk_color
+
     matrix_counts = {}
     for t in project.threat_register.threats:
-        impact_score = 1
-        if t.cvss_score >= 9.0: impact_score = 5
-        elif t.cvss_score >= 7.0: impact_score = 4
-        elif t.cvss_score >= 4.0: impact_score = 3
-        elif t.cvss_score >= 2.0: impact_score = 2
+        impact_score = score_to_impact_score(t.cvss_score)
         
         row_idx = 5 - t.likelihood
         col_idx = impact_score - 1
@@ -283,18 +239,14 @@ def export_to_excel(project: Project, output_path: str | Path) -> None:
             count = matrix_counts.get((r, c), 0)
             cell = ws_matrix.cell(row=r+2, column=c+2, value=count if count > 0 else "")
             cell.alignment = Alignment(horizontal="center", vertical="center")
+            
             likelihood = 5 - r
             impact = c + 1
-            risk_score = likelihood * impact
+            risk_score = calculate_risk_rating(likelihood, impact)
+            bg, ft = get_risk_color(risk_score)
             
-            if risk_score >= 15: bg = "8B0000"; ft = "FFFFFF"
-            elif risk_score >= 10: bg = "D73A49"; ft = "FFFFFF"
-            elif risk_score >= 6:  bg = "D29922"; ft = "000000"
-            elif risk_score >= 3:  bg = "30363D"; ft = "FFFFFF"
-            else: bg = "238636"; ft = "FFFFFF"
-            
-            cell.fill = PatternFill(start_color=bg, end_color=bg, fill_type="solid")
-            cell.font = Font(color=ft, bold=True if count > 0 else False)
+            cell.fill = PatternFill(start_color=bg.lstrip('#'), end_color=bg.lstrip('#'), fill_type="solid")
+            cell.font = Font(color=ft.lstrip('#'), bold=True if count > 0 else False)
 
     for ws in wb.worksheets:
          if ws.title == "Visual Risk Matrix":

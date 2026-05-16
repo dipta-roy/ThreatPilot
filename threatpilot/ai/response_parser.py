@@ -9,399 +9,242 @@ import ast
 import json
 import re
 from typing import Any, Dict, List, Optional
+from threatpilot.core.domain_models import Component, Flow, TrustBoundary, ElementType, AssetType
+from threatpilot.core.threat_model import Threat, STRIDECategory, Vulnerability
+from threatpilot.core.constants import AI_FIELD_MAPPING, AI_VULN_KEYS
+from threatpilot.ai.utils import fuzzy_find_component, fuzzy_find_flow, resolve_element_names
+
+def map_element_type(et_str: str) -> ElementType:
+    """Fuzzy maps AI-generated text to standard DFD ElementType enums."""
+    s = str(et_str).lower().strip()
+    if any(x in s for x in ["process", "service", "web", "app", "worker", "function"]): return ElementType.PROCESS
+    if any(x in s for x in ["store", "database", "db", "bucket", "file", "disk", "cloud"]): return ElementType.DATA_STORE
+    if any(x in s for x in ["entity", "user", "actor", "person", "client", "external"]): return ElementType.ENTITY
+    if any(x in s for x in ["flow", "dataflow", "arrow"]): return ElementType.DATA_FLOW
+    
+    # Check exact matches
+    for e in ElementType:
+        if s == e.value.lower() or s == e.name.lower(): return e
+    return ElementType.PROCESS
 
 def extract_json(text: str) -> Optional[Any]:
-    """Helper to extract a JSON object from a text string.
-
-    Handles markdown code blocks and attempts to auto-repair truncated 
-    JSON by backtracking to the last valid object in a list.
-    Supports Python literal fallback (ast) for models using single quotes.
-
-    Args:
-        text: The raw response text from the AI.
-
-    Returns:
-        The parsed Python object (list or dict), or ``None`` if no JSON
-        could be extracted/parsed.
-    """
-    if not text:
-        return None
-
-    content = ""
-    code_block_match = re.search(r"```(?:json|python)?\s*([\s\S]*?)(?:```|$)", text, re.IGNORECASE)
-    if code_block_match:
-        content = code_block_match.group(1).strip()
+    """Extracts and repairs JSON or Python literal objects from raw text strings."""
+    if not text: return None
+    if (m := re.search(r"```(?:json|python)?\s*([\s\S]*?)(?:```|$)", text, re.IGNORECASE)): content = m.group(1).strip()
     else:
-        first_brace = text.find("{")
-        first_bracket = text.find("[")
-        start_idx = -1
-        if first_brace != -1 and (first_bracket == -1 or first_brace < first_bracket):
-            start_idx = first_brace
-        elif first_bracket != -1:
-            start_idx = first_bracket
-            
-        if start_idx == -1:
-            return None
-        last_brace = text.rfind("}")
-        last_bracket = text.rfind("]")
-        end_idx = max(last_brace, last_bracket)
-        if end_idx == -1:
-             content = text[start_idx:].strip()
-        else:
-             content = text[start_idx:end_idx+1].strip()
+        fb, fk = text.find("{"), text.find("[")
+        start = fb if fb != -1 and (fk == -1 or fb < fk) else fk
+        if start == -1: return None
+        end = max(text.rfind("}"), text.rfind("]"))
+        content = text[start:end+1].strip() if end != -1 else text[start:].strip()
 
-    if not content:
-        return None
-    
-    clean_content = re.sub(r",\s*([\]\}])", r"\1", content)
-    
-    try:
-        return json.loads(clean_content)
-    except json.JSONDecodeError:
-        pass
+    if not content: return None
+    clean = re.sub(r",\s*([\]\}])", r"\1", content)
+    for method in [json.loads, ast.literal_eval]:
+        try: return method(clean)
+        except Exception: continue
 
-    try:
-        return ast.literal_eval(clean_content)
-    except (ValueError, SyntaxError, TypeError):
-        pass
-
-    stack = []
-    in_string = False
-    quote_char = None
-    escaped = False
-    
-    for char in clean_content:
-        if escaped:
-            escaped = False
-            continue
-        if char == "\\":
-            escaped = True
-            continue
+    # Advanced repair loop
+    stack = []; in_str = False; q_char = None; escaped = False
+    for char in clean:
+        if escaped: escaped = False; continue
+        if char == "\\": escaped = True; continue
         if char in ('"', "'"):
-            if in_string:
-                if char == quote_char:
-                    stack.pop()
-                    in_string = False
-                    quote_char = None
-            else:
-                stack.append(char)
-                in_string = True
-                quote_char = char
-            continue
-        if not in_string:
-            if char == "{":
-                stack.append("}")
-            elif char == "[":
-                stack.append("]")
-            elif char == "}":
-                if stack and stack[-1] == "}": stack.pop()
-            elif char == "]":
-                if stack and stack[-1] == "]": stack.pop()
+            if in_str:
+                if char == q_char: stack.pop(); in_str = False; q_char = None
+            else: stack.append(char); in_str = True; q_char = char
+        elif not in_str:
+            if char == "{": stack.append("}")
+            elif char == "[": stack.append("]")
+            elif char in ("}", "]") and stack and stack[-1] == char: stack.pop()
 
-    repaired = clean_content
-    temp_stack = stack[:]
-    
-    if in_string:
-        repaired += quote_char
-        if temp_stack and temp_stack[-1] == quote_char: temp_stack.pop()
-            
-    while temp_stack:
-        delim = temp_stack.pop()
-        repaired = repaired.strip()
-        if repaired.endswith(","):
-            repaired = repaired[:-1].strip()
-        repaired += delim
+    rep = clean; t_stack = stack[:]
+    if in_str: rep += q_char; t_stack.pop() if t_stack and t_stack[-1] == q_char else None
+    while t_stack:
+        delim = t_stack.pop(); rep = rep.strip()
+        if rep.endswith(","): rep = rep[:-1].strip()
+        rep += delim
         
-    try:
-         repaired = re.sub(r",\s*([\]\}])", r"\1", repaired)
-         try:
-             return json.loads(repaired)
-         except json.JSONDecodeError:
-             return ast.literal_eval(repaired)
-    except Exception:
-         pass
+    for method in [json.loads, ast.literal_eval]:
+        try: return method(re.sub(r",\s*([\]\}])", r"\1", rep))
+        except Exception: continue
 
-    if content.startswith("["):
-        last_brace = content.rfind("}")
-        while last_brace != -1:
-            candidate = content[:last_brace + 1].strip()
-            if candidate.endswith(","):
-                candidate = candidate[:-1].strip()
-            candidate += "]"
-            try:
-                candidate = re.sub(r",\s*([\]\}])", r"\1", candidate)
-                try:
-                    return json.loads(candidate)
-                except json.JSONDecodeError:
-                    return ast.literal_eval(candidate)
-            except Exception:
-                last_brace = content.rfind("}", 0, last_brace)
-        
-    elif content.startswith("{"):
-        last_brace = content.rfind("}")
-        while last_brace != -1:
-            candidate = content[:last_brace + 1].strip()
-            if candidate.endswith(","):
-                candidate = candidate[:-1].strip()
-            candidate += "}"
-            try:
-                candidate = re.sub(r",\s*([\]\}])", r"\1", candidate)
-                try:
-                    return json.loads(candidate)
-                except json.JSONDecodeError:
-                    return ast.literal_eval(candidate)
-            except Exception:
-                last_brace = content.rfind("}", 0, last_brace)
-                
+    # Truncated JSON recovery
+    for marker, wrapper in [("[", "]"), ("{", "}")]:
+        if content.startswith(marker):
+            lb = content.rfind("}")
+            while lb != -1:
+                cand = re.sub(r",\s*([\]\}])", r"\1", (content[:lb + 1].strip().rstrip(",") + wrapper))
+                try: return json.loads(cand)
+                except Exception:
+                    try: return ast.literal_eval(cand)
+                    except Exception: lb = content.rfind("}", 0, lb)
     return None
 
-from threatpilot.core.threat_model import Threat, STRIDECategory
-
 def _normalize_impact(val: Any) -> str:
-    """Standardize messy AI impact strings (M.2)."""
-    if not isinstance(val, str):
-        return "Medium"
-    v = val.lower().strip()
-    if "critical" in v: return "Critical"
-    if "high" in v: return "High"
-    if "medium" in v or "med" in v: return "Medium"
-    if "low" in v or "minor" in v: return "Low"
-    return "Medium"
+    """Standardizes non-uniform impact strings into recognized severity levels."""
+    if not isinstance(val, str): return "Medium"
+    v = val.lower()
+    return "Critical" if "crit" in v else "High" if "high" in v else "Low" if any(x in v for x in ["low", "minor"]) else "Medium"
 
-def map_category(cat_str: str) -> STRIDECategory:
-    """Fuzzy map text categories from AI to the standard STRIDE/LINDDUN enum."""
+def map_category(cat_str: str, mode: str = "STRIDE") -> STRIDECategory:
+    """Performs fuzzy mapping of AI-generated text to standardized threat categories."""
     s = str(cat_str).lower().strip()
+    for m in STRIDECategory:
+        if s == m.value.lower() or s == m.name.lower(): return m
     
-    for member in STRIDECategory:
-        if s == member.value.lower() or s == member.name.lower():
-            return member
-    if "spoofing" in s: return STRIDECategory.SPOOFING
-    if "tampering" in s: return STRIDECategory.TAMPERING
-    if "repudiation" in s:
-        if "non" in s or "privacy" in s: return STRIDECategory.NON_REPUDIATION_PRIVACY
-        return STRIDECategory.REPUDIATION
-    if "denial" in s or "dos" in s: return STRIDECategory.DENIAL_OF_SERVICE
-    if "privilege" in s or "elevation" in s: return STRIDECategory.ELEVATION_OF_PRIVILEGE
+    mapping = {
+        "spoofing": STRIDECategory.SPOOFING, "tampering": STRIDECategory.TAMPERING,
+        "denial": STRIDECategory.DENIAL_OF_SERVICE, "dos": STRIDECategory.DENIAL_OF_SERVICE,
+        "privilege": STRIDECategory.ELEVATION_OF_PRIVILEGE, "elevation": STRIDECategory.ELEVATION_OF_PRIVILEGE,
+        "linkability": STRIDECategory.LINKABILITY, "identifiability": STRIDECategory.IDENTIFIABILITY,
+        "detectability": STRIDECategory.DETECTABILITY, "unawareness": STRIDECategory.UNAWARENESS,
+        "compliance": STRIDECategory.NON_COMPLIANCE
+    }
+    for k, v in mapping.items():
+        if k in s: return v
+    if "repudiation" in s: return STRIDECategory.NON_REPUDIATION_PRIVACY if any(x in s for x in ["non", "privacy"]) else STRIDECategory.REPUDIATION
+    if any(x in s for x in ["disclosure", "information"]):
+        return STRIDECategory.DISCLOSURE_OF_INFORMATION if any(x in s for x in ["privacy", "personal", "pii"]) or mode.upper() == "LINDDUN" else STRIDECategory.INFORMATION_DISCLOSURE
     
-    if "linkability" in s: return STRIDECategory.LINKABILITY
-    if "identifiability" in s: return STRIDECategory.IDENTIFIABILITY
-    if "detectability" in s: return STRIDECategory.DETECTABILITY
-    if "unawareness" in s: return STRIDECategory.UNAWARENESS
-    if "compliance" in s: return STRIDECategory.NON_COMPLIANCE
-
-    if "disclosure" in s or "information" in s:
-        if "privacy" in s or "personal" in s or "pii" in s:
-            return STRIDECategory.DISCLOSURE_OF_INFORMATION
-        return STRIDECategory.INFORMATION_DISCLOSURE
-    
+    # Final default based on mode
+    if mode.upper() == "LINDDUN":
+        return STRIDECategory.DISCLOSURE_OF_INFORMATION
     return STRIDECategory.INFORMATION_DISCLOSURE
 
-def parse_threat_list(raw_response: str) -> List[Dict[str, Any]]:
-    """Parse and validate a list of threats from the AI (M.2)."""
-    obj = extract_json(raw_response)
-    valid_threats = []
-    
-    candidates = []
-    if isinstance(obj, list):
-        candidates = obj
+def parse_threat_list(raw_response: str, components: List[Any] = [], flows: List[Any] = [], mode: str = "STRIDE") -> List[Threat]:
+    """Validates, sanitizes, and maps threats extracted from an AI response."""
+    obj = extract_json(raw_response); candidates = []
+    if isinstance(obj, list): candidates = obj
     elif isinstance(obj, dict):
-        for key in ("threats", "analysis", "results", "findings", "items"):
-            if key in obj and isinstance(obj[key], list):
-                candidates = obj[key]
-                break
-        else:
-            candidates = [obj]
+        for k in ("threats", "analysis", "results", "findings", "items"):
+            if k in obj and isinstance(obj[k], list): candidates = obj[k]; break
+        else: candidates = [obj]
     
+    valid_threats = []
     for item in candidates:
-        if not isinstance(item, dict):
-            continue
-            
-        mapping = {
-            "threat": "title",
-            "name": "title",
-            "mitigation": "mitigation",
-            "recommended_mitigation": "mitigation",
-            "remediation": "mitigation",
-            "stride": "category",
-            "threat_category": "category",
-            "type": "category",
-            "mitre_technique_id": "mitre_attack_id",
-            "mitre_id": "mitre_attack_id",
-            "attack_id": "mitre_attack_id",
-            "mitre_technique": "mitre_attack_technique",
-            "attack_technique": "mitre_attack_technique",
-            "affected_element": "affected_components",
-            "affected_item": "affected_components",
-            "component": "affected_components",
-            "element_type": "affected_element_type",
-            "asset_type": "affected_asset_type",
-            "affected_element_type": "affected_element_type",
-            "affected_asset_type": "affected_asset_type",
-            "score": "cvss_score",
-            "cvss": "cvss_score",
-            "vector": "cvss_vector",
-            "cvss_31_vector": "cvss_vector"
-        }
-        for k_ai, k_model in mapping.items():
-            if k_ai in item and (k_model not in item or not item[k_model]):
-                item[k_model] = item[k_ai]
+        if not isinstance(item, dict): continue
+        for ka, km in AI_FIELD_MAPPING.items():
+            if ka in item and (km not in item or not item[km]): item[km] = item[ka]
         
-        str_fields = ["title", "description", "mitigation", "affected_components", "impact", "affected_element_type", "affected_asset_type"]
-        for f in str_fields:
-            if f in item and isinstance(item[f], list):
-                item[f] = ", ".join(str(x) for x in item[f])
-            elif f in item:
-                item[f] = str(item[f])
+        for f in ["title", "description", "mitigation", "affected_components", "impact", "affected_element_type", "affected_asset_type"]:
+            if f in item: item[f] = ", ".join(str(x) for x in item[f]) if isinstance(item[f], list) else str(item[f])
         
-        # Handle vulnerabilities list with robust key mapping
-        vuln_keys = ["vulnerabilities", "vulns", "exploits", "flaws", "security_vulnerabilities", "exploit_paths"]
-        raw_vulns = []
-        for vk in vuln_keys:
-            if vk in item:
-                val = item.get(vk)
-                if val:
-                    if isinstance(val, list):
-                        raw_vulns.extend(val)
-                    elif isinstance(val, str):
-                        raw_vulns.append(val)
-                # Keep the primary key for analyzer.py to find
-                item["vulnerabilities"] = raw_vulns
+        rv = []
+        for vk in AI_VULN_KEYS:
+            if (val := item.get(vk)): rv.extend(val) if isinstance(val, list) else rv.append(val)
+        item["vulnerabilities"] = [Vulnerability.model_validate(v) if isinstance(v, dict) else Vulnerability(description=str(v), mitigation=item.get("mitigation", "")) for v in (rv or [item.get("description", "Potential vulnerability.")])]
+        item["vulnerability_ids"] = [v.vulnerability_id for v in item["vulnerabilities"]]
 
-        if not raw_vulns:
-            # Fallback: if no explicit vulnerabilities, use description as a baseline
-            raw_vulns = [{"description": item.get("description", "Potential vulnerability identified."), "mitigation": item.get("mitigation", "")}]
-            item["vulnerabilities"] = raw_vulns
-
-        processed_vulns = []
-        for v in raw_vulns:
-            if isinstance(v, dict):
-                processed_vulns.append(v)
-            elif isinstance(v, str):
-                processed_vulns.append({"description": v, "mitigation": item.get("mitigation", "")})
-        item["vulnerabilities"] = processed_vulns
-
-        cat_val = item.get("category", "Information Disclosure")
-        item["category"] = map_category(str(cat_val))
-
+        item["category"] = map_category(str(item.get("category", "Information Disclosure")), mode=mode)
         item["impact"] = _normalize_impact(item.get("impact", "Medium"))
-        
-        try:
-            val_lh = item.get("likelihood", 3)
-            item["likelihood"] = int(float(str(val_lh))) if val_lh is not None else 3
-        except (ValueError, TypeError):
-            item["likelihood"] = 3
-            
-        try:
-            val_cvss = item.get("cvss_score", 0.0)
-            item["cvss_score"] = float(str(val_cvss)) if val_cvss is not None else 0.0
-        except (ValueError, TypeError):
-            item["cvss_score"] = 0.0
 
-        # Auto-sync score with vector if present
-        cvss_v = item.get("cvss_vector", "")
-        if cvss_v and str(cvss_v).startswith("CVSS:3.1/"):
+        # Programmatic safeguard for descriptive titles
+        title = str(item.get("title", "")).strip()
+        cat_name = str(item.get("category", "")).strip()
+        if title.lower() == cat_name.lower():
+            comps = item.get("affected_components", [])
+            target = comps[0] if isinstance(comps, list) and comps else "System Element"
+            item["title"] = f"{cat_name} on {target}"
+        for k, t, d in [("likelihood", int, 3), ("cvss_score", float, 0.0)]:
+            raw_val = str(item.get(k, d))
+            # Try extracting just the first number (float or int) from strings like "7.5 (High)"
+            if (num_match := re.search(r"(\d+(?:\.\d+)?)", raw_val)):
+                try: item[k] = t(float(num_match.group(1)))
+                except Exception: item[k] = d
+            else:
+                item[k] = d
+
+        if (cv := item.get("cvss_vector")):
             try:
                 from threatpilot.risk.cvss_calculator import parse_cvss_vector, calculate_cvss_base_score
-                metrics = parse_cvss_vector(str(cvss_v))
-                calc_score = calculate_cvss_base_score(metrics)
-                item["cvss_score"] = calc_score
-            except Exception:
-                pass
+                metrics = parse_cvss_vector(str(cv))
+                # Only recalculate if we actually found some metrics in the vector
+                if any(getattr(metrics, attr) != "None" for attr in ["confidentiality", "integrity", "availability"]):
+                    item["cvss_score"] = calculate_cvss_base_score(metrics)
+            except Exception: pass
 
-        if "threat_id" not in item or not str(item["threat_id"]).strip():
-             import uuid
-             item["threat_id"] = uuid.uuid4().hex
-        try:
-            Threat.model_validate(item)
-            valid_threats.append(item)
-        except Exception as exc:
-            import logging
-            logging.getLogger(__name__).error(f"VAL-FAILURE: AI threat '{item.get('title', 'Unknown')}' failed validation: {exc}")
-            
+        if not str(item.get("threat_id", "")).strip():
+             import uuid; item["threat_id"] = uuid.uuid4().hex
+        
+        # Resolve architectural mapping
+        if components and (ac := item.get("affected_components")):
+            haystack = f"{ac} {item.get('title', '')} {item.get('description', '')}"
+            if (f_match := fuzzy_find_flow(ac, flows)):
+                src = fuzzy_find_component("", [c for c in components if c.component_id == f_match.source_id])
+                dst = fuzzy_find_component("", [c for c in components if c.component_id == f_match.target_id])
+                item["affected_element_type"] = src.name if src else ""
+                item["affected_asset_type"] = dst.name if dst else ""
+            elif (c_match := fuzzy_find_component(ac, components)):
+                item["affected_element_type"] = item["affected_asset_type"] = c_match.name
+            else:
+                el, ass = resolve_element_names(haystack, components, flows)
+                if el: item["affected_element_type"], item["affected_asset_type"] = el, ass
+
+        try: valid_threats.append(Threat.model_validate(item))
+        except Exception: continue
     return valid_threats
 
 _XAI_SECTION_MAP = {
-    "attack_vector":            "### 1. Attack Vector",
-    "architectural_root_cause": "### 2. Architectural Root Cause",
-    "risk_rationalization":     "### 3. Risk Rationalization",
-    "framework_alignment":      "### 4. Framework Alignment",
+    "attack_path": "### 1. Attack Path",
+    "attack_vector": "### 1. Attack Path", 
+    "privacy_impact_path": "### 1. Privacy Impact Path",
+    "architectural_root_cause": "### 2. Architectural Root Cause", 
+    "risk_rationalization": "### 3. Risk Rationalization", 
+    "framework_alignment": "### 4. Framework Alignment"
 }
 
 def convert_reasoning_to_markdown(raw: str, markdown: bool = True) -> str:
-    """Convert a raw AI reasoning string to display-ready Markdown or Plaintext.
-
-    Handles four possible formats:
-    1. Already well-formed Markdown (pass-through).
-    2. JSON object string  – parsed via ``json.loads``.
-    3. Python dict literal  – parsed via ``ast.literal_eval``.
-    4. Mixed-quote dict string – extracted via positional regex.
-
-    Args:
-        raw: The raw input string from the AI.
-        markdown: If False, strips '###' markers for Excel/plaintext use.
-    """
-    if not raw or raw == "Reasoning not yet generated.":
-        return raw
+    """Transforms raw technical reasoning into a formatted Markdown document."""
+    if not raw or raw == "Reasoning not yet generated.": return raw
+    
+    # If it's already structured as a report (e.g. starts with ###), don't re-convert
+    if raw.strip().startswith("###"):
+        return raw.strip()
 
     text = re.sub(r"^Technical Reasoning\s*[:\-]?\s*\n+", "", raw.strip(), flags=re.IGNORECASE).strip()
-
-    brace_match = re.search(r"\{[\s\S]+\}", text)
-    if not brace_match:
-        return text
-
-    candidate = brace_match.group(0)
-    data: dict | None = None
-
-    try:
-        data = json.loads(candidate)
+    
+    # Only try parsing as JSON if it looks like a JSON object
+    if not (text.startswith("{") and text.endswith("}")):
+        # If it's not a single JSON block, try finding one inside
+        if not (bm := re.search(r"\{[\s\S]*\}", text)): 
+            return text
+        cand = bm.group(0)
+    else:
+        cand = text
+    
+    data = None
+    try: 
+        data = json.loads(cand)
     except Exception:
-        pass
-
-    if data is None:
-        try:
-            data = ast.literal_eval(candidate)
+        try: data = ast.literal_eval(cand)
         except Exception:
-            pass
+            if (ms := list(re.compile(r"[\"\']([\w]+)[\"\']\s*:\s*", re.DOTALL).finditer(cand))):
+                res = {}
+                for i, m in enumerate(ms):
+                    k = m.group(1); vs, ve = m.end(), ms[i+1].start() if i+1 < len(ms) else len(cand)
+                    rv = cand[vs:ve].strip().rstrip(",").strip().rstrip("}").strip()
+                    if len(rv) >= 2 and rv[0] in ('"', "'"):
+                        q = rv[0]; eq = rv.rfind(q); rv = rv[1:eq] if eq > 0 else rv[1:]
+                    res[k] = rv
+                data = res
 
-    if data is None:
-        key_pat = re.compile(r"[\"\']([\w]+)[\"\']\s*:\s*", re.DOTALL)
-        matches = list(key_pat.finditer(candidate))
-        if matches:
-            result: dict = {}
-            for i, m in enumerate(matches):
-                key = m.group(1)
-                v_start = m.end()
-                v_end = matches[i + 1].start() if i + 1 < len(matches) else len(candidate)
-                raw_val = candidate[v_start:v_end].strip().rstrip(",").strip()
-                if len(raw_val) >= 2 and raw_val[0] in ('"', "'"):
-                    q = raw_val[0]
-                    end_q = raw_val.rfind(q)
-                    raw_val = raw_val[1:end_q] if end_q > 0 else raw_val[1:]
-                result[key] = raw_val
-            if result:
-                data = result
-
-    if not isinstance(data, dict):
+    if not isinstance(data, dict): 
         return text
-
+    
     res = ""
-    for key, heading in _XAI_SECTION_MAP.items():
-        if key in data:
-            val = data[key]
-            if not val: continue
-            
-            if isinstance(val, dict):
-                val = "\n".join(f"- {k}: {v}" for k, v in val.items())
-            elif isinstance(val, list):
-                val = "\n".join(f"- {item}" for item in val)
-            
-            h = heading if markdown else heading.replace("### ", "").strip()
-            res += f"{h}\n\n{val}\n\n"
-            
-    for key, val in data.items():
-        if key not in _XAI_SECTION_MAP:
-            h = key.replace('_', ' ').title()
-            if markdown: h = f"### {h}"
-            res += f"{h}\n\n{val}\n\n"
-            
+    for k, h in _XAI_SECTION_MAP.items():
+        if k in data:
+            v = data[k]
+            if not v: continue
+            if isinstance(v, dict): v = "\n".join(f"- {nk}: {nv}" for nk, nv in v.items())
+            elif isinstance(v, list): v = "\n".join(f"- {it}" for it in v)
+            res += f"{h if markdown else h.replace('### ', '').strip()}\n\n{v}\n\n"
+    
+    # Add any fields not in the section map
+    for k, v in data.items():
+        if k not in _XAI_SECTION_MAP:
+            header = k.replace('_', ' ').title()
+            res += f"{'### ' if markdown else ''}{header}\n\n{v}\n\n"
+    
     return res.strip()

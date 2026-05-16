@@ -9,24 +9,17 @@ Orchestrates the end-to-end AI analysis workflow:
 from __future__ import annotations
 import asyncio
 from typing import List, Optional, Callable
-from threatpilot.ai.ai_provider_interface import AIProviderInterface
+from threatpilot.ai.ai_provider_interface import AIProviderInterface, TokenUsage
 from threatpilot.ai.prompt_builder import PromptBuilder
 from threatpilot.ai.response_parser import parse_threat_list
 from threatpilot.core.dfd_converter import DFDModel
 from threatpilot.core.threat_model import Threat, ThreatRegister, STRIDECategory, Vulnerability
 from threatpilot.config.prompt_config import PromptConfig
 
-BATCH_THRESHOLD = 6
-
-MIN_ANALYSIS_TOKENS = 16384
+from threatpilot.core.constants import ANALYSIS_BATCH_THRESHOLD, MIN_ANALYSIS_TOKENS
 
 class ThreatAnalyzer:
-    """Analyzer that maps DFD elements to specific security threats via AI.
-
-    Args:
-        provider: The concrete AI backend implementation.
-        prompt_config: Current user preferences for prompt generation.
-    """
+    """Orchestrates the AI-driven threat analysis workflow for system architectures."""
 
     def __init__(
         self,
@@ -43,246 +36,120 @@ class ThreatAnalyzer:
         system_name: str,
         progress_callback: Optional[Callable] = None,
         result_callback: Optional[Callable[[ThreatRegister], None]] = None
-    ) -> tuple[ThreatRegister, str, dict]:
-        """Execute a full STRIDE analysis on the provided DFD.
-
-        Automatically switches to segmented analysis if the diagram is too large.
-        If progress_callback is provided, it will be called after each segment
-        with (current_segment, total_segments). If it returns False, analysis stops.
-        """
+    ) -> tuple[ThreatRegister, str, TokenUsage]:
+        """Performs a full architectural analysis, segmenting the workload if necessary."""
         num_nodes = len(dfd.nodes)
-        total_segments = (num_nodes + BATCH_THRESHOLD - 1) // BATCH_THRESHOLD
+        total_segments = (num_nodes + ANALYSIS_BATCH_THRESHOLD - 1) // ANALYSIS_BATCH_THRESHOLD
 
-        if num_nodes <= BATCH_THRESHOLD:
+        if num_nodes <= ANALYSIS_BATCH_THRESHOLD:
             return await self._analyze_segment(dfd, system_name)
         
         if progress_callback:
-            should_start = await progress_callback(0, total_segments)
-            if not should_start:
-                return ThreatRegister(), "Analysis cancelled by user prior to segmentation.", {}
+            if not await progress_callback(0, total_segments):
+                return ThreatRegister(), "Analysis cancelled by user.", {}
 
         all_threats = ThreatRegister()
         full_raw_text = []
-        total_input = 0
-        total_output = 0
+        total_input = total_output = 0
         last_finish_reason = "UNKNOWN"
 
-        for i in range(0, num_nodes, BATCH_THRESHOLD):
-            current_segment = i // BATCH_THRESHOLD + 1
-            
+        for i in range(0, num_nodes, ANALYSIS_BATCH_THRESHOLD):
+            current_segment = i // ANALYSIS_BATCH_THRESHOLD + 1
             if progress_callback and current_segment > 1:
-                should_continue = await progress_callback(current_segment - 1, total_segments) 
-                if not should_continue:
-                    break
+                if not await progress_callback(current_segment - 1, total_segments): break
 
-            batch_nodes = dfd.nodes[i : i + BATCH_THRESHOLD]
+            batch_nodes = dfd.nodes[i : i + ANALYSIS_BATCH_THRESHOLD]
             node_ids = {n.id for n in batch_nodes}
-            
             sub_edges = [e for e in dfd.edges if e.source_id in node_ids or e.target_id in node_ids]
-            neighbor_ids = {e.source_id for e in sub_edges} | {e.target_id for e in sub_edges}
-            
-            sub_node_ids = node_ids | neighbor_ids
-            sub_nodes = [n for n in dfd.nodes if n.id in sub_node_ids]
-            sub_dfd = DFDModel(nodes=sub_nodes, edges=sub_edges, assets=dfd.assets)
+            sub_nodes = [n for n in dfd.nodes if n.id in (node_ids | {e.source_id for e in sub_edges} | {e.target_id for e in sub_edges})]
             
             segment_name = f"{system_name} (Segment {current_segment} of {total_segments})"
-            reg, raw, usage = await self._analyze_segment(sub_dfd, segment_name)
+            reg, raw, usage = await self._analyze_segment(DFDModel(nodes=sub_nodes, edges=sub_edges, assets=dfd.assets), segment_name)
             
-            for t in reg.threats:
-                all_threats.add_threat(t)
+            for t in reg.threats: all_threats.add_threat(t)
+            if hasattr(reg, "new_vulnerabilities"): all_threats.new_vulnerabilities.extend(reg.new_vulnerabilities)
+            if result_callback: result_callback(reg)
             
-            if hasattr(reg, "new_vulnerabilities"):
-                all_threats.new_vulnerabilities.extend(reg.new_vulnerabilities)
+            full_raw_text.append(f"--- Segment {current_segment} ---\n{raw}")
+            total_input += usage.prompt_tokens
+            total_output += usage.completion_tokens
+            last_finish_reason = "COMPLETED"
 
-            if result_callback:
-                result_callback(reg)
-            
-            full_raw_text.append(f"--- Segment {current_segment} Analysis ---\n{raw}")
-            
-            seg_usage = usage.get("usage", usage)
-            
-            seg_in = seg_usage.get("promptTokenCount") or \
-                     seg_usage.get("prompt_tokens") or \
-                     seg_usage.get("prompt_eval_count") or 0
-            total_input += seg_in
-            
-            seg_out = seg_usage.get("candidatesTokenCount") or \
-                      seg_usage.get("completion_tokens") or \
-                      seg_usage.get("eval_count") or 0
-            total_output += seg_out
-            
-            last_finish_reason = usage.get("finish_reason", last_finish_reason)
-
-        aggregated_usage = {
-            "usage": {
-                "promptTokenCount": total_input,
-                "candidatesTokenCount": total_output,
-                "totalTokenCount": total_input + total_output
-            },
-            "finish_reason": last_finish_reason
-        }
+        aggregated_usage = TokenUsage(
+            prompt_tokens=total_input,
+            completion_tokens=total_output,
+            total_tokens=total_input + total_output
+        )
         return all_threats, "\n\n".join(full_raw_text), aggregated_usage
 
-    async def _analyze_segment(self, dfd: DFDModel, system_name: str) -> tuple[ThreatRegister, str, dict]:
-        """Internal helper for a single AI pass with retry logic (M.2)."""
-        system_prompt = self.builder.build_system_prompt()
-        user_prompt = self.builder.build_user_prompt(dfd, system_name)
+    async def _analyze_segment(self, dfd: DFDModel, system_name: str) -> tuple[ThreatRegister, str, TokenUsage]:
+        """Executes a single AI analysis pass for a specific architecture segment."""
+        sys_p = self.builder.build_system_prompt()
+        usr_p = self.builder.build_user_prompt(dfd, system_name)
+        orig_max = self.provider.config.max_tokens
+        if orig_max < MIN_ANALYSIS_TOKENS: self.provider.config.max_tokens = MIN_ANALYSIS_TOKENS
 
-        original_max = self.provider.config.max_tokens
-        if original_max < MIN_ANALYSIS_TOKENS:
-            self.provider.config.max_tokens = MIN_ANALYSIS_TOKENS
-
-        last_error = None
-        max_retries = 3
-        
-        for attempt in range(max_retries):
+        last_err = None
+        for attempt in range(3):
             try:
-                raw_response, usage = await self.provider.chat_complete(
-                    prompt=user_prompt,
-                    system_instructions=system_prompt
-                )
+                raw, usage = await self.provider.chat_complete(prompt=usr_p, system_instructions=sys_p)
+                if not raw: raise RuntimeError("Empty AI response.")
                 
-                if not raw_response:
-                    raise RuntimeError("AI provider returned an empty response.")
+                threats = parse_threat_list(raw, components=dfd.nodes, flows=dfd.edges, mode=self.provider.config.analysis_mode)
+                if not threats and dfd.nodes and attempt < 2: continue
 
-                threat_dicts = parse_threat_list(raw_response)
-                
-                if not threat_dicts and len(dfd.nodes) > 0 and attempt < max_retries - 1:
-                    import logging
-                    logging.getLogger(__name__).warning(f"AI returned 0 threats for {len(dfd.nodes)} nodes. Retrying ({attempt+1}/{max_retries})...")
-                    continue
-
-                register = ThreatRegister()
-                # Temporary storage for new vulnerabilities found in this segment
-                new_vulns = []
-                
-                for t_data in threat_dicts:
-                    try:
-                        # Extract nested vulnerabilities before validation
-                        raw_v = t_data.get("vulnerabilities", [])
-                        
-                        threat = Threat.model_validate(t_data)
-                        
-                        # ── Resolve element/asset names from flow source/target ──
-                        if threat.affected_components:
-                            # Build a search haystack from all narrative fields
-                            haystack = (
-                                f"{threat.affected_components} {threat.title} {threat.description}"
-                            ).lower()
-                            
-                            node_by_id = {n.id: n for n in dfd.nodes}
-                            
-                            # 1. Try exact edge name match
-                            edge_match = next(
-                                (e for e in dfd.edges if e.name == threat.affected_components),
-                                None
-                            )
-                            
-                            # 2. Fuzzy edge match: source & target node names both in haystack
-                            if not edge_match:
-                                for e in dfd.edges:
-                                    sn = node_by_id.get(e.source_id)
-                                    tn = node_by_id.get(e.target_id)
-                                    if sn and tn and sn.name.lower() in haystack and tn.name.lower() in haystack:
-                                        edge_match = e
-                                        break
-                                        
-                            if edge_match:
-                                src_node = node_by_id.get(edge_match.source_id)
-                                dst_node = node_by_id.get(edge_match.target_id)
-                                if src_node:
-                                    threat.affected_element_type = src_node.name
-                                if dst_node:
-                                    threat.affected_asset_type = dst_node.name
-                            else:
-                                # 3. Direct node match (threat is on a component, not a flow)
-                                node_match = next(
-                                    (n for n in dfd.nodes if n.name == threat.affected_components
-                                     or n.name.lower() in haystack),
-                                    None
-                                )
-                                if node_match:
-                                    threat.affected_element_type = node_match.name
-                                    threat.affected_asset_type   = node_match.name
-
-                        # Process vulnerabilities
-                        for v_item in raw_v:
-                            if isinstance(v_item, dict):
-                                try:
-                                    v_obj = Vulnerability.model_validate(v_item)
-                                    new_vulns.append(v_obj)
-                                    if v_obj.vulnerability_id not in threat.vulnerability_ids:
-                                        threat.vulnerability_ids.append(v_obj.vulnerability_id)
-                                except Exception:
-                                    pass
-                                    
-                        register.add_threat(threat)
-                    except Exception as exc:
-                        import logging
-                        logging.getLogger(__name__).warning(f"Validation failed for parsed threat: {exc}")
-                        continue
-                
-                # Attach new vulnerabilities to the register for MainWindow to merge
-                register.new_vulnerabilities = new_vulns
-
-                self.provider.config.max_tokens = original_max
-                return register, raw_response, usage
-
+                reg = ThreatRegister(threats=threats)
+                reg.new_vulnerabilities = [v for t in threats for v in t.vulnerabilities]
+                self.provider.config.max_tokens = orig_max
+                return reg, raw, usage
             except Exception as exc:
-                last_error = exc
-                import logging
-                logging.getLogger(__name__).error(f"Analysis attempt {attempt+1} failed: {exc}")
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(1)
-                    continue
+                last_err = exc
+                if attempt < 2: await asyncio.sleep(1)
         
-        self.provider.config.max_tokens = original_max
-        raise last_error or RuntimeError("Analysis failed after maximum retries.")
+        self.provider.config.max_tokens = orig_max
+        raise last_err or RuntimeError("Analysis failed.")
 
     async def analyze_reasoning(self, threat: Threat) -> str:
-        """Execute a separate AI call to generate deep technical reasoning for a specific threat."""
+        """Generates technical architectural reasoning for a specific threat."""
         prompt = self.builder.build_reasoning_prompt(threat)
+        is_stride = self.builder.analysis_mode == "STRIDE"
+        role = "security" if is_stride else "privacy"
+        
+        # Methodology-specific field names to help the AI
+        field_1 = "attack_path" if is_stride else "privacy_impact_path"
+        field_2 = "architectural_root_cause"
+        field_3 = "risk_rationalization"
+        field_4 = "framework_alignment"
+
         system_prompt = (
             "LANGUAGE DIRECTIVE: You MUST respond exclusively in English. "
-            "Do NOT use any other language — including Chinese, Japanese, French, or any other — "
-            "in ANY part of your response. This rule is absolute and overrides all model defaults.\n\n"
-            "You are 'ThreatPilot XAI', a specialized security reasoning engine. "
-            "Your task is to provide a deep technical 'Why' for identified security or privacy threats. "
-            "Explain the architectural logic, attack path, and risk rationalization. "
-            "Do NOT identify new threats. Be precise, professional, and use markdown."
+            f"You are 'ThreatPilot XAI', a specialized {role} reasoning engine. "
+            f"Explain the architectural logic, {field_1.replace('_', ' ')}, and risk rationalization. "
+            "Do NOT identify new threats. Be precise, professional, and use markdown.\n\n"
+            "OUTPUT FORMAT: Return a JSON object with the following fields:\n"
+            f"- attack_vector (string)\n"
+            f"- architectural_root_cause (string)\n"
+            f"- risk_rationalization (string)\n"
+            f"- framework_alignment (string)"
         )
-        
         try:
-            raw_response, _ = await self.provider.chat_complete(
-                prompt=prompt,
-                system_instructions=system_prompt,
-                response_mime_type="text/plain"
-            )
-            return str(raw_response or "AI Reasoning engine returned an empty response.")
-        except Exception as exc:
-            import logging
-            logging.getLogger(__name__).error(f"XAI Reasoning failed: {exc}")
-            return f"Failed to generate reasoning: {str(exc)}"
+            # We use application/json to trigger Ollama's format="json" mode
+            raw_response, _ = await self.provider.chat_complete(prompt=prompt, system_instructions=system_prompt, response_mime_type="application/json")
+            if not raw_response or not str(raw_response).strip():
+                return "The AI returned an empty response. This often happens if safety filters are triggered or if the model is overloaded."
+            return str(raw_response)
+        except Exception as exc: return f"Reasoning failed: {exc}"
 
     async def analyze_vulnerability_reasoning(self, vuln: Vulnerability) -> str:
-        """Execute a separate AI call to generate deep technical reasoning for a specific vulnerability."""
+        """Generates deep-dive technical reasoning for a specific vulnerability."""
         prompt = self.builder.build_vulnerability_reasoning_prompt(vuln)
         system_prompt = (
             "LANGUAGE DIRECTIVE: You MUST respond exclusively in English. "
-            "Do NOT use any other language in ANY part of your response.\n\n"
             "You are 'ThreatPilot XAI', a specialized security research engine. "
-            "Provide a detailed technical explanation of the vulnerability, "
-            "including attack vectors, root causes, and deep-dive mitigation strategy. "
-            "Use markdown and be technical."
+            "Provide a detailed technical explanation of the vulnerability, root causes, and mitigation strategy. "
+            "Use markdown."
         )
         try:
-            raw_response, _ = await self.provider.chat_complete(
-                prompt=prompt,
-                system_instructions=system_prompt,
-                response_mime_type="text/plain"
-            )
-            return str(raw_response or "AI Reasoning engine returned an empty response.")
-        except Exception as exc:
-            import logging
-            logging.getLogger(__name__).error(f"Vulnerability XAI failed: {exc}")
-            return f"Failed to generate reasoning: {str(exc)}"
+            raw_response, _ = await self.provider.chat_complete(prompt=prompt, system_instructions=system_prompt, response_mime_type="text/plain")
+            return str(raw_response or "AI returned empty response.")
+        except Exception as exc: return f"Vulnerability XAI failed: {exc}"

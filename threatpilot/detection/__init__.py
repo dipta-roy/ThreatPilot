@@ -6,4 +6,5 @@ __all__ = [
     "flow_detector",
     "image_loader",
     "text_extractor",
+    "models",
 ]
