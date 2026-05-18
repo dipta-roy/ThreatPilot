@@ -35,6 +35,7 @@ class STRIDECategory(str, Enum):
 class Vulnerability(BaseModel):
     """A specific flaw or exploit path associated with a threat."""
     vulnerability_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    title: str = "New Vulnerability"
     description: str = ""
     mitigation: str = ""
     status: str = "Open"

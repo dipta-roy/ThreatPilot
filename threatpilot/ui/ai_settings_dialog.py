@@ -212,10 +212,16 @@ class AISettingsDialog(QDialog):
             self._model_name.setEnabled(True)
             self._model_name.addItems([
                 "gemini-3.1-flash-lite-preview",
+                "gemini-3.1-flash-lite",
                 "gemini-2.0-flash",
                 "gemini-1.5-flash",
             ])
-            self._model_name.setCurrentText("gemini-3.1-flash-lite-preview")
+            self._model_name.setCurrentText("gemini-3.1-flash-lite")
+
+        # Dynamically recalculate and adjust dialog height/geometry to fit the updated layout
+        if self.layout():
+            self.layout().activate()
+            self.adjustSize()
 
     def _start_ollama_fetch(self, url: str) -> None:
         """Spin up a background thread to retrieve available Ollama models."""

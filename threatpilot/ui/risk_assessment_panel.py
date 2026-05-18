@@ -95,16 +95,16 @@ class RiskAssessmentPanel(QWidget):
         self._table.setHorizontalHeaderLabels([
             "",
             "SL #",
-            "Element / Component Name",
-            "Asset / Component Name",
+            "Elements",
+            "Assets",
             "Threats",
             "Vulnerabilities",
-            "Description",
+            "Risk Description",
             "Impact",
-            "CVSS Vector (3.1)",
-            "Likelihood",
+            "CVSS Vector",
+            "Likelyhood",
             "Severity",
-            "Mitigation Strategy",
+            "Mitigations",
             "Actions"
         ])
         
@@ -246,7 +246,7 @@ class RiskAssessmentPanel(QWidget):
             for vid in v_ids:
                 v_obj = self._project.vulnerability_register.get_vulnerability(vid)
                 if v_obj:
-                    v_texts.append(v_obj.description)
+                    v_texts.append(getattr(v_obj, "title", "New Vulnerability"))
             vuln_summary = "; ".join(v_texts) if v_texts else "N/A"
             self._table.setItem(row, 5, QTableWidgetItem(vuln_summary))
             self._table.setItem(row, 6, QTableWidgetItem(t.description))

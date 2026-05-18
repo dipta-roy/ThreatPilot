@@ -135,7 +135,7 @@ def export_to_excel(project: Project, output_path: str | Path) -> None:
     for t in project.threat_register.threats:
          # Join vulnerability descriptions from the global register
          v_ids = getattr(t, "vulnerability_ids", [])
-         v_texts = [v.description for vid in v_ids if (v := project.vulnerability_register.get_vulnerability(vid))]
+         v_texts = [getattr(v, "title", "New Vulnerability") for vid in v_ids if (v := project.vulnerability_register.get_vulnerability(vid))]
          
          if v_texts:
              ws_vuln.append([
@@ -169,7 +169,7 @@ def export_to_excel(project: Project, output_path: str | Path) -> None:
         
         # Join vulnerability descriptions
         v_ids = getattr(t, "vulnerability_ids", [])
-        v_texts = [v.description for vid in v_ids if (v := project.vulnerability_register.get_vulnerability(vid))]
+        v_texts = [getattr(v, "title", "New Vulnerability") for vid in v_ids if (v := project.vulnerability_register.get_vulnerability(vid))]
         vuln_summary = "; ".join(v_texts) if v_texts else "N/A"
         
         # Determine framework

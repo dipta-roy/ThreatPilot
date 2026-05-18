@@ -99,3 +99,461 @@ def export_mitigation_checklist(project: Project, output_path: str | Path) -> No
     except Exception as e:
         logger.error(f"Failed to export mitigation checklist: {e}")
         raise
+
+def export_mitigation_checklist_html(project: Project, output_path: str | Path) -> None:
+    """Generates an interactive, premium HTML checklist of threats and mitigations."""
+    import html
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    threats = project.threat_register.threats
+    
+    # Filter out accepted risks as they don't require pending mitigations
+    pending_threats = [t for t in threats if not t.is_accepted_risk]
+    
+    html_title = html.escape(f"Mitigation Checklist: {project.project_name}")
+    project_id_safe = project.project_id or "default"
+    
+    # CSS styling
+    css_styles = """
+    :root {
+        --bg-primary: #0f172a;
+        --bg-secondary: #1e293b;
+        --border-color: #334155;
+        --text-primary: #f8fafc;
+        --text-secondary: #94a3b8;
+        --accent: #38bdf8;
+        --accent-hover: #0ea5e9;
+        
+        --color-critical: #ef4444;
+        --color-high: #f97316;
+        --color-medium: #eab308;
+        --color-low: #22c55e;
+        --color-info: #3b82f6;
+    }
+    
+    [data-theme="light"] {
+        --bg-primary: #f8fafc;
+        --bg-secondary: #ffffff;
+        --border-color: #e2e8f0;
+        --text-primary: #0f172a;
+        --text-secondary: #475569;
+        --accent: #0284c7;
+        --accent-hover: #0369a1;
+        
+        --color-critical: #dc2626;
+        --color-high: #ea580c;
+        --color-medium: #ca8a04;
+        --color-low: #16a34a;
+        --color-info: #2563eb;
+    }
+    
+    body {
+        margin: 0;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background-color: var(--bg-primary);
+        color: var(--text-primary);
+        line-height: 1.6;
+        transition: background-color 0.3s, color 0.3s;
+        padding-bottom: 80px;
+    }
+    
+    header {
+        background-color: var(--bg-secondary);
+        border-bottom: 1px solid var(--border-color);
+        padding: 20px 40px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        position: sticky;
+        top: 0;
+        z-index: 100;
+    }
+    
+    .logo-area h1 {
+        margin: 0;
+        font-size: 22px;
+        font-weight: 800;
+        background: linear-gradient(135deg, var(--accent), #6366f1);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+    
+    .meta-time {
+        font-size: 12px;
+        color: var(--text-secondary);
+    }
+    
+    .theme-toggle-btn {
+        background: var(--bg-primary);
+        border: 1px solid var(--border-color);
+        color: var(--text-primary);
+        padding: 8px 16px;
+        border-radius: 20px;
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: bold;
+        transition: all 0.2s;
+    }
+    
+    .theme-toggle-btn:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+    }
+    
+    .main-container {
+        max-width: 900px;
+        margin: 40px auto;
+        padding: 0 20px;
+    }
+    
+    .progress-card {
+        background-color: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 24px;
+        margin-bottom: 40px;
+        box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+    }
+    
+    .progress-title {
+        font-weight: bold;
+        font-size: 14px;
+        color: var(--accent);
+        text-transform: uppercase;
+        margin-bottom: 8px;
+    }
+    
+    .progress-bar-container {
+        height: 12px;
+        background-color: var(--bg-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        overflow: hidden;
+        margin: 12px 0;
+    }
+    
+    .progress-bar-fill {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, var(--accent), #6366f1);
+        border-radius: 5px;
+        transition: width 0.3s ease;
+    }
+    
+    .progress-text {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+    
+    .element-section {
+        background-color: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 10px;
+        padding: 24px;
+        margin-bottom: 24px;
+        box-shadow: 0 2px 4px rgb(0 0 0 / 0.05);
+    }
+    
+    .element-title {
+        font-size: 18px;
+        font-weight: 800;
+        color: var(--accent);
+        margin-top: 0;
+        margin-bottom: 20px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--border-color);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    
+    .list-title {
+        font-size: 13px;
+        font-weight: bold;
+        text-transform: uppercase;
+        color: var(--text-secondary);
+        margin-bottom: 12px;
+        letter-spacing: 0.05em;
+    }
+    
+    .checklist-group {
+        margin-bottom: 20px;
+    }
+    
+    .checklist-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 10px 12px;
+        border-radius: 6px;
+        transition: background-color 0.2s;
+        margin-bottom: 4px;
+    }
+    
+    .checklist-item:hover {
+        background-color: rgba(255, 255, 255, 0.02);
+    }
+    
+    .checkbox-container {
+        display: inline-flex;
+        align-items: center;
+        margin-top: 3px;
+    }
+    
+    .checklist-cb {
+        width: 18px;
+        height: 18px;
+        border: 2px solid var(--border-color);
+        border-radius: 4px;
+        cursor: pointer;
+        accent-color: var(--accent);
+    }
+    
+    .checklist-label {
+        font-size: 14px;
+        color: var(--text-primary);
+        cursor: pointer;
+        user-select: none;
+        flex-grow: 1;
+        transition: all 0.2s;
+    }
+    
+    .checklist-cb:checked + .checklist-label {
+        text-decoration: line-through;
+        opacity: 0.5;
+        color: var(--text-secondary);
+    }
+    
+    .badge {
+        font-size: 10px;
+        font-weight: bold;
+        padding: 2px 8px;
+        border-radius: 10px;
+        text-transform: uppercase;
+        display: inline-block;
+        margin-left: 8px;
+        vertical-align: middle;
+    }
+    
+    .badge-critical { background-color: rgba(239, 68, 68, 0.15); color: var(--color-critical); border: 1px solid var(--color-critical); }
+    .badge-high { background-color: rgba(249, 115, 22, 0.15); color: var(--color-high); border: 1px solid var(--color-high); }
+    .badge-medium { background-color: rgba(234, 179, 8, 0.15); color: var(--color-medium); border: 1px solid var(--color-medium); }
+    .badge-low { background-color: rgba(34, 197, 94, 0.15); color: var(--color-low); border: 1px solid var(--color-low); }
+    .badge-info { background-color: rgba(59, 130, 246, 0.15); color: var(--color-info); border: 1px solid var(--color-info); }
+    
+    .nested-vulns {
+        margin: 4px 0 0 0;
+        padding-left: 20px;
+        font-size: 12px;
+        color: var(--text-secondary);
+        list-style-type: square;
+    }
+    
+    .nested-vulns li {
+        margin-bottom: 2px;
+    }
+    
+    .divider {
+        height: 1px;
+        background-color: var(--border-color);
+        margin: 20px 0;
+    }
+    
+    footer {
+        text-align: center;
+        padding: 40px 20px;
+        color: var(--text-secondary);
+        font-size: 12px;
+        border-top: 1px solid var(--border-color);
+        margin-top: 60px;
+    }
+    """
+    
+    js_code = f"""
+    const projectId = "{project_id_safe}";
+    
+    function toggleTheme() {{
+        const currentTheme = document.documentElement.getAttribute('data-theme');
+        const targetTheme = currentTheme === 'light' ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', targetTheme);
+        document.getElementById('theme-toggle').innerText = targetTheme === 'light' ? 'Dark Mode' : 'Light Mode';
+    }}
+    
+    function updateProgress() {{
+        const checkboxes = document.querySelectorAll('.checklist-cb');
+        const checked = document.querySelectorAll('.checklist-cb:checked');
+        const percent = checkboxes.length ? Math.round((checked.length / checkboxes.length) * 100) : 0;
+        
+        document.getElementById('progress-bar-fill').style.width = percent + '%';
+        document.getElementById('progress-text').innerText = checked.length + ' of ' + checkboxes.length + ' tasks completed (' + percent + '%)';
+        
+        // Save checklist state to localStorage for offline persistence
+        const state = {{}};
+        checkboxes.forEach((cb) => {{
+            state[cb.id] = cb.checked;
+        }});
+        localStorage.setItem('tp-checklist-' + projectId, JSON.stringify(state));
+    }}
+    
+    function loadProgress() {{
+        const stateStr = localStorage.getItem('tp-checklist-' + projectId);
+        if (stateStr) {{
+            try {{
+                const state = JSON.parse(stateStr);
+                const checkboxes = document.querySelectorAll('.checklist-cb');
+                checkboxes.forEach((cb) => {{
+                    if (state[cb.id] !== undefined) {{
+                        cb.checked = state[cb.id];
+                    }}
+                }});
+            }} catch(e) {{
+                console.error("Failed to load checklist state", e);
+            }}
+        }}
+        updateProgress();
+    }}
+    
+    document.addEventListener("DOMContentLoaded", () => {{
+        const checkboxes = document.querySelectorAll('.checklist-cb');
+        checkboxes.forEach(cb => {{
+            cb.addEventListener('change', updateProgress);
+        }});
+        loadProgress();
+    }});
+    """
+
+    lines = [
+        "<!DOCTYPE html>",
+        '<html lang="en" data-theme="dark">',
+        "<head>",
+        '    <meta charset="UTF-8">',
+        '    <meta name="viewport" content="width=device-width, initial-scale=1.0">',
+        f"    <title>{html_title}</title>",
+        '    <link rel="preconnect" href="https://fonts.googleapis.com">',
+        '    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>',
+        '    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">',
+        f"    <style>{css_styles}</style>",
+        "</head>",
+        "<body>",
+        "",
+        "    <header>",
+        '        <div class="logo-area">',
+        f"            <h1>Mitigation Checklist: {html.escape(project.project_name)}</h1>",
+        f'            <div class="meta-time">Generated on: {now}</div>',
+        "        </div>",
+        '        <button id="theme-toggle" class="theme-toggle-btn" onclick="toggleTheme()">Light Mode</button>',
+        "    </header>",
+        "",
+        '    <div class="main-container">',
+        "",
+        '        <!-- Progress Tracking Card -->',
+        '        <div class="progress-card">',
+        '            <div class="progress-title">Checklist Implementation Progress</div>',
+        '            <div class="progress-bar-container">',
+        '                <div id="progress-bar-fill" class="progress-bar-fill"></div>',
+        '            </div>',
+        '            <div id="progress-text" class="progress-text">0 of 0 tasks completed (0%)</div>',
+        "        </div>",
+    ]
+
+    if not pending_threats:
+        lines.append('        <div class="element-section" style="text-align: center; color: var(--text-secondary);">')
+        lines.append('            <p>No active threats or mitigations found. All risks have been accepted or neutralized.</p>')
+        lines.append("        </div>")
+    else:
+        # Group threats by element
+        element_map = defaultdict(list)
+        for t in pending_threats:
+            elem_name, _ = t.resolve_affected_elements(project)
+            if not elem_name:
+                elem_name = "Global / Unassigned"
+            element_map[elem_name].append(t)
+            
+        cb_counter = 0
+        for elem in sorted(element_map.keys()):
+            lines.append('        <div class="element-section">')
+            lines.append(f'            <div class="element-title">🏗️ {html.escape(elem)}</div>')
+            
+            # --- THREATS SECTION ---
+            lines.append('            <div class="checklist-group">')
+            lines.append('                <div class="list-title">Threats to Neutralize</div>')
+            
+            element_threats = sorted(element_map[elem], key=lambda x: x.cvss_score, reverse=True)
+            unique_mitigations = set()
+            
+            for t in element_threats:
+                cb_counter += 1
+                cb_id = f"t_{cb_counter}"
+                severity = get_cvss_severity(t.cvss_score)
+                severity_class = severity.lower()
+                
+                if t.mitigation:
+                    unique_mitigations.add(t.mitigation.strip())
+                
+                lines.append('                <div class="checklist-item">')
+                lines.append('                    <div class="checkbox-container">')
+                lines.append(f'                        <input type="checkbox" id="{cb_id}" class="checklist-cb">')
+                lines.append("                    </div>")
+                lines.append(f'                    <label for="{cb_id}" class="checklist-label">')
+                lines.append(f'                        <strong>{html.escape(t.title)}</strong>')
+                lines.append(f'                        <span class="badge badge-{severity_class}">{severity}</span>')
+                
+                # Show linked vulnerabilities in checklist
+                v_ids = getattr(t, "vulnerability_ids", [])
+                v_titles = []
+                if v_ids and hasattr(project, "vulnerability_register"):
+                    v_titles = [v.title for vid in v_ids if (v := project.vulnerability_register.get_vulnerability(vid))]
+                
+                if v_titles:
+                    lines.append('                        <ul class="nested-vulns">')
+                    for vt in v_titles:
+                        lines.append(f"                            <li>Vulnerability: {html.escape(vt)}</li>")
+                    lines.append("                        </ul>")
+                
+                lines.append("                    </label>")
+                lines.append("                </div>")
+                
+            lines.append("            </div>") # checklist-group
+            
+            lines.append('            <div class="divider"></div>')
+            
+            # --- MITIGATIONS SECTION ---
+            lines.append('            <div class="checklist-group">')
+            lines.append('                <div class="list-title">Required Security Controls</div>')
+            
+            if not unique_mitigations:
+                lines.append('                <p style="font-size: 13px; color: var(--text-secondary); font-style: italic; margin-left: 12px;">No specific mitigations identified.</p>')
+            else:
+                for mit in sorted(list(unique_mitigations)):
+                    cb_counter += 1
+                    cb_id = f"m_{cb_counter}"
+                    
+                    lines.append('                <div class="checklist-item">')
+                    lines.append('                    <div class="checkbox-container">')
+                    lines.append(f'                        <input type="checkbox" id="{cb_id}" class="checklist-cb">')
+                    lines.append("                    </div>")
+                    lines.append(f'                    <label for="{cb_id}" class="checklist-label">{html.escape(mit)}</label>')
+                    lines.append("                </div>")
+                    
+            lines.append("            </div>") # checklist-group
+            lines.append("        </div>") # element-section
+            
+    lines.extend([
+        "    </div>",
+        "",
+        "    <footer>",
+        f"        <p>ThreatPilot Mitigation Checklist &copy; {datetime.now().year}.</p>",
+        "    </footer>",
+        "",
+        f"    <script>{js_code}</script>",
+        "</body>",
+        "</html>",
+    ])
+    
+    try:
+        Path(output_path).write_text("\n".join(lines), encoding="utf-8")
+        logger.info(f"Mitigation checklist HTML exported to {output_path}")
+    except Exception as e:
+        logger.error(f"Failed to export HTML mitigation checklist: {e}")
+        raise
+

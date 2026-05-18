@@ -87,7 +87,7 @@ def export_to_markdown(project: Project, output_path: str | Path) -> None:
                 lines.append(f"- **Description:** {sanitize_md(t.description)}")
                 v_ids = getattr(t, "vulnerability_ids", [])
                 if v_ids and hasattr(project, "vulnerability_register"):
-                    v_descs = [v.description for vid in v_ids if (v := project.vulnerability_register.get_vulnerability(vid))]
+                    v_descs = [getattr(v, "title", "New Vulnerability") for vid in v_ids if (v := project.vulnerability_register.get_vulnerability(vid))]
                     if v_descs:
                         lines.append(f"- **Vulnerabilities:** {sanitize_md('; '.join(v_descs))}")
                 lines.append(f"- **Impact:** {sanitize_md(t.impact)}")

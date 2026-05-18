@@ -73,7 +73,7 @@ class PromptBuilder:
             f"Posture: {self._sanitize(self.config.security_posture)}\n\n"
             "OUTPUT FORMAT: Return a JSON list of threats with the following fields (ALL STRINGS MUST BE IN ENGLISH):\n"
             f"- threat_id, category ({methodology}), title (Unique descriptive name in English, NOT the category name), description (English),\n"
-            "- vulnerabilities (list of concise sentence objects in English), impact (English), likelihood (1-5), recommended_mitigation (English),\n"
+            "- vulnerabilities (list of objects with 'title' and 'description' in English), impact (English), likelihood (1-5), recommended_mitigation (English),\n"
             "- affected_components (EXACT NAME), affected_element_type, affected_asset_type,\n"
             "- cvss_score (float), cvss_vector (CVSS 3.1), mitre_attack_id\n\n"
             "CVSS GUIDELINE: Always provide a CVSS 3.1 vector string (e.g., CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H) and its corresponding base score.\n"

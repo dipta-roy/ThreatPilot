@@ -53,7 +53,8 @@ from threatpilot.ui.about_dialog import AboutDialog
 from threatpilot.ui.quick_start_wizard import QuickStartWizard
 from threatpilot.export.excel_exporter import export_to_excel
 from threatpilot.export.markdown_exporter import export_to_markdown
-from threatpilot.export.mitigation_exporter import export_mitigation_checklist
+from threatpilot.export.html_exporter import export_to_html
+from threatpilot.export.mitigation_exporter import export_mitigation_checklist, export_mitigation_checklist_html
 from threatpilot.export.diagram_exporter import export_scene_to_image
 from threatpilot.ai.factory import create_ai_provider
 from threatpilot.ai.prompt_builder import PromptBuilder
@@ -318,7 +319,9 @@ class MainWindow(QMainWindow):
         self._action_run_analysis.triggered.connect(self._on_run_analysis)
         self._action_export_excel.triggered.connect(self._on_export_excel)
         self._action_export_markdown.triggered.connect(self._on_export_markdown)
+        self._action_export_html.triggered.connect(self._on_export_html)
         self._action_export_mitigation.triggered.connect(self._on_export_mitigation_checklist)
+        self._action_export_mitigation_html.triggered.connect(self._on_export_mitigation_checklist_html)
         self._action_export_diagram.triggered.connect(self._on_export_diagram)
         self._action_about.triggered.connect(self._on_about)
         self._action_detect_objects.triggered.connect(self._on_detect_objects)
@@ -382,6 +385,7 @@ class MainWindow(QMainWindow):
         self._stride_threat_ledger.set_register(None)
         self._linddun_threat_ledger.set_register(None)
         self._risk_assessment_panel.set_project(None)
+        self._vulnerability_panel.set_project(None)
         self._properties_panel.set_item(None)
         self._canvas.clear_diagram()
         self._undo_stack.clear()
@@ -1150,6 +1154,18 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.critical(self, "Export Error", f"Markdown export failed:\n{exc}")
 
+    def _on_export_html(self) -> None:
+        """Exports the current threat model to an HTML report file."""
+        if not self._project: return
+        file_path, _ = QFileDialog.getSaveFileName(self, "Export to HTML", "", "HTML Files (*.html *.htm);;All Files (*)")
+        if not file_path: return
+        if not file_path.endswith(".html") and not file_path.endswith(".htm"): file_path += ".html"
+        try:
+            export_to_html(self._project, file_path)
+            self.statusBar().showMessage(f"Report exported to {file_path}")
+        except Exception as exc:
+            QMessageBox.critical(self, "Export Error", f"HTML export failed:\n{exc}")
+
     def _on_export_mitigation_checklist(self) -> None:
         """Exports a consolidated mitigation checklist to a Markdown file."""
         if not self._project or not self._project.threat_register.threats:
@@ -1162,6 +1178,23 @@ class MainWindow(QMainWindow):
         
         try:
             export_mitigation_checklist(self._project, file_path)
+            self.statusBar().showMessage(f"Checklist exported to {file_path}")
+            QMessageBox.information(self, "Export Success", f"Mitigation checklist saved to {file_path}")
+        except Exception as exc:
+            QMessageBox.critical(self, "Export Error", f"Checklist export failed:\n{exc}")
+
+    def _on_export_mitigation_checklist_html(self) -> None:
+        """Exports a consolidated mitigation checklist to a premium HTML file."""
+        if not self._project or not self._project.threat_register.threats:
+            QMessageBox.information(self, "Export", "No threats found to generate a checklist.")
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(self, "Export Mitigation Checklist to HTML", "", "HTML Files (*.html *.htm);;All Files (*)")
+        if not file_path: return
+        if not file_path.endswith(".html") and not file_path.endswith(".htm"): file_path += ".html"
+        
+        try:
+            export_mitigation_checklist_html(self._project, file_path)
             self.statusBar().showMessage(f"Checklist exported to {file_path}")
             QMessageBox.information(self, "Export Success", f"Mitigation checklist saved to {file_path}")
         except Exception as exc:

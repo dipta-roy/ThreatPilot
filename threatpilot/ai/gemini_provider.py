@@ -120,9 +120,62 @@ class GeminiProvider(AIProviderInterface):
                         if resp.status_code != 200:
                             error_body = resp.text
                             logger.error(f"Gemini API Error ({resp.status_code}) on {url}: {error_body}")
-                            if resp.status_code in [500, 502, 503, 504] and attempt < 2:
-                                await asyncio.sleep(2 ** attempt); continue
-                            resp.raise_for_status()
+                            
+                            # Fallback if the model/endpoint does not support responseMimeType
+                            if resp.status_code == 400 and ("responseMimeType" in error_body or "response_mime_type" in error_body):
+                                logger.warning(f"Model {model} does not support responseMimeType. Retrying request without it...")
+                                fallback_payload = json.loads(json.dumps(payload))
+                                if "generationConfig" in fallback_payload and "responseMimeType" in fallback_payload["generationConfig"]:
+                                    del fallback_payload["generationConfig"]["responseMimeType"]
+                                
+                                retry_resp = await client.post(url, json=fallback_payload, headers=headers)
+                                if retry_resp.status_code == 200:
+                                    resp = retry_resp
+                                elif retry_resp.status_code == 429:
+                                    resp = retry_resp
+                                else:
+                                    logger.error(f"Gemini API Retry Error ({retry_resp.status_code}) on {url}: {retry_resp.text}")
+                                    retry_resp.raise_for_status()
+                            
+                            # Handle rate limits (429) elegantly by sleeping and retrying
+                            if resp.status_code == 429:
+                                sleep_sec = 5.0
+                                try:
+                                    err_data = json.loads(resp.text)
+                                    details = err_data.get("error", {}).get("details", [])
+                                    for detail in details:
+                                        if "RetryInfo" in detail.get("@type", ""):
+                                            delay_str = detail.get("retryDelay", "5s")
+                                            if delay_str.endswith("s"):
+                                                sleep_sec = float(delay_str[:-1])
+                                            else:
+                                                sleep_sec = float(delay_str)
+                                            break
+                                except Exception:
+                                    pass
+                                
+                                logger.warning(f"Gemini API rate limit hit (429). Sleeping for {sleep_sec:.2f} seconds before retrying...")
+                                await asyncio.sleep(sleep_sec)
+                                
+                                # Send request (respecting whether responseMimeType has already been stripped)
+                                current_payload = payload
+                                if "responseMimeType" in error_body or "response_mime_type" in error_body:
+                                    fallback_payload = json.loads(json.dumps(payload))
+                                    if "generationConfig" in fallback_payload and "responseMimeType" in fallback_payload["generationConfig"]:
+                                        del fallback_payload["generationConfig"]["responseMimeType"]
+                                    current_payload = fallback_payload
+                                
+                                retry_resp = await client.post(url, json=current_payload, headers=headers)
+                                if retry_resp.status_code == 200:
+                                    resp = retry_resp
+                                else:
+                                    logger.error(f"Gemini API Retry after 429 Error ({retry_resp.status_code}) on {url}: {retry_resp.text}")
+                                    retry_resp.raise_for_status()
+                                    
+                            if resp.status_code != 200:
+                                if resp.status_code in [500, 502, 503, 504] and attempt < 2:
+                                    await asyncio.sleep(2 ** attempt); continue
+                                resp.raise_for_status()
                         data = resp.json(); meta = data.get("usageMetadata", {})
                         usage = TokenUsage(
                             prompt_tokens=meta.get("promptTokenCount", 0),
