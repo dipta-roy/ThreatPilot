@@ -38,14 +38,23 @@ class DFDAsset(BaseModel):
     name: str
     type: str
     criticality: str
+    description: str = ""
     is_out_of_scope: bool = False
     out_of_scope_justification: str = ""
+
+class DFDBoundary(BaseModel):
+    """Represents a trust boundary within the Data Flow Diagram."""
+    name: str
+    type: str
+    description: str = ""
+    parent_boundary: Optional[str] = None
 
 class DFDModel(BaseModel):
     """Aggregates all nodes, edges, and assets into a complete architectural model."""
     nodes: List[DFDNode] = Field(default_factory=list)
     edges: List[DFDEdge] = Field(default_factory=list)
     assets: List[DFDAsset] = Field(default_factory=list)
+    boundaries: List[DFDBoundary] = Field(default_factory=list)
 
 def convert_to_dfd(
     components: List[Component],
@@ -59,7 +68,27 @@ def convert_to_dfd(
     boundaries = boundaries or []; assets = assets or []
 
     for a in assets:
-        dfd.assets.append(DFDAsset(name=a.name, type=a.type.value, criticality=a.criticality, is_out_of_scope=a.is_out_of_scope, out_of_scope_justification=a.out_of_scope_justification))
+        dfd.assets.append(DFDAsset(
+            name=a.name, 
+            type=a.type.value, 
+            criticality=a.criticality, 
+            description=a.description,
+            is_out_of_scope=a.is_out_of_scope, 
+            out_of_scope_justification=a.out_of_scope_justification
+        ))
+
+    for b in boundaries:
+        parent_name = None
+        if b.parent_boundary_id:
+            parent = next((pb for pb in boundaries if pb.boundary_id == b.parent_boundary_id), None)
+            if parent:
+                parent_name = parent.name
+        dfd.boundaries.append(DFDBoundary(
+            name=b.name,
+            type=b.type,
+            description=b.description,
+            parent_boundary=parent_name
+        ))
 
     def get_containing_boundary(x: float, y: float, w: float = 0, h: float = 0) -> Optional[TrustBoundary]:
         cx, cy = x + w/2, y + h/2

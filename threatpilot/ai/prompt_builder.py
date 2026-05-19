@@ -22,6 +22,11 @@ class PromptBuilder:
         s = str(text).replace("<", "[").replace(">", "]")
         return s.replace("\n", " ").replace("\r", " ").replace("\t", " ")
 
+    def _sanitize_multiline(self, text: str | None) -> str:
+        """Escapes XML-sensitive characters but preserves newlines."""
+        if not text: return ""
+        return str(text).replace("<", "[").replace(">", "]")
+
     def build_system_prompt(self) -> str:
         """Constructs the high-level operational context for the AI security analyst."""
         role = "Cyber Security Architect" if self.analysis_mode == "STRIDE" else "Privacy Architect"
@@ -67,10 +72,24 @@ class PromptBuilder:
                 "- Non-compliance: Violating privacy laws/regulations.\n\n"
             )
 
+        business_context = "BUSINESS CONTEXT:\n"
+        if self.config.industry_context.strip():
+            business_context += f"- Industry Context: {self._sanitize(self.config.industry_context)}\n"
+        if self.config.risk_preference.strip():
+            business_context += f"- Risk Preference: {self._sanitize(self.config.risk_preference.upper())}\n"
+        if self.config.security_posture.strip():
+            business_context += f"- Security Posture: {self._sanitize(self.config.security_posture)}\n"
+        if self.config.compliance_priority.strip():
+            business_context += f"- Compliance Priority: {self._sanitize(self.config.compliance_priority)}\n"
+        if self.config.business_context_policy.strip():
+            business_context += f"- Business Context Policy: {self._sanitize_multiline(self.config.business_context_policy)}\n"
+        if self.config.custom_prompt.strip():
+            business_context += f"- Additional Global Instructions: {self._sanitize_multiline(self.config.custom_prompt)}\n"
+        business_context += "\n"
+
+        prompt += business_context
+
         prompt += (
-            f"Industry: {self._sanitize(self.config.industry_context)}\n"
-            f"Risk: {self._sanitize(self.config.risk_preference.upper())}\n"
-            f"Posture: {self._sanitize(self.config.security_posture)}\n\n"
             "OUTPUT FORMAT: Return a JSON list of threats with the following fields (ALL STRINGS MUST BE IN ENGLISH):\n"
             f"- threat_id, category ({methodology}), title (Unique descriptive name in English, NOT the category name), description (English),\n"
             "- vulnerabilities (list of objects with 'title' and 'description' in English), impact (English), likelihood (1-5), recommended_mitigation (English),\n"
@@ -78,7 +97,6 @@ class PromptBuilder:
             "- cvss_score (float), cvss_vector (CVSS 3.1), mitre_attack_id\n\n"
             "CVSS GUIDELINE: Always provide a CVSS 3.1 vector string (e.g., CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H) and its corresponding base score.\n"
             "COMPREHENSIVENESS: Explore all relevant categories for each element; cross-boundary flows are high risk. REMEMBER: ENGLISH ONLY."
-
         )
         return prompt
 
@@ -90,9 +108,21 @@ class PromptBuilder:
         if dfd.assets:
             for a in dfd.assets:
                 prompt += f"- {a.name} | Type: {a.type} | Criticality: {a.criticality} | Scope: {'Out' if a.is_out_of_scope else 'In'}\n"
+                if getattr(a, "description", "").strip():
+                    prompt += f"  Description: {self._sanitize(a.description)}\n"
                 if a.is_out_of_scope and a.out_of_scope_justification: prompt += f"  Justification: {a.out_of_scope_justification}\n"
         else: prompt += "- No assets defined.\n"
         
+        prompt += "\n--- TRUST BOUNDARIES ---\n"
+        if getattr(dfd, "boundaries", []):
+            for b in dfd.boundaries:
+                parent_info = f" (Nested in {b.parent_boundary})" if b.parent_boundary else ""
+                prompt += f"- Boundary: {self._sanitize(b.name)} | Type: {self._sanitize(b.type)}{parent_info}\n"
+                if getattr(b, "description", "").strip():
+                    prompt += f"  Description: {self._sanitize(b.description)}\n"
+        else:
+            prompt += "- No trust boundaries defined.\n"
+
         prompt += "\n--- DFD NODES ---\n"
         for node in dfd.nodes:
             tb = node.trust_boundary or "None"

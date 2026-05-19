@@ -64,7 +64,7 @@ class ThreatAnalyzer:
             sub_nodes = [n for n in dfd.nodes if n.id in (node_ids | {e.source_id for e in sub_edges} | {e.target_id for e in sub_edges})]
             
             segment_name = f"{system_name} (Segment {current_segment} of {total_segments})"
-            reg, raw, usage = await self._analyze_segment(DFDModel(nodes=sub_nodes, edges=sub_edges, assets=dfd.assets), segment_name)
+            reg, raw, usage = await self._analyze_segment(DFDModel(nodes=sub_nodes, edges=sub_edges, assets=dfd.assets, boundaries=dfd.boundaries), segment_name)
             
             for t in reg.threats: all_threats.add_threat(t)
             if hasattr(reg, "new_vulnerabilities"): all_threats.new_vulnerabilities.extend(reg.new_vulnerabilities)

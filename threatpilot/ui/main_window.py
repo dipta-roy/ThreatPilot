@@ -631,7 +631,7 @@ class MainWindow(QMainWindow):
             return
 
         mode = analysis_mode if analysis_mode and analysis_mode != "ALL" else None
-        dfd = convert_to_dfd(self._project.components, self._project.flows, self._project.boundaries)
+        dfd = convert_to_dfd(self._project.components, self._project.flows, self._project.boundaries, self._project.assets)
         if not dfd.nodes:
             QMessageBox.warning(self, "Analysis", "No components detected to analyze. Please add or detect components first.")
             return

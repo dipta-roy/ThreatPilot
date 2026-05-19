@@ -149,11 +149,6 @@ class ThreatPanel(QWidget):
         self._btn_delete.clicked.connect(self._on_delete_threat)
         toolbar_layout.addWidget(self._btn_delete)
 
-        self._btn_checklist = QPushButton("Generate Checklist")
-        self._btn_checklist.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._btn_checklist.clicked.connect(lambda: self.run_analysis_requested.emit("CHECKLIST", 0))
-        toolbar_layout.addWidget(self._btn_checklist)
-
         toolbar_layout.addStretch()
         layout.addLayout(toolbar_layout)
 
@@ -202,8 +197,7 @@ class ThreatPanel(QWidget):
         if has_reg:
             self._btn_add.setEnabled(True)
             self._btn_delete.setEnabled(True)
-            if hasattr(self, "_btn_checklist"):
-                self._btn_checklist.setEnabled(True)
+
         self.refresh()
 
     def clear_filter(self) -> None:
