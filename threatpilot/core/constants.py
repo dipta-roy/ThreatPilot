@@ -16,14 +16,15 @@ APP_TAGLINE = "AI-Powered Threat Modeling Platform"
 
 # A comprehensive description of the application's core functionality.
 APP_DESCRIPTION = (
-    "ThreatPilot combines computer vision and Large Language Models "
-    "to automatically identify security risks from architectural "
-    "diagrams. It performs STRIDE and LINDDUN based threat analysis, generates "
-    "CVSS scores, and produces comprehensive security reports."
+    "ThreatPilot combines computer vision, native structured AI outputs, and "
+    "Large Language Models to automatically extract components, assets, trust boundaries, "
+    "and flows from architectural diagrams. It performs STRIDE and LINDDUN based "
+    "threat analysis, generates CVSS scores, resolves connections via spatial proximity, "
+    "and produces comprehensive security reports."
 )
 
 # Legal and framework metadata.
-LICENSE_TYPE = "Proprietary"
+LICENSE_TYPE = "Apache License, Version 2.0"
 DEVELOPMENT_FRAMEWORK = "Python 3.11"
 SUPPORTED_AI_ENGINES = "Gemini · Ollama"
 COPYRIGHT_TEXT = "© 2026 Dipta Roy. All rights reserved."

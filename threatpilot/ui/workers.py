@@ -32,7 +32,7 @@ class AnalysisWorker(QThread):
         iteration_progress: Emitted with (current_iteration, total_iterations,
             current_segment, total_segments) for UI progress updates.
     """
-    finished = Signal(object)
+    analysis_completed = Signal(object)
     failed = Signal(str)
     partial_result_ready = Signal(object)
     prompt_ready = Signal(str)
@@ -72,6 +72,14 @@ class AnalysisWorker(QThread):
             for iteration in range(1, self.iterations + 1):
                 analyzer = ThreatAnalyzer(self.provider, self.prompt_config)
 
+                iter_label = f"[Iteration {iteration}/{self.iterations}] " if auto_mode else ""
+                
+                def on_prompt(sys_p, usr_p):
+                    self.prompt_ready.emit(f"{iter_label}SYSTEM: {sys_p}\n\nUSER: {usr_p}")
+                
+                def on_response(raw_resp):
+                    self.response_ready.emit(f"{iter_label}{raw_resp}")
+
                 if auto_mode:
                     # Auto-continue: no user prompts between segments
                     async def progress_cb_auto(current, total, _iter=iteration):
@@ -83,7 +91,9 @@ class AnalysisWorker(QThread):
                             self.dfd,
                             self.system_name,
                             progress_callback=progress_cb_auto,
-                            result_callback=lambda partial: self.partial_result_ready.emit(partial)
+                            result_callback=lambda partial: self.partial_result_ready.emit(partial),
+                            prompt_callback=on_prompt,
+                            response_callback=on_response
                         )
                     )
                 else:
@@ -99,20 +109,15 @@ class AnalysisWorker(QThread):
                             self.dfd,
                             self.system_name,
                             progress_callback=progress_cb,
-                            result_callback=lambda partial: self.partial_result_ready.emit(partial)
+                            result_callback=lambda partial: self.partial_result_ready.emit(partial),
+                            prompt_callback=on_prompt,
+                            response_callback=on_response
                         )
                     )
 
                 if "Analysis cancelled by user" in raw_resp:
                     self.failed.emit("Analysis cancelled by user.")
                     return
-
-                # Log iteration info
-                iter_label = f"[Iteration {iteration}/{self.iterations}] " if auto_mode else ""
-                system_p = analyzer.builder.build_system_prompt()
-                user_p = analyzer.builder.build_user_prompt(self.dfd, self.system_name)
-                self.prompt_ready.emit(f"{iter_label}SYSTEM: {system_p}\n\nUSER: {user_p}")
-                self.response_ready.emit(f"{iter_label}{raw_resp}")
 
                 if usage:
                     meta_log = f"{iter_label}METADATA: Tokens [In: {usage.prompt_tokens} | Out: {usage.completion_tokens} | Total: {usage.total_tokens}]"
@@ -129,7 +134,7 @@ class AnalysisWorker(QThread):
                             all_register.new_vulnerabilities = []
                         all_register.new_vulnerabilities.extend(register.new_vulnerabilities)
 
-            self.finished.emit(all_register)
+            self.analysis_completed.emit(all_register)
         except Exception as exc:
             logger.exception(f"AnalysisWorker failed: {exc}")
             self.failed.emit(str(exc))
@@ -144,7 +149,7 @@ class AIVisionWorker(QThread):
         finished: Emitted when AI vision detection completes.
         failed: Emitted when an error occurs.
     """
-    finished = Signal(dict)
+    detection_completed = Signal(dict)
     failed = Signal(str)
     prompt_ready = Signal(str)
     response_ready = Signal(str)
@@ -163,12 +168,14 @@ class AIVisionWorker(QThread):
             asyncio.set_event_loop(loop)
             
             from threatpilot.detection.image_loader import resize_image_for_ai
+            from threatpilot.detection.detection_schemas import get_vision_response_schema
             
             img = QImage(self.image_path)
             if img.isNull():
                 raise FileNotFoundError(f"Selected image file at {self.image_path} could not be loaded.")
             
-            img = resize_image_for_ai(img)
+            max_dim = getattr(self.provider.config, "max_vision_resolution", 2048)
+            img = resize_image_for_ai(img, max_dim=max_dim)
             
             buffer = QBuffer()
             buffer.open(QIODevice.WriteOnly)
@@ -179,8 +186,10 @@ class AIVisionWorker(QThread):
             prompt = builder.build_vision_detection_prompt(self.system_name)
             self.prompt_ready.emit(prompt)
 
+            schema_dict = get_vision_response_schema()
+
             async def run_vision():
-                return await self.provider.vision_complete(prompt, image_bytes)
+                return await self.provider.vision_complete(prompt, image_bytes, response_schema=schema_dict)
 
             response_text, usage = loop.run_until_complete(run_vision())
             
@@ -190,7 +199,7 @@ class AIVisionWorker(QThread):
             
             data = extract_json(response_text)
             if data:
-                self.finished.emit(data)
+                self.detection_completed.emit(data)
             else:
                 logger.error("AIVisionWorker failed to parse JSON response.")
                 self.failed.emit("Failed to parse AI response. Check the Logs tab for details on the raw output structure.")
@@ -204,7 +213,7 @@ class AIVisionWorker(QThread):
 class ReasoningWorker(QThread):
     """Background worker for deep technical reasoning (XAI)."""
     WORKER_TYPE = "ReasoningWorker"
-    finished = Signal(str, object)
+    reasoning_completed = Signal(str, object)
     failed = Signal(str)
 
     def __init__(self, provider, prompt_config, item, analysis_mode, parent=None):
@@ -233,7 +242,7 @@ class ReasoningWorker(QThread):
                 reasoning = loop.run_until_complete(analyzer.analyze_reasoning(self.item))
                 
             logger.info(f"ReasoningWorker: Emitting finished signal. reasoning_len={len(reasoning)}")
-            self.finished.emit(reasoning, self.item)
+            self.reasoning_completed.emit(reasoning, self.item)
         except Exception as exc:
             logger.exception(f"ReasoningWorker failed: {exc}")
             self.failed.emit(str(exc))

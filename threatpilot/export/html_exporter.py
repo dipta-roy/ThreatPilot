@@ -550,7 +550,7 @@ def export_to_html(project: Project, output_path: str | Path) -> None:
         '        <div class="project-grid">',
         '            <div class="card">',
         '                <div class="card-title">1. Project Overview</div>',
-        f"                <p>Security analysis report for the <strong>{html.escape(project.project_name)}</strong> threat model. The system was systematically analyzed using standard application security models (STRIDE methodology) to discover vulnerabilities, threats, and mitigations.</p>",
+        f"                <p>Security analysis report for the <strong>{html.escape(project.project_name)}</strong> threat model. The system was systematically analyzed using standard application security models (STRIDE and LINDDUN methodology) to discover vulnerabilities, threats, and mitigations.</p>",
         "                <p>The structured risk assessments align discovered vulnerabilities with direct mitigations to allow the development team to quickly patch architectural and logic flaws.</p>",
         "            </div>",
         '            <div class="card">',

@@ -35,14 +35,19 @@ class ThreatAnalyzer:
         dfd: DFDModel, 
         system_name: str,
         progress_callback: Optional[Callable] = None,
-        result_callback: Optional[Callable[[ThreatRegister], None]] = None
+        result_callback: Optional[Callable[[ThreatRegister], None]] = None,
+        prompt_callback: Optional[Callable[[str, str], None]] = None,
+        response_callback: Optional[Callable[[str], None]] = None
     ) -> tuple[ThreatRegister, str, TokenUsage]:
         """Performs a full architectural analysis, segmenting the workload if necessary."""
         num_nodes = len(dfd.nodes)
         total_segments = (num_nodes + ANALYSIS_BATCH_THRESHOLD - 1) // ANALYSIS_BATCH_THRESHOLD
 
         if num_nodes <= ANALYSIS_BATCH_THRESHOLD:
-            return await self._analyze_segment(dfd, system_name)
+            reg, raw, usage = await self._analyze_segment(dfd, system_name, prompt_callback=prompt_callback)
+            if response_callback:
+                response_callback(raw)
+            return reg, raw, usage
         
         if progress_callback:
             if not await progress_callback(0, total_segments):
@@ -64,7 +69,13 @@ class ThreatAnalyzer:
             sub_nodes = [n for n in dfd.nodes if n.id in (node_ids | {e.source_id for e in sub_edges} | {e.target_id for e in sub_edges})]
             
             segment_name = f"{system_name} (Segment {current_segment} of {total_segments})"
-            reg, raw, usage = await self._analyze_segment(DFDModel(nodes=sub_nodes, edges=sub_edges, assets=dfd.assets, boundaries=dfd.boundaries), segment_name)
+            reg, raw, usage = await self._analyze_segment(
+                DFDModel(nodes=sub_nodes, edges=sub_edges, assets=dfd.assets, boundaries=dfd.boundaries),
+                segment_name,
+                prompt_callback=prompt_callback
+            )
+            if response_callback:
+                response_callback(raw)
             
             for t in reg.threats: all_threats.add_threat(t)
             if hasattr(reg, "new_vulnerabilities"): all_threats.new_vulnerabilities.extend(reg.new_vulnerabilities)
@@ -82,10 +93,17 @@ class ThreatAnalyzer:
         )
         return all_threats, "\n\n".join(full_raw_text), aggregated_usage
 
-    async def _analyze_segment(self, dfd: DFDModel, system_name: str) -> tuple[ThreatRegister, str, TokenUsage]:
+    async def _analyze_segment(
+        self,
+        dfd: DFDModel,
+        system_name: str,
+        prompt_callback: Optional[Callable[[str, str], None]] = None
+    ) -> tuple[ThreatRegister, str, TokenUsage]:
         """Executes a single AI analysis pass for a specific architecture segment."""
         sys_p = self.builder.build_system_prompt()
         usr_p = self.builder.build_user_prompt(dfd, system_name)
+        if prompt_callback:
+            prompt_callback(sys_p, usr_p)
         orig_max = self.provider.config.max_tokens
         if orig_max < MIN_ANALYSIS_TOKENS: self.provider.config.max_tokens = MIN_ANALYSIS_TOKENS
 

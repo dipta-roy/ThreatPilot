@@ -25,6 +25,7 @@ class AIConfig(BaseModel):
     max_tokens: int = DEFAULT_MAX_TOKENS
     timeout: int = DEFAULT_TIMEOUT
     gemini_api_key: SecretStr = SecretStr("")
+    max_vision_resolution: int = 2048
     autosave_interval: int = DEFAULT_AUTOSAVE_INTERVAL
     analysis_mode: str = "STRIDE"
     application_mode: str = "Production"
@@ -66,6 +67,7 @@ class AIConfig(BaseModel):
             analysis_mode=get_val("AI_ANALYSIS_MODE", "STRIDE"),
             application_mode=get_val("AI_APPLICATION_MODE", "Production"),
             gemini_api_key=SecretStr(scrub(decrypt_api_key(get_val("GEMINI_API_KEY", "")))),
+            max_vision_resolution=int(get_val("AI_MAX_VISION_RESOLUTION", "2048")),
         )
         add_secret_to_redaction(config.gemini_api_key)
         return config
@@ -83,7 +85,8 @@ class AIConfig(BaseModel):
             "AI_TIMEOUT": str(self.timeout),
             "AUTOSAVE_INTERVAL": str(self.autosave_interval),
             "AI_ANALYSIS_MODE": self.analysis_mode,
-            "AI_APPLICATION_MODE": self.application_mode
+            "AI_APPLICATION_MODE": self.application_mode,
+            "AI_MAX_VISION_RESOLUTION": str(self.max_vision_resolution)
         }
         try:
             for k, v in fields.items(): dotenv.set_key(path, k, v)

@@ -55,7 +55,7 @@ def export_mitigation_checklist(project: Project, output_path: str | Path) -> No
         else:
             # Sort elements alphabetically
             for elem in sorted(element_map.keys()):
-                lines.append(f"### 🏗️ {sanitize_md(elem)}")
+                lines.append(f"### {sanitize_md(elem)}")
                 
                 # --- THREATS SECTION ---
                 lines.append("- **Threats**")
@@ -472,7 +472,7 @@ def export_mitigation_checklist_html(project: Project, output_path: str | Path) 
         cb_counter = 0
         for elem in sorted(element_map.keys()):
             lines.append('        <div class="element-section">')
-            lines.append(f'            <div class="element-title">🏗️ {html.escape(elem)}</div>')
+            lines.append(f'            <div class="element-title">{html.escape(elem)}</div>')
             
             # --- THREATS SECTION ---
             lines.append('            <div class="checklist-group">')

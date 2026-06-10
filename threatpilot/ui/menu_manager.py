@@ -42,6 +42,7 @@ class MenuManager:
         menu.addAction(self._mw._action_save_project)
         
         self._mw._action_close_project = QAction("&Close Project", self._mw)
+        self._mw._action_close_project.setShortcut(QKeySequence("Ctrl+W"))
         menu.addAction(self._mw._action_close_project)
         
         menu.addSeparator()
@@ -143,6 +144,3 @@ class MenuManager:
         
         self._mw._action_detect_objects = QAction("Detect Elements", self._mw)
         tb.addAction(self._mw._action_detect_objects)
-        
-        tb.addSeparator()
-        tb.addAction(self._mw._action_run_analysis)

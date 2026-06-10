@@ -143,16 +143,33 @@ class PromptBuilder:
     def build_vision_detection_prompt(self, system_name: str) -> str:
         """Constructs the visual detection prompt for image-based architecture extraction."""
         return (
-            f"Analyze the attached architecture diagram for: '{system_name}'.\n\n"
+            f"You are an expert Cybersecurity Architect and Threat Modeling Specialist. "
+            f"Analyze the attached architecture diagram for: '{system_name}' and extract its architectural elements.\n\n"
             "LANGUAGE DIRECTIVE: You MUST respond exclusively in English. All field values and names must be in English.\n"
-            "STRICT GROUNDING: Do not assume items not explicitly labeled. Be exhaustive; do not truncate output for large diagrams.\n"
-            "TASK: Extract components (c), flows (f), boundaries (tb), and assets (a) with [x, y, w, h] bounding boxes (0-1000).\n\n"
-            "JSON FORMAT (ONLY RAW JSON):\n"
+            "STRICT GROUNDING: Do not assume items not explicitly labeled. Be exhaustive; do not truncate output.\n\n"
+            "CLASSIFICATION RULES:\n"
+            "1. COMPONENT (c):\n"
+            "   - A system element that performs a function, provides a service, processes data, stores/transmits data, or controls access.\n"
+            "   - Decision Test: Ask: 'Does this item perform an action, provide functionality, process data, store data, transmit data, or control access?'\n"
+            "   - Examples: Web App, Mobile App, API Gateway, Database Server, Load Balancer, Identity Provider, Key Vault.\n"
+            "2. ASSET (a):\n"
+            "   - Something valuable that requires protection from unauthorized disclosure, modification, destruction, or misuse.\n"
+            "   - Decision Test: Ask: 'If an attacker stole, modified, deleted, exposed, or corrupted this item, would it create business, security, privacy, regulatory, operational, or financial impact?'\n"
+            "   - Examples: PII, PHI, User Credentials, Encryption Keys, Access/Refresh Tokens, Configuration Secrets, Audit Logs.\n"
+            "3. COMMON MISCLASSIFICATIONS:\n"
+            "   - Database Server = Component | Data inside Database = Asset\n"
+            "   - Key Vault = Component | Encryption Keys/Secrets = Asset\n"
+            "   - Identity Provider = Component | User Accounts & Credentials = Asset\n"
+            "   - Cloud Storage Service = Component | Files/Data Stored Within = Asset\n\n"
+            "COORDINATE FORMATS (0-1000 scale, where 0 is top/left, 1000 is bottom/right):\n"
+            "- Components (c) and Boundaries (tb): Use bounding box format [ymin, xmin, ymax, xmax].\n"
+            "- Flows (f): Use arrow path format [ys, xs, ye, xe] (Start Y, Start X, End Y, End X).\n\n"
+            "JSON FORMAT (MUST BE VALID JSON):\n"
             "{\n"
-            '  "c": [{"n": "Name", "t": "Type", "et": "ElementClass", "tb": "Boundary", "b": [x,y,w,h]}],\n'
-            '  "f": [{"n": "Name", "s": "Source", "d": "Target", "p": "Proto", "b": [sx,sy,ex,ey]}],\n'
-            '  "tb": [{"n": "Name", "b": [x,y,w,h]}],\n'
-            '  "a": [{"n": "Name", "t": "AssetType", "d": "Desc"}]\n'
+            '  "c": [{"n": "Component Name", "t": "Subtype", "et": "Process|Data Store|Entity", "tb": "BoundaryName", "b": [ymin, xmin, ymax, xmax]}],\n'
+            '  "f": [{"n": "Flow Name", "s": "Source Component Name", "d": "Target Component Name", "p": "Protocol", "b": [ys, xs, ye, xe]}],\n'
+            '  "tb": [{"n": "Boundary Name", "b": [ymin, xmin, ymax, xmax]}],\n'
+            '  "a": [{"n": "Asset Name", "t": "Physical|Informational", "d": "Description of why it requires protection"}]\n'
             "}"
         )
 

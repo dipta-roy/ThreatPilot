@@ -274,7 +274,7 @@ QCheckBox {
     spacing: 10px;
 }
 
-QCheckBox::indicator {
+QCheckBox::indicator, QTableWidget::indicator, QListWidget::indicator, QTreeWidget::indicator {
     width: 18px;
     height: 18px;
     border: 2px solid #d0d7de;
@@ -282,8 +282,14 @@ QCheckBox::indicator {
     background: #ffffff;
 }
 
-QCheckBox::indicator:unchecked:hover {
+QCheckBox::indicator:unchecked:hover, QTableWidget::indicator:unchecked:hover {
     border-color: #0969da;
+}
+
+QCheckBox::indicator:checked, QTableWidget::indicator:checked, QListWidget::indicator:checked, QTreeWidget::indicator:checked {
+    background-color: #0969da;
+    border: 2px solid #0969da;
+    image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0iI2ZmZmZmZiIgZD0iTTkgMTYuMTdMNC44MyAxMmwtMS40MiAxLjQxTDkgMTkgMjEgN2wtMS40MS0xLjQxeiIvPjwvc3ZnPg==");
 }
 
 /* 12. Utility Classes for Python Integration */
@@ -425,3 +431,37 @@ QLabel#placeholder_label { color: #8899aa; font-weight: 500; }
 
 /* 17. Diagram Canvas */
 QGraphicsView#diagram_canvas { background-color: #ffffff; border: none; }
+
+/* 18. Status Bar Progress & Cancel Button */
+QLabel#status_progress_label {
+    font-weight: bold;
+    color: #0969da;
+}
+
+QProgressBar#status_progress_bar {
+    border: 1px solid #d0d7de;
+    border-radius: 3px;
+    background: #f6f8fa;
+}
+
+QProgressBar#status_progress_bar::chunk {
+    background-color: #0969da;
+}
+
+QPushButton#status_cancel_btn {
+    background-color: #f6f8fa;
+    border: 1px solid #d0d7de;
+    border-radius: 4px;
+    padding: 2px 8px;
+    color: #24292f;
+    font-size: 11px;
+}
+
+QPushButton#status_cancel_btn:hover {
+    background-color: #f3f4f6;
+    border-color: #57606a;
+}
+
+QPushButton#status_cancel_btn:pressed {
+    background-color: #ebecf0;
+}

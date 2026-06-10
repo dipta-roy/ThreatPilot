@@ -96,6 +96,8 @@ class GeminiProvider(AIProviderInterface):
             }
         }
         if system_instructions: payload["system_instruction"] = {"parts": [{"text": system_instructions}]}
+        if "response_schema" in kwargs:
+            payload["generationConfig"]["responseSchema"] = kwargs["response_schema"]
         return await self._execute_with_fallback(payload)
 
     async def _execute_with_fallback(self, payload: Dict[str, Any]) -> tuple[str, TokenUsage]:

@@ -23,21 +23,26 @@ class WorkerManager(QObject):
 
     def start_analysis(self, worker_class: type, title: str, label: str, *args, **kwargs):
         """Initializes and runs a background analysis worker."""
-        if self._worker and self._worker.isRunning():
-            QMessageBox.warning(self._mw, "AI Busy", "A background task is already running. Please wait.")
+        is_vision_running = hasattr(self._mw, "_worker_ai_vision") and self._mw._worker_ai_vision is not None and self._mw._worker_ai_vision.isRunning()
+        is_analysis_running = self._worker and self._worker.isRunning()
+        if is_vision_running or is_analysis_running:
+            QMessageBox.warning(self._mw, "AI Busy", "A background AI task is already running. Please wait until the existing task is complete.")
             return
 
-        self._progress = QProgressDialog(label, "Cancel", 0, 0, self._mw)
-        self._progress.setWindowTitle(title)
-        self._progress.setWindowModality(Qt.WindowModality.WindowModal)
-        self._progress.show()
+        # Use non-blocking footer progress bar
+        self._mw.show_progress(label, self.stop_active_worker)
 
         self._worker = worker_class(*args, **kwargs)
         
-        # Connect standard lifecycle signals
-        self._worker.finished.connect(self._on_worker_finished)
+        # Connect standard QThread lifecycle signals for cleanup
+        self._worker.finished.connect(self._on_thread_finished)
         self._worker.failed.connect(self._on_worker_failed)
-        self._progress.canceled.connect(self.stop_active_worker)
+        
+        # Connect custom completion signals
+        if hasattr(self._worker, "analysis_completed"):
+            self._worker.analysis_completed.connect(self._on_analysis_completed)
+        if hasattr(self._worker, "reasoning_completed"):
+            self._worker.reasoning_completed.connect(self._on_reasoning_completed)
         
         # Connect optional helper signals
         if hasattr(self._worker, "partial_result_ready"):
@@ -53,36 +58,22 @@ class WorkerManager(QObject):
 
         self._worker.start()
 
-    def _on_worker_finished(self, *args):
-        # Disconnect canceled to prevent stop_active_worker from being called during close()
-        if self._progress:
-            self._progress.canceled.disconnect(self.stop_active_worker)
-            self._progress.close()
-            self._progress = None
-        
-        # Capture worker reference before clearing
-        worker = self._worker
-        if not worker:
-            logger.warning("WorkerManager: Worker finished but self._worker is None.")
-            return
+    def _on_thread_finished(self) -> None:
+        """Called automatically when the QThread finishes executing (success, failed, or terminated)."""
+        self._mw.hide_progress()
+        self._worker = None
 
-        # Check class name to handle different result signatures reliably
-        class_name = getattr(worker, "WORKER_TYPE", worker.__class__.__name__)
-        logger.info(f"WorkerManager: Worker finished. class={class_name}, args_len={len(args)}")
-        
-        if class_name == "ReasoningWorker":
-             logger.info("WorkerManager: Routing to _on_reasoning_finished")
-             self._mw._on_reasoning_finished(*args)
-        else:
-             logger.info("WorkerManager: Routing to _on_analysis_finished")
-             self._mw._on_analysis_finished(*args, origin_project=self._mw.project)
+    def _on_analysis_completed(self, register) -> None:
+        """Routes completed analysis register results back to MainWindow."""
+        self._mw._on_analysis_finished(register, origin_project=self._mw.project)
+
+    def _on_reasoning_completed(self, reasoning, item) -> None:
+        """Routes completed technical reasoning back to MainWindow."""
+        self._mw._on_reasoning_finished(reasoning, item)
 
     def _on_worker_failed(self, error_msg: str):
-        if self._progress:
-            self._progress.close()
-            self._progress = None
-            
-        class_name = self._worker.__class__.__name__
+        # Let QThread.finished handle clearing reference and progress bar.
+        class_name = self._worker.__class__.__name__ if self._worker else "Unknown"
         if class_name == "ReasoningWorker":
             self._mw._on_reasoning_failed(error_msg)
         else:
@@ -92,5 +83,5 @@ class WorkerManager(QObject):
         """Gracefully terminates the running background task."""
         if self._worker and self._worker.isRunning():
             self._worker.terminate()
-            self._worker.wait()
-            self._worker = None
+            # Do NOT wait() here to avoid freezing the GUI thread.
+            # The QThread.finished signal will automatically trigger _on_thread_finished for cleanup.

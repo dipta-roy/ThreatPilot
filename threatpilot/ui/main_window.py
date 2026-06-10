@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QMenuBar,
     QMessageBox,
     QStatusBar,
+    QProgressBar,
     QToolBar,
     QHBoxLayout,
     QPushButton,
@@ -306,6 +307,51 @@ class MainWindow(QMainWindow):
         self.setStatusBar(status_bar)
         status_bar.showMessage("Ready")
 
+        # Create progress container for the status bar
+        self._status_progress_widget = QWidget()
+        progress_layout = QHBoxLayout(self._status_progress_widget)
+        progress_layout.setContentsMargins(5, 0, 5, 0)
+        progress_layout.setSpacing(8)
+        
+        self._status_progress_label = QLabel("")
+        self._status_progress_label.setObjectName("status_progress_label")
+        
+        self._status_progress_bar = QProgressBar()
+        self._status_progress_bar.setObjectName("status_progress_bar")
+        self._status_progress_bar.setRange(0, 0) # Indeterminate progress
+        self._status_progress_bar.setMaximumWidth(180)
+        self._status_progress_bar.setFixedHeight(14)
+        self._status_progress_bar.setTextVisible(False)
+        
+        self._status_cancel_btn = QPushButton("Cancel")
+        self._status_cancel_btn.setObjectName("status_cancel_btn")
+        self._status_cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+        progress_layout.addWidget(self._status_progress_label)
+        progress_layout.addWidget(self._status_progress_bar)
+        progress_layout.addWidget(self._status_cancel_btn)
+        
+        status_bar.addPermanentWidget(self._status_progress_widget)
+        self._status_progress_widget.hide()
+
+    def show_progress(self, label_text: str, cancel_slot) -> None:
+        """Shows the progress widget in the footer status bar."""
+        self._status_progress_label.setText(label_text)
+        try:
+            self._status_cancel_btn.clicked.disconnect()
+        except RuntimeError:
+            pass
+        self._status_cancel_btn.clicked.connect(lambda: cancel_slot())
+        self._status_progress_widget.show()
+
+    def update_progress_label(self, label_text: str) -> None:
+        """Updates the progress description text in the footer."""
+        self._status_progress_label.setText(label_text)
+
+    def hide_progress(self) -> None:
+        """Hides the progress widget from the footer status bar."""
+        self._status_progress_widget.hide()
+
     def _connect_actions(self) -> None:
         """Connects UI actions to their respective event handlers."""
         self._action_new_project.triggered.connect(self._on_new_project)
@@ -370,7 +416,7 @@ class MainWindow(QMainWindow):
             return
             
         self._worker_mgr.stop_active_worker()
-        if hasattr(self, "_worker_ai_vision") and self._worker_ai_vision.isRunning():
+        if hasattr(self, "_worker_ai_vision") and self._worker_ai_vision is not None and self._worker_ai_vision.isRunning():
             self._worker_ai_vision.terminate()
             self._worker_ai_vision.wait()
         if hasattr(self, "_reasoning_workers"):
@@ -756,10 +802,12 @@ class MainWindow(QMainWindow):
     def _on_request_continuation(self, current, total):
         """Displays a confirmation dialog to proceed with segmented analysis passes."""
         if current == 0:
-            title, msg = "Large Architecture Detected", "The architecture will be analyzed in segments. Proceed?"
-        else:
-            title, msg = "Segmented Analysis", f"Segment {current}/{total} complete. Proceed to next?"
+            # Automatically proceed with the first segment without redundant prompting
+            if self._worker_mgr._worker:
+                self._worker_mgr._worker.continue_analysis(True)
+            return
 
+        title, msg = "Segmented Analysis", f"Segment {current}/{total} complete. Proceed to next?"
         reply = QMessageBox.question(self, title, msg, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.Yes)
         if self._worker_mgr._worker:
             self._worker_mgr._worker.continue_analysis(reply == QMessageBox.StandardButton.Yes)
@@ -769,8 +817,7 @@ class MainWindow(QMainWindow):
         label = f"Iteration {current_iter}/{total_iters}: "
         label += f"Starting segments..." if current_seg == 0 else f"Segment {current_seg}/{total_segs} complete."
         
-        if hasattr(self, "_progress") and self._progress:
-            self._progress.setLabelText(label)
+        self.update_progress_label(label)
         self.statusBar().showMessage(label)
 
     def _on_analysis_finished(self, new_register, raw_resp: str = "", usage: Any = None, origin_project: Project | None = None) -> None:
@@ -824,12 +871,13 @@ class MainWindow(QMainWindow):
         elif "quota" in msg or "429" in msg:
             explanation = "⏳ **Rate Limit Exceeded**: Wait 60 seconds before retrying."
         else:
-            explanation = f"❓ **Unexpected Error**: {error_msg[:200]}..."
+            explanation = "❓ **Unexpected Error**: An unexpected error occurred. Please check the AI Activity Log panel for the full technical details."
 
         if config.api_key:
             explanation = explanation.replace(config.api_key, "[HIDDEN]")
             error_msg = error_msg.replace(config.api_key, "[HIDDEN]")
             
+        self.append_ai_log(f"{prefix} {error_msg}", "ERROR")
         QMessageBox.critical(self, title, f"{prefix}\n\n{explanation}")
 
     def _on_fit_diagram(self) -> None:
@@ -868,6 +916,24 @@ class MainWindow(QMainWindow):
         """Return the Properties Panel dock widget."""
         return self._properties_panel_dock
 
+    def _get_default_export_path(self, report_type: str, extension: str) -> str:
+        """Generates a default filename/path for exports.
+        
+        Format: PROJECT-NAME-REPORT TYPE-DATE.FILE FORMAT
+        Date format: DD-MM-YYYY HH-mm (colon is replaced with a dash as it is illegal in Windows filenames).
+        """
+        import re
+        proj_name = self._project.project_name if self._project else "Project"
+        # Sanitize project name to remove characters invalid in Windows filenames: \ / : * ? " < > |
+        safe_proj_name = re.sub(r'[\\/*?:"<>|]', '_', proj_name)
+        
+        now_str = datetime.now().strftime("%d-%m-%Y %H-%M")
+        filename = f"{safe_proj_name}-{report_type}-{now_str}.{extension}"
+        
+        if self._project and self._project.project_path:
+            return str(Path(self._project.project_path) / filename)
+        return filename
+
     def _on_export_excel(self) -> None:
         """Export the current threat register to a Microsoft Excel file."""
         if not self._project or not self._project.threat_register.threats:
@@ -876,8 +942,9 @@ class MainWindow(QMainWindow):
             )
             return
 
+        default_path = self._get_default_export_path("Risk Matrix", "xlsx")
         file_path, _ = QFileDialog.getSaveFileName(
-            self, "Export to Excel", "", "Excel Files (*.xlsx);;All Files (*)"
+            self, "Export to Excel", default_path, "Excel Files (*.xlsx);;All Files (*)"
         )
         if not file_path:
             return
@@ -925,27 +992,25 @@ class MainWindow(QMainWindow):
             or (prov_type == "gemini" and config.api_key)
         )
         if has_valid_config:
-            # Safely stop existing worker if running
-            if hasattr(self, "_worker_ai_vision") and self._worker_ai_vision.isRunning():
-                try:
-                    self._worker_ai_vision.finished.disconnect()
-                    self._worker_ai_vision.failed.disconnect()
-                except Exception:
-                    pass
-                self._worker_ai_vision.terminate()
-                self._worker_ai_vision.wait()
+            is_vision_running = hasattr(self, "_worker_ai_vision") and self._worker_ai_vision is not None and self._worker_ai_vision.isRunning()
+            is_analysis_running = self._worker_mgr._worker and self._worker_mgr._worker.isRunning()
+            if is_vision_running or is_analysis_running:
+                QMessageBox.warning(self, "AI Busy", "A background AI task is already running. Please wait until the existing task is complete.")
+                return
 
             self.statusBar().showMessage(f"Using AI Vision ({prov_type.capitalize()}) to detect components...")
             provider = create_ai_provider(config)
             self._worker_ai_vision = AIVisionWorker(
                 provider, str(image_path), self._project.project_name, self._project.prompt_config
             )
-            self._worker_ai_vision.finished.connect(lambda data: self._on_ai_detection_finished(data, self._project))
+            self._worker_ai_vision.detection_completed.connect(lambda data: self._on_ai_detection_finished(data, self._project))
+            self._worker_ai_vision.finished.connect(self._on_vision_worker_finished)
             self._worker_ai_vision.failed.connect(lambda msg: self._show_concise_error("AI Detection Failed", "Computer Vision detection failed:", msg))
             self._worker_ai_vision.prompt_ready.connect(lambda p: self.append_ai_log(p, "PROMPT"))
             self._worker_ai_vision.response_ready.connect(lambda r: self.append_ai_log(r, "RESPONSE"))
 
             if prov_type == "ollama" or (prov_type == "gemini"):
+                self.show_progress(f"AI Vision ({prov_type.capitalize()}): Detecting components...", self._cancel_vision_detection)
                 self._central_tabs.setCurrentIndex(0) 
                 self._ai_log_dock.show() 
                 self._ai_log_dock.raise_()
@@ -958,8 +1023,23 @@ class MainWindow(QMainWindow):
                 "1. You have selected a vision-capable model (e.g., llava, qwen2-vl).\n"
                 "2. Your AI provider is reachable.")
 
+    def _on_vision_worker_finished(self) -> None:
+        """Cleans up the vision worker thread resources."""
+        self.hide_progress()
+        if hasattr(self, "_worker_ai_vision"):
+            self._worker_ai_vision = None
+
+    def _cancel_vision_detection(self) -> None:
+        """Gracefully terminates the running vision detection background task."""
+        if hasattr(self, "_worker_ai_vision") and self._worker_ai_vision.isRunning():
+            self._worker_ai_vision.terminate()
+            # Do NOT wait() here to prevent blocking/freezing the GUI thread.
+            # QThread.finished signal will automatically call _on_vision_worker_finished.
+            self.statusBar().showMessage("AI Detection cancelled.")
+
     def _on_ai_detection_finished(self, data: Any, origin_project: Project | None = None) -> None:
         """Processes results from AI vision detection and updates project elements."""
+        self.hide_progress()
         if not self._project or (origin_project and self._project is not origin_project):
              return
 
@@ -968,14 +1048,32 @@ class MainWindow(QMainWindow):
                 data = {"c": data, "f": [], "tb": [], "a": []}
             else: return
 
-        self._project.components.clear()
-        self._project.flows.clear()
-        self._project.boundaries.clear()
-        self._project.assets.clear()
+        # Overwrite vs Merge choice
+        has_existing = bool(self._project.components or self._project.flows or self._project.boundaries or self._project.assets)
+        overwrite = True
+        if has_existing:
+            reply = QMessageBox.question(
+                self, "Import Architecture",
+                "AI detection completed. Do you want to overwrite your existing diagram elements?\n\n"
+                "Click 'Yes' to replace all existing elements.\n"
+                "Click 'No' to merge new elements into your existing diagram.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Yes
+            )
+            if reply == QMessageBox.StandardButton.Cancel:
+                return
+            overwrite = (reply == QMessageBox.StandardButton.Yes)
+
+        if overwrite:
+            self._project.components.clear()
+            self._project.flows.clear()
+            self._project.boundaries.clear()
+            self._project.assets.clear()
 
         comp_list = data.get("c", data.get("components", []))
         flow_list = data.get("f", data.get("flows", []))
         tb_list = data.get("tb", data.get("trust_boundaries", []))
+        asset_list = data.get("a", data.get("assets", []))
 
         img_w, img_h = 1920, 1080 
         if self._current_diagram:
@@ -984,39 +1082,56 @@ class MainWindow(QMainWindow):
             if not pix.isNull():
                 img_w, img_h = pix.width(), pix.height()
 
+        # 1. Process Trust Boundaries
         for dtb in tb_list:
             bbox = dtb.get("b", dtb.get("bounding_box"))
             if isinstance(bbox, list) and len(bbox) >= 4:
-                final_x = (float(bbox[0]) / 1000.0) * img_w
-                final_y = (float(bbox[1]) / 1000.0) * img_h
-                final_w = (float(bbox[2]) / 1000.0) * img_w
-                final_h = (float(bbox[3]) / 1000.0) * img_h
+                ymin, xmin, ymax, xmax = float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])
+                final_x = (xmin / 1000.0) * img_w
+                final_y = (ymin / 1000.0) * img_h
+                final_w = ((xmax - xmin) / 1000.0) * img_w
+                final_h = ((ymax - ymin) / 1000.0) * img_h
             else:
                 final_x, final_y, final_w, final_h = 10, 10, img_w - 20, img_h - 20
             
-            b = TrustBoundary(
-                name=str(dtb.get("n", dtb.get("name", "Trust Boundary")) or "Trust Boundary"),
-                x=final_x, y=final_y, width=final_w, height=final_h
-            )
-            self._project.boundaries.append(b)
+            tb_name = str(dtb.get("n", dtb.get("name", "Trust Boundary")) or "Trust Boundary")
+            
+            # Check for duplicates during merge
+            existing_tb = None
+            if not overwrite:
+                existing_tb = next((b for b in self._project.boundaries if b.name.strip().lower() == tb_name.strip().lower()), None)
+            
+            if existing_tb:
+                existing_tb.x = final_x
+                existing_tb.y = final_y
+                existing_tb.width = final_w
+                existing_tb.height = final_h
+            else:
+                b = TrustBoundary(name=tb_name, x=final_x, y=final_y, width=final_w, height=final_h)
+                self._project.boundaries.append(b)
 
+        # 2. Process Assets
         from threatpilot.core.domain_models import Asset, AssetType
-        asset_list = data.get("a", [])
         for ad in asset_list:
              a_name = str(ad.get("n", ad.get("name", "Unknown Asset")) or "Unknown Asset")
              a_type_raw = str(ad.get("t", ad.get("type", "Informational")) or "Informational")
              a_type = AssetType.PHYSICAL if "phys" in a_type_raw.lower() else AssetType.INFORMATIONAL
              a_desc = str(ad.get("d", ad.get("description", "")) or "")
-             self._project.assets.append(Asset(name=a_name, type=a_type, description=a_desc))
+             
+             # Check duplicate
+             if not any(a.name.strip().lower() == a_name.strip().lower() for a in self._project.assets):
+                 self._project.assets.append(Asset(name=a_name, type=a_type, description=a_desc))
 
+        # 3. Process Components
         comp_count = 0
         for dc in comp_list:
             bbox = dc.get("b", dc.get("bounding_box"))
             if isinstance(bbox, list) and len(bbox) >= 4:
-                final_x = (float(bbox[0]) / 1000.0) * img_w
-                final_y = (float(bbox[1]) / 1000.0) * img_h
-                final_w = (float(bbox[2]) / 1000.0) * img_w
-                final_h = (float(bbox[3]) / 1000.0) * img_h
+                ymin, xmin, ymax, xmax = float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])
+                final_x = (xmin / 1000.0) * img_w
+                final_y = (ymin / 1000.0) * img_h
+                final_w = ((xmax - xmin) / 1000.0) * img_w
+                final_h = ((ymax - ymin) / 1000.0) * img_h
             else:
                 final_x = 50 + (comp_count % 5) * 120
                 final_y = 50 + (comp_count // 5) * 120
@@ -1030,15 +1145,18 @@ class MainWindow(QMainWindow):
             et_raw = str(dc.get("et", dc.get("element_type", "Process")) or "Process")
             et = map_element_type(et_raw)
 
-            if not any(a.name == name for a in self._project.assets):
+            # Keep/Create asset for physical components
+            if not any(a.name.strip().lower() == name.strip().lower() for a in self._project.assets):
                 self._project.assets.append(Asset(name=name, type=AssetType.PHYSICAL, description=f"Identified component ({comp_type})"))
 
+            # Resolve trust boundary mapping by name
             tb_id = None
             tb_name = dc.get("tb", dc.get("trust_boundary"))
             if tb_name:
-                tb_match = next((b for b in self._project.boundaries if b.name == tb_name), None)
+                tb_match = next((b for b in self._project.boundaries if b.name.strip().lower() == str(tb_name).strip().lower()), None)
                 if tb_match: tb_id = tb_match.boundary_id
 
+            # Containment check fallback
             if not tb_id:
                 comp_rect = QRectF(final_x, final_y, final_w, final_h)
                 comp_center = comp_rect.center()
@@ -1047,39 +1165,96 @@ class MainWindow(QMainWindow):
                         tb_id = b.boundary_id
                         break
 
-            try:
-                self._project.components.append(Component(
-                    name=name, type=comp_type, element_type=et,
-                    trust_boundary_id=tb_id, x=final_x, y=final_y, width=final_w, height=final_h
-                ))
-            except Exception as exc:
-                from threatpilot.utils.logger import get_logger
-                get_logger(__name__).error(f"Failed to create component {name}: {exc}")
+            # Add or update
+            existing_comp = None
+            if not overwrite:
+                existing_comp = next((c for c in self._project.components if c.name.strip().lower() == name.strip().lower()), None)
+            
+            if existing_comp:
+                existing_comp.x = final_x
+                existing_comp.y = final_y
+                existing_comp.width = final_w
+                existing_comp.height = final_h
+                existing_comp.type = comp_type
+                existing_comp.element_type = et
+                existing_comp.trust_boundary_id = tb_id
+            else:
+                try:
+                    self._project.components.append(Component(
+                        name=name, type=comp_type, element_type=et,
+                        trust_boundary_id=tb_id, x=final_x, y=final_y, width=final_w, height=final_h
+                    ))
+                except Exception as exc:
+                    from threatpilot.utils.logger import get_logger
+                    get_logger(__name__).error(f"Failed to create component {name}: {exc}")
 
+        # 4. Process Flows
         for df in flow_list:
             try:
                 bbox = df.get("b", df.get("bounding_box", [0, 0, 10, 10]))
-                final_x = (float(bbox[0]) / 1000.0) * img_w
-                final_y = (float(bbox[1]) / 1000.0) * img_h
+                
+                # Flow coordinates ys, xs, ye, xe
+                if isinstance(bbox, list) and len(bbox) >= 4:
+                    ys, xs, ye, xe = float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])
+                    start_x = (xs / 1000.0) * img_w
+                    start_y = (ys / 1000.0) * img_h
+                    end_x = (xe / 1000.0) * img_w
+                    end_y = (ye / 1000.0) * img_h
+                else:
+                    start_x, start_y, end_x, end_y = 10, 10, 50, 50
 
                 src_name = str(df.get("s", df.get("source", ""))).strip().lower()
                 dst_name = str(df.get("d", df.get("target", ""))).strip().lower()
 
-                def _find_id(sn: str) -> str:
+                # Name match resolver
+                def _find_id_by_name(sn: str) -> str:
                     if not sn: return ""
                     for c in self._project.components:
                         cn = c.name.strip().lower()
                         if cn == sn or sn in cn or cn in sn: return c.component_id
                     return ""
 
-                self._project.flows.append(Flow(
-                    name=str(df.get("n", df.get("name", "Data Flow")) or "Data Flow"),
-                    protocol=str(df.get("p", df.get("protocol", "HTTPS")) or "HTTPS"),
-                    source_id=_find_id(src_name), target_id=_find_id(dst_name),
-                    start_x=final_x, start_y=final_y,
-                    end_x=final_x + (float(bbox[2])/1000.0)*img_w,
-                    end_y=final_y + (float(bbox[3])/1000.0)*img_h
-                ))
+                # Spatial proximity resolver fallback
+                def _find_id_by_proximity(px: float, py: float) -> str:
+                    closest_id = ""
+                    min_dist = float("inf")
+                    for c in self._project.components:
+                        # center of component box
+                        ccx = c.x + c.width / 2.0
+                        ccy = c.y + c.height / 2.0
+                        dist = ((ccx - px)**2 + (ccy - py)**2)**0.5
+                        if dist < min_dist:
+                            min_dist = dist
+                            closest_id = c.component_id
+                    # must be within a reasonable matching radius (e.g. 35% of diagram dimension)
+                    if min_dist < (img_w**2 + img_h**2)**0.5 * 0.35:
+                        return closest_id
+                    return ""
+
+                source_id = _find_id_by_name(src_name) or _find_id_by_proximity(start_x, start_y)
+                target_id = _find_id_by_name(dst_name) or _find_id_by_proximity(end_x, end_y)
+
+                flow_name = str(df.get("n", df.get("name", "Data Flow")) or "Data Flow")
+                protocol = str(df.get("p", df.get("protocol", "HTTPS")) or "HTTPS")
+
+                existing_flow = None
+                if not overwrite:
+                    existing_flow = next((f for f in self._project.flows if f.name.strip().lower() == flow_name.strip().lower() and f.source_id == source_id and f.target_id == target_id), None)
+                
+                if existing_flow:
+                    existing_flow.start_x = start_x
+                    existing_flow.start_y = start_y
+                    existing_flow.end_x = end_x
+                    existing_flow.end_y = end_y
+                    existing_flow.protocol = protocol
+                else:
+                    self._project.flows.append(Flow(
+                        name=flow_name,
+                        protocol=protocol,
+                        source_id=source_id, target_id=target_id,
+                        start_x=start_x, start_y=start_y,
+                        end_x=end_x, end_y=end_y
+                    ))
             except Exception as exc:
                 from threatpilot.utils.logger import get_logger
                 get_logger(__name__).error(f"Failed to create flow: {exc}")
@@ -1145,7 +1320,8 @@ class MainWindow(QMainWindow):
     def _on_export_markdown(self) -> None:
         """Exports the current threat model to a Markdown report file."""
         if not self._project: return
-        file_path, _ = QFileDialog.getSaveFileName(self, "Export to Markdown", "", "Markdown Files (*.md);;All Files (*)")
+        default_path = self._get_default_export_path("Security Report", "md")
+        file_path, _ = QFileDialog.getSaveFileName(self, "Export to Markdown", default_path, "Markdown Files (*.md);;All Files (*)")
         if not file_path: return
         if not file_path.endswith(".md"): file_path += ".md"
         try:
@@ -1157,7 +1333,8 @@ class MainWindow(QMainWindow):
     def _on_export_html(self) -> None:
         """Exports the current threat model to an HTML report file."""
         if not self._project: return
-        file_path, _ = QFileDialog.getSaveFileName(self, "Export to HTML", "", "HTML Files (*.html *.htm);;All Files (*)")
+        default_path = self._get_default_export_path("Security Report", "html")
+        file_path, _ = QFileDialog.getSaveFileName(self, "Export to HTML", default_path, "HTML Files (*.html *.htm);;All Files (*)")
         if not file_path: return
         if not file_path.endswith(".html") and not file_path.endswith(".htm"): file_path += ".html"
         try:
@@ -1172,7 +1349,8 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Export", "No threats found to generate a checklist.")
             return
 
-        file_path, _ = QFileDialog.getSaveFileName(self, "Export Mitigation Checklist", "", "Markdown Files (*.md);;All Files (*)")
+        default_path = self._get_default_export_path("Mitigation Checklist", "md")
+        file_path, _ = QFileDialog.getSaveFileName(self, "Export Mitigation Checklist", default_path, "Markdown Files (*.md);;All Files (*)")
         if not file_path: return
         if not file_path.endswith(".md"): file_path += ".md"
         
@@ -1189,7 +1367,8 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Export", "No threats found to generate a checklist.")
             return
 
-        file_path, _ = QFileDialog.getSaveFileName(self, "Export Mitigation Checklist to HTML", "", "HTML Files (*.html *.htm);;All Files (*)")
+        default_path = self._get_default_export_path("Mitigation Checklist", "html")
+        file_path, _ = QFileDialog.getSaveFileName(self, "Export Mitigation Checklist to HTML", default_path, "HTML Files (*.html *.htm);;All Files (*)")
         if not file_path: return
         if not file_path.endswith(".html") and not file_path.endswith(".htm"): file_path += ".html"
         
@@ -1246,7 +1425,17 @@ class MainWindow(QMainWindow):
         """Appends a timestamped entry to the AI Activity Log dock."""
         time_str = datetime.now().strftime("%H:%M:%S")
         is_dark = getattr(self, "_is_dark_theme", True)
-        color = ("#58a6ff" if is_dark else "#0969da") if "PROMPT" in category else ("#7ee787" if is_dark else "#1a7f37") if "RESPONSE" in category else ("#8b949e" if is_dark else "#57606a")
+        
+        # Color formatting based on category
+        if "PROMPT" in category:
+            color = "#58a6ff" if is_dark else "#0969da"
+        elif "RESPONSE" in category:
+            color = "#7ee787" if is_dark else "#1a7f37"
+        elif "ERROR" in category:
+            color = "#ff7b72" if is_dark else "#cf222e"
+        else:
+            color = "#8b949e" if is_dark else "#57606a"
+            
         time_color = "#484f58" if is_dark else "#8b949e"
         
         entry = f"<span style='color: {time_color};'>[{time_str}]</span> <b style='color: {color};'>{category}</b>: {sanitize_text(text)}<br>"

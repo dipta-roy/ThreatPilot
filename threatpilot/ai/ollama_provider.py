@@ -147,6 +147,8 @@ class OllamaProvider(AIProviderInterface):
 
         mime_type = kwargs.get("response_mime_type", "application/json")
         if mime_type == "application/json":
+            # For vision models, Ollama's schema-based validation often fails with status 500.
+            # Fall back to generic "json" formatting constraint which is widely supported.
             payload["format"] = "json"
 
         logger.info(f"Ollama Vision Request: model={payload['model']}, image_size={len(image_bytes)} bytes")

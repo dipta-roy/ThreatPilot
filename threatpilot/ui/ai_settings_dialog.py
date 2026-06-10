@@ -130,6 +130,11 @@ class AISettingsDialog(QDialog):
         self._timeout.setRange(1, 86400)
         self._timeout.setValue(self._config.timeout)
         self._form.addRow("Timeout (sec):", self._timeout)
+        
+        self._max_vision_res = QComboBox()
+        self._max_vision_res.addItems(["1536", "2048", "3072", "4096"])
+        self._max_vision_res.setCurrentText(str(self._config.max_vision_resolution))
+        self._form.addRow("Max Vision Resolution:", self._max_vision_res)
         line_sec = QFrame()
         line_sec.setFrameShape(QFrame.Shape.HLine)
         line_sec.setFrameShadow(QFrame.Shadow.Sunken)
@@ -331,6 +336,7 @@ class AISettingsDialog(QDialog):
         self._config.temperature = self._temperature.value()
         self._config.max_tokens = int(self._max_tokens.currentText())
         self._config.timeout = self._timeout.value()
+        self._config.max_vision_resolution = int(self._max_vision_res.currentText())
         self._config.autosave_interval = self._autosave.value()
         self._config.application_mode = self._app_mode.currentText()
         return self._config
