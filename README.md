@@ -1,10 +1,14 @@
-![ThreatPilot](./threatpilot/resources/app-icon.png)
-
-# ThreatPilot
-
-**ThreatPilot** is an advanced, AI-driven threat modeling application designed specifically for cyber security architects and engineers. It automates the extraction of architectural components from diagrams, converts them into formal Data Flow Diagrams (DFDs), and performs automated STRIDE-based risk assessments using large language models (LLMs).
-
----
+<table style="border: none; border-collapse: collapse; width: 100%;">
+  <tr style="border: none;">
+    <td valign="top" align="center" width="120" style="border: none; min-width: 120px;">
+      <img src="./threatpilot/resources/app-icon.png" alt="ThreatPilot Logo" width="120" style="border: none;" />
+    </td>
+    <td valign="top" style="border: none; padding-right: 20px;">
+      <h1>ThreatPilot</h1>
+      <p><strong>ThreatPilot</strong> is an advanced, AI-driven threat modeling application designed specifically for cyber security architects and engineers. It automates the extraction of architectural components from diagrams, converts them into formal Data Flow Diagrams (DFDs), and performs automated STRIDE-based risk assessments using large language models (LLMs).</p>
+    </td>
+  </tr>
+</table>
 
 ## Key Features
 
