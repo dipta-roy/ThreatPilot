@@ -1,7 +1,7 @@
 <table style="border: none; border-collapse: collapse; width: 100%;">
   <tr style="border: none;">
-    <td valign="top" align="center" width="120" style="border: none; min-width: 120px;">
-      <img src="./threatpilot/resources/app-icon.png" alt="ThreatPilot Logo" width="120" style="border: none;" />
+    <td valign="top" align="center" width="200" style="border: none; min-width: 200px;">
+      <img src="./threatpilot/resources/app-icon.png" alt="ThreatPilot Logo" width="200" style="border: none;" />
     </td>
     <td valign="top" style="border: none; padding-right: 20px;">
       <h1>ThreatPilot</h1>
@@ -120,7 +120,7 @@ Download Code Verification Certificate: [Dipta Roy - Code Verification Certifica
 
 - VERIFY APPLICATION AUTHENTICITY
 
-1. To confirm the application is genuine, right click on ThreatPilot-1.4.1-win64.msi and click on Properties.
+1. To confirm the application is genuine, right click on ThreatPilot-1.6.0-win64.msi and click on Properties.
 2. Go to the Digital Signatures tab.
 3. Select "Signed_By_Dipta" from the Embedded Signatures list, then choose Details.
 4. In the General tab, you should see the message "This digital signature is OK."
