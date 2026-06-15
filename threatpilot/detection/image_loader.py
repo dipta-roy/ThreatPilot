@@ -16,14 +16,26 @@ SUPPORTED_EXTENSIONS: frozenset[str] = frozenset({".png", ".jpg", ".jpeg"})
 MAX_VISION_DIMENSION = 4096  # Maximum dimension for storage and UI display
 MAX_AI_DIMENSION = 1536      # Maximum dimension for AI processing (Ollama/Gemini)
 
-def resize_image_for_ai(image: QImage, max_dim: int = MAX_AI_DIMENSION) -> QImage:
+def resize_image_for_ai(image: QImage, max_dim: int = MAX_AI_DIMENSION, force_multiple_of_28: bool = False) -> QImage:
     """Resizes a QImage if it exceeds the maximum allowed dimensions for AI processing."""
-    if image.width() > max_dim or image.height() > max_dim:
-        return image.scaled(
+    w, h = image.width(), image.height()
+    if w > max_dim or h > max_dim:
+        image = image.scaled(
             max_dim, max_dim, 
             Qt.AspectRatioMode.KeepAspectRatio, 
             Qt.TransformationMode.SmoothTransformation
         )
+        w, h = image.width(), image.height()
+
+    if force_multiple_of_28:
+        new_w = max(28, round(w / 28) * 28)
+        new_h = max(28, round(h / 28) * 28)
+        if new_w != w or new_h != h:
+            image = image.scaled(
+                new_w, new_h,
+                Qt.AspectRatioMode.IgnoreAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
     return image
 def import_diagram_file(
     source_path: str | Path,

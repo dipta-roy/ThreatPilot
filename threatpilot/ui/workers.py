@@ -174,8 +174,9 @@ class AIVisionWorker(QThread):
             if img.isNull():
                 raise FileNotFoundError(f"Selected image file at {self.image_path} could not be loaded.")
             
+            is_ollama = getattr(self.provider.config, "provider_type", "") == "ollama"
             max_dim = getattr(self.provider.config, "max_vision_resolution", 2048)
-            img = resize_image_for_ai(img, max_dim=max_dim)
+            img = resize_image_for_ai(img, max_dim=max_dim, force_multiple_of_28=is_ollama)
             
             buffer = QBuffer()
             buffer.open(QIODevice.WriteOnly)
