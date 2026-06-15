@@ -132,7 +132,7 @@ class OllamaProvider(AIProviderInterface):
         options = {
             "temperature": self.config.temperature,
             "num_predict": min(max(self.config.max_tokens, 4096), 8192),
-            "num_ctx": 4096,
+            "num_ctx": 16384,
         }
         for k, v in kwargs.items():
             if k in valid_options:
