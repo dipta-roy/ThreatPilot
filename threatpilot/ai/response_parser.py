@@ -248,3 +248,284 @@ def convert_reasoning_to_markdown(raw: str, markdown: bool = True) -> str:
             res += f"{'### ' if markdown else ''}{header}\n\n{v}\n\n"
     
     return res.strip()
+
+
+def _clean_key_name(key: str) -> str:
+    """Cleans camelCase, underscores, and common run-together security keys into spaced Title Case."""
+    # Split underscores
+    s = key.replace('_', ' ')
+    # Split camelCase
+    s = re.sub(r'([a-z])([A-Z])', r'\1 \2', s)
+    
+    # Map common run-together lowercase strings to spaced words
+    s_lower = s.lower().replace(' ', '')
+    word_map = {
+        "technicalreasoning": "Technical Reasoning",
+        "threatcontext": "Threat Context",
+        "architecturalrationale": "Architectural Rationale",
+        "mitigationeffectiveness": "Mitigation Effectiveness",
+        "verificationplan": "Verification Plan",
+        "stepbystepprocedure": "Step By Step Procedure",
+        "verificationcriteria": "Verification Criteria",
+        "expectedoutcome": "Expected Outcome",
+        "logverification": "Log Verification",
+        "negativetest": "Negative Test",
+        "coreprinciples": "Core Principles",
+        "securitythreatmitigation": "Security Threat Mitigation",
+        "securityimpact": "Security Impact",
+        "expectedresult": "Expected Result",
+        "reqid": "Req-Id",
+        "requirementid": "Requirement-Id",
+        "affectedcomponents": "Affected Components"
+    }
+    
+    if s_lower in word_map:
+        return word_map[s_lower]
+    return s.title()
+
+
+def _split_run_together_steps(text: str) -> list[str]:
+    """Splits run-together numbered items (e.g. '1. Step 1: ... 2. Step 2: ...') into list elements."""
+    parts = re.split(r'\s+(?=\d+\.\s+(?:Step\s+\d+|[A-Z]))', text)
+    if len(parts) > 1:
+        return [p.strip() for p in parts if p.strip()]
+    return [text]
+
+
+def _format_value_to_markdown(val: Any, indent_level: int = 0) -> str:
+    """Helper to recursively format nested dictionaries and lists into clean Markdown."""
+    indent = "  " * indent_level
+    if isinstance(val, dict):
+        lines = []
+        for k, v in val.items():
+            section_title = _clean_key_name(k)
+            if indent_level == 0:
+                lines.append(f"**{section_title}**:")
+                lines.append(_format_value_to_markdown(v, indent_level + 1))
+                lines.append("")
+            else:
+                lines.append(f"{indent}- **{section_title}**:")
+                lines.append(_format_value_to_markdown(v, indent_level + 1))
+        return "\n".join(lines).strip()
+    elif isinstance(val, list):
+        lines = []
+        for index, item in enumerate(val):
+            if isinstance(item, dict):
+                item_lines = []
+                step_val = item.get("step") or item.get("step_number") or (index + 1)
+                action_val = item.get("action") or item.get("description") or ""
+                
+                item_lines.append(f"{indent}{index + 1}. **Step {step_val}**: {action_val}")
+                for sk, sv in item.items():
+                    if sk in ["step", "action", "description", "step_number"]:
+                        continue
+                    sk_title = _clean_key_name(sk)
+                    item_lines.append(f"{indent}   - **{sk_title}**: {sv}")
+                lines.append("\n".join(item_lines))
+            elif isinstance(item, str):
+                parts = _split_run_together_steps(item)
+                for part in parts:
+                    lines.append(f"{indent}- {part}")
+            else:
+                lines.append(f"{indent}- {item}")
+        return "\n".join(lines).strip()
+    else:
+        str_val = str(val)
+        parts = _split_run_together_steps(str_val)
+        if len(parts) > 1:
+            return "\n".join(f"{indent}- {p}" for p in parts)
+        if indent_level > 0 and "\n" in str_val:
+            return "\n".join(f"{indent}{line}" for line in str_val.splitlines())
+        return f"{indent}{str_val}"
+
+
+def _format_unstructured_text(raw: str) -> str:
+    """Parses raw unstructured text line-by-line to construct a beautifully formatted Markdown report."""
+    lines = [line.strip() for line in raw.splitlines()]
+    
+    # 1. First pass: find metadata (Req-Id and Title) to construct the main header
+    req_id = ""
+    title = ""
+    for line in lines:
+        line_clean = re.sub(r'^[#\s\-\*]+', '', line).strip()
+        if re.match(r'^(?:req[-_]?id|requirement[-_]?id)\s*:\s*(.*)', line_clean, re.IGNORECASE):
+            req_id = re.match(r'^(?:req[-_]?id|requirement[-_]?id)\s*:\s*(.*)', line_clean, re.IGNORECASE).group(1).strip()
+        elif re.match(r'^title\s*:\s*(.*)', line_clean, re.IGNORECASE):
+            title = re.match(r'^title\s*:\s*(.*)', line_clean, re.IGNORECASE).group(1).strip()
+            
+    # Normalize headers mapping
+    header_mapping = {
+        "technical reasoning": "### Technical Reasoning",
+        "deep technical reasoning": "### Technical Reasoning",
+        "verification plan": "### Verification Plan",
+        "security threats": "#### Security Threats",
+        "threats": "#### Security Threats",
+        "rationale": "#### Rationale",
+        "architectural rationale": "#### Architectural Rationale",
+        "implementation architecture": "#### Implementation Architecture",
+        "tools": "#### Tools",
+        "test procedures": "#### Test Procedures",
+        "test steps": "#### Test Procedures",
+        "procedures": "#### Test Procedures",
+        "step-by-step procedures": "#### Test Procedures",
+        "verification criteria": "#### Verification Criteria",
+        "criteria": "#### Verification Criteria",
+    }
+    
+    formatted_lines = []
+    
+    # Main header at the top
+    main_header = "XAI Reasoning & Verification Plan"
+    if req_id or title:
+        main_header += f" - {req_id} {title}".strip()
+    formatted_lines.append(f"### {main_header}")
+    formatted_lines.append("")
+    
+    current_section = ""
+    
+    # We will process line by line
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if not line:
+            formatted_lines.append("")
+            i += 1
+            continue
+            
+        # Strip leading markdown symbols for classification/matching
+        line_stripped = re.sub(r'^[#\s\-\*]+', '', line).strip()
+        line_lower = line_stripped.lower().rstrip(":")
+        
+        # If this is the main header repeat, skip it
+        if "xai reasoning" in line_lower and "verification plan" in line_lower:
+            i += 1
+            continue
+            
+        # Skip raw Requirement/Req-Id/Title lines since they are in the header
+        if line_lower in ["requirement", "requirements"]:
+            i += 1
+            continue
+        if re.match(r'^(?:req[-_]?id|requirement[-_]?id)\s*:\s*', line_stripped, re.IGNORECASE):
+            i += 1
+            continue
+        if re.match(r'^title\s*:\s*', line_stripped, re.IGNORECASE):
+            i += 1
+            continue
+            
+        # Check if line matches a known header
+        matched_header = False
+        for hk, hv in header_mapping.items():
+            if line_lower == hk or line_lower.startswith(hk + ":") or line_lower.startswith(hk + " :"):
+                header_content = ""
+                if ":" in line_stripped and line_stripped.lower().startswith(hk):
+                    header_content = line_stripped.split(":", 1)[1].strip()
+                
+                formatted_lines.append(hv)
+                formatted_lines.append("")
+                current_section = hk
+                if header_content:
+                    lines[i] = header_content
+                    matched_header = True
+                    break
+                else:
+                    i += 1
+                    matched_header = True
+                    break
+        if matched_header:
+            continue
+            
+        # Check if it starts with key: value (like "Logs: Verify...", "Configuration: Ensure...")
+        if ":" in line and not line.startswith("-") and not line.startswith("*") and not re.match(r'^\d+\.', line) and not line.startswith("http"):
+            parts = line.split(":", 1)
+            key_cand = parts[0].strip()
+            val_cand = parts[1].strip()
+            # If the key is short, format it as bold
+            if len(key_cand) < 30 and not any(c in key_cand for c in ["/", "\\", "<", ">", "="]):
+                key_clean = _clean_key_name(key_cand)
+                val_parts = _split_run_together_steps(val_cand)
+                if len(val_parts) > 1:
+                    formatted_lines.append(f"**{key_clean}**:")
+                    for vp in val_parts:
+                        formatted_lines.append(f"  - {vp}")
+                else:
+                    formatted_lines.append(f"**{key_clean}**: {val_cand}")
+                i += 1
+                continue
+                
+        # Default behavior: format based on current section
+        list_sections = ["security threats", "threats", "tools"]
+        starts_with_list_marker = line.startswith("-") or line.startswith("*") or line.startswith("+") or re.match(r'^\d+\.', line)
+        
+        if current_section in list_sections and not starts_with_list_marker:
+            formatted_lines.append(f"- {line}")
+        else:
+            parts = _split_run_together_steps(line)
+            if len(parts) > 1:
+                for part in parts:
+                    part_clean = part.strip()
+                    if part_clean:
+                        if not (part_clean.startswith("-") or part_clean.startswith("*") or re.match(r'^\d+\.', part_clean)):
+                            if re.match(r'^Step\s+\d+', part_clean, re.IGNORECASE):
+                                formatted_lines.append(part_clean)
+                            else:
+                                formatted_lines.append(f"- {part_clean}")
+                        else:
+                            formatted_lines.append(part_clean)
+            else:
+                formatted_lines.append(line)
+                
+        i += 1
+        
+    result = []
+    prev_empty = False
+    for line in formatted_lines:
+        if not line:
+            if not prev_empty:
+                result.append(line)
+                prev_empty = True
+        else:
+            result.append(line)
+            prev_empty = False
+            
+    return "\n".join(result).strip()
+
+
+def convert_mitigation_reasoning_to_markdown(raw: str) -> str:
+    """Transforms raw mitigation reasoning JSON or text into a formatted Markdown report."""
+    if not raw or not raw.strip():
+        return ""
+    
+    # Try to extract the JSON block
+    data = extract_json(raw)
+    if data and isinstance(data, dict):
+        md = []
+        
+        # Title
+        title = data.get("title", "")
+        req_id = data.get("requirement_id", data.get("req_id", ""))
+        header_text = "XAI Reasoning & Verification Plan"
+        if req_id or title:
+            header_text += f" - {req_id} {title}".strip()
+        md.append(f"### {header_text}")
+        md.append("")
+
+        # Dynamically format all fields
+        for k, v in data.items():
+            if k in ["requirement_id", "req_id", "title"]:
+                continue
+                
+            header = _clean_key_name(k)
+            md.append(f"### {header}")
+            md.append("")
+            md.append(_format_value_to_markdown(v, 0))
+            md.append("")
+
+        res = "\n".join(md).strip()
+    else:
+        res = _format_unstructured_text(raw)
+
+    # Decode any existing HTML entities first, then escape using backslashes for Qt Markdown parser
+    res = res.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;lt;", "<").replace("&amp;gt;", ">")
+    res = res.replace("<", "\\<").replace(">", "\\>")
+    return res
+

@@ -14,4 +14,5 @@ __all__ = [
     "risk_matrix_dialog",
     "threat_edit_dialog",
     "threat_panel",
+    "mitigation_requirements_panel",
 ]

@@ -93,21 +93,24 @@ class MenuManager:
         self._mw._action_export_excel = QAction("Generate &Risk Matrix (Excel)...", self._mw)
         menu.addAction(self._mw._action_export_excel)
         
+        menu.addSeparator()
+        
         self._mw._action_export_markdown = QAction("Generate &Security Report (MD)...", self._mw)
         menu.addAction(self._mw._action_export_markdown)
 
         self._mw._action_export_html = QAction("Generate &Security Report (HTML)...", self._mw)
         menu.addAction(self._mw._action_export_html)
+       
+        menu.addSeparator()
+        
+        self._mw._action_export_ai_mitigations = QAction("Generate &AI-Reviewed Mitigations (Excel)...", self._mw)
+        menu.addAction(self._mw._action_export_ai_mitigations)
         
         self._mw._action_export_mitigation = QAction("Generate &Mitigation Checklist (MD)...", self._mw)
         menu.addAction(self._mw._action_export_mitigation)
 
         self._mw._action_export_mitigation_html = QAction("Generate &Mitigation Checklist (HTML)...", self._mw)
         menu.addAction(self._mw._action_export_mitigation_html)
-        
-        menu.addSeparator()
-        self._mw._action_export_diagram = QAction("Export &Annotated Diagram (Image)...", self._mw)
-        menu.addAction(self._mw._action_export_diagram)
 
     def _setup_help_menu(self, mb: QMenuBar):
         menu = mb.addMenu("&Help")

@@ -249,3 +249,160 @@ class ReasoningWorker(QThread):
             self.failed.emit(str(exc))
         finally:
             loop.close()
+
+
+class MitigationRequirementsWorker(QThread):
+    """Background worker to call AI and consolidate mitigations into an Excel requirements sheet."""
+    completed = Signal(list)
+    failed = Signal(str)
+    prompt_ready = Signal(str)
+    response_ready = Signal(str)
+
+    def __init__(self, provider, project, output_path=None, parent=None):
+        super().__init__(parent)
+        self.provider = provider
+        self.project = project
+        self.output_path = output_path
+
+    def run(self):
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            # 1. Gather raw mitigations from project
+            threats = self.project.threat_register.threats
+            raw_items = []
+            for t in threats:
+                if t.is_accepted_risk:
+                    continue
+                mit = (t.mitigation or "").strip()
+                if not mit:
+                    continue
+                elem, asset = t.resolve_affected_elements(self.project)
+                component = elem or t.affected_components or "Unknown Component"
+                raw_items.append({
+                    "component": component,
+                    "threat_title": t.title,
+                    "mitigation": mit
+                })
+
+            if not raw_items:
+                self.failed.emit("No active mitigations found to process.")
+                return
+
+            # 2. Formulate prompt
+            import json
+            raw_list_str = json.dumps(raw_items, indent=2)
+
+            system_instructions = (
+                "You are an expert cybersecurity threat modeler and security architect.\n"
+                "Review the provided JSON list of mitigations identified for various components in a system architecture.\n"
+                "Some of these mitigations are duplicates or near-duplicates across components but worded differently.\n\n"
+                "Your task is to:\n"
+                "1. Consolidate and group only actual duplicates or near-identical semantic mitigations (e.g., 'Encrypt the data at rest' and 'Data at rest must be encrypted') into a single requirement.\n"
+                "2. AVOID OVER-CONSOLIDATION: Do not group distinct security controls or mechanisms into a single requirement just because they share a category or target component. For example:\n"
+                "   - Multi-Factor Authentication (MFA) and Web Application Firewall (WAF) are distinct controls and should NOT be combined.\n"
+                "   - Data Retention Policies are distinct from Log Masking/Redaction and should NOT be combined.\n"
+                "   - Secure Token Storage (Keystore/Keychain) is distinct from Cryptographic Token Validation (RS256/claims check) and should NOT be combined.\n"
+                "   - Mutual TLS (mTLS) is distinct from CORS/Origin validation and should NOT be combined.\n"
+                "3. If a raw mitigation text contains multiple distinct security controls (e.g., 'Enforce strict mTLS and implement database-level integrity checks'), split them and represent them in their respective consolidated requirements so that no security control is lost or hidden.\n"
+                "4. For each distinct requirement, generate:\n"
+                "   - REQ-ID: A unique ID starting with 'SR-' (e.g., SR-1, SR-2, ...)\n"
+                "   - Title: A concise, professional title (e.g., 'Data Encryption')\n"
+                "   - Mitigation: The consolidated mitigation statement\n"
+                "   - Short Description: A professional description explaining what the requirement is, which components/elements it applies to, and the recommended implementation.\n"
+                "   - Test case / Validation: Specific criteria or a test case to verify compliance.\n"
+                "   - Affected Components: A comma-separated list of components/elements where this mitigation needs to be implemented (derived from the 'component' values of the raw mitigations that were consolidated into this requirement).\n\n"
+                "Your response MUST be a valid JSON array of objects, where each object has these exact keys:\n"
+                "- 'req_id': string\n"
+                "- 'title': string\n"
+                "- 'mitigation': string\n"
+                "- 'short_description': string\n"
+                "- 'test_case': string\n"
+                "- 'affected_components': string (comma-separated, e.g., \"Web Server, Database\")\n\n"
+                "Do not include any formatting other than the JSON block. Do not wrap it in markdown block unless it's standard json block."
+            )
+
+            prompt = f"Here is the list of raw mitigations to consolidate and review:\n\n{raw_list_str}"
+            self.prompt_ready.emit(f"SYSTEM: {system_instructions}\n\nUSER: {prompt}")
+
+            async def call_ai():
+                return await self.provider.chat_complete(prompt, system_instructions=system_instructions, response_mime_type="application/json")
+
+            response_text, usage = loop.run_until_complete(call_ai())
+            self.response_ready.emit(response_text)
+            
+            # Log usage metadata
+            meta_log = f"METADATA: Tokens [In: {usage.prompt_tokens} | Out: {usage.completion_tokens} | Total: {usage.total_tokens}]"
+            self.response_ready.emit(meta_log)
+
+            # 3. Parse JSON response
+            from threatpilot.ai.response_parser import extract_json
+            requirements = extract_json(response_text)
+            if not requirements or not isinstance(requirements, list):
+                self.failed.emit("Failed to parse AI response as a JSON array of requirement objects.")
+                return
+
+            # 4. Generate the Excel file if output_path is provided
+            if self.output_path:
+                from threatpilot.export.mitigation_review_exporter import generate_mitigation_requirements_excel
+                generate_mitigation_requirements_excel(self.project, requirements, self.output_path)
+            
+            self.completed.emit(requirements)
+        except Exception as exc:
+            logger.exception(f"MitigationRequirementsWorker failed: {exc}")
+            self.failed.emit(str(exc))
+        finally:
+            loop.close()
+
+
+class MitigationReasoningWorker(QThread):
+    """Background worker to generate deep XAI reasoning and detailed verification plan for a mitigation requirement."""
+    completed = Signal(str, object)  # reasoning_text, requirement
+    failed = Signal(str)
+
+    def __init__(self, provider, requirement, parent=None):
+        super().__init__(parent)
+        self.provider = provider
+        self.requirement = requirement
+
+    def run(self):
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            system_instructions = (
+                "You are an expert security architect and penetration tester.\n"
+                "Your task is to generate Explainable AI (XAI) reasoning and a detailed verification plan for a specific security mitigation requirement.\n"
+                "Provide a professional response containing:\n"
+                "1. Deep Technical Reasoning: Explain why this requirement is critical, the security threats it prevents, and the architecture/implementation rationale.\n"
+                "2. Detailed Verification Plan:\n"
+                "   - How to perform the test (step-by-step procedures, tools to use like curl, nmap, OWASP ZAP, etc.).\n"
+                "   - How to verify the results (expected outputs, what to look for in logs, responses, or configurations to confirm compliance).\n\n"
+                "Format your entire response in clear, professional Markdown. Use headings, lists, and code blocks for instructions where appropriate."
+            )
+
+            req = self.requirement
+            prompt = (
+                f"Requirement Details:\n"
+                f"- REQ-ID: {req.req_id}\n"
+                f"- Title: {req.title}\n"
+                f"- Affected Components: {req.affected_components}\n"
+                f"- Mitigation: {req.mitigation}\n"
+                f"- Description: {req.short_description}\n"
+                f"- High-Level Test Case: {req.test_case}\n\n"
+                f"Please generate the deep technical reasoning and the detailed verification plan."
+            )
+
+            async def call_ai():
+                return await self.provider.chat_complete(prompt, system_instructions=system_instructions)
+
+            response_text, usage = loop.run_until_complete(call_ai())
+            self.completed.emit(response_text, self.requirement)
+        except Exception as exc:
+            logger.exception(f"MitigationReasoningWorker failed: {exc}")
+            self.failed.emit(str(exc))
+        finally:
+            loop.close()
+
+

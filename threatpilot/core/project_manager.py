@@ -12,7 +12,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 from threatpilot.config.prompt_config import PromptConfig
 from threatpilot.core.diagram_model import Diagram
-from threatpilot.core.domain_models import Component, Flow, TrustBoundary, Asset
+from threatpilot.core.domain_models import Component, Flow, TrustBoundary, Asset, MitigationRequirement
 from threatpilot.core.threat_model import ThreatRegister, VulnerabilityRegister
 from threatpilot.core.migrations import migrate_legacy_data, migrate_vulnerabilities
 from threatpilot.core.constants import PROJECT_FILE_NAME, RESTRICTED_PATH_KEYWORDS
@@ -32,6 +32,8 @@ class Project(BaseModel):
     threat_register: ThreatRegister = Field(default_factory=ThreatRegister)
     vulnerability_register: VulnerabilityRegister = Field(default_factory=VulnerabilityRegister)
     custom_component_types: list[str] = Field(default_factory=list)
+    mitigation_requirements: list[MitigationRequirement] = Field(default_factory=list)
+    mitigation_excel_path: str | None = ""
     project_path: str = Field(default="", exclude=True)
 
     def to_dict(self) -> dict[str, Any]:
@@ -104,7 +106,7 @@ def load_project(project_path: str | Path) -> Project:
     with project_file.open("r", encoding="utf-8") as fh:
         data: dict[str, Any] = json.load(fh)
 
-    for sidecar in ["architecture.json", "threats.json", "vulnerabilities.json"]:
+    for sidecar in ["architecture.json", "threats.json", "vulnerabilities.json", "mitigations.json"]:
         sidecar_path = project_dir / sidecar
         if sidecar_path.exists():
             with sidecar_path.open("r", encoding="utf-8") as fh:
@@ -149,8 +151,12 @@ def _write_project_file(project: Project) -> None:
     threats_data = {"threat_register": data.pop("threat_register", {})}
     vuln_data = {"vulnerability_register": data.pop("vulnerability_register", {})}
 
+    mitigation_keys = ["mitigation_requirements", "mitigation_excel_path"]
+    mitigation_data = {k: data.pop(k, [] if k == "mitigation_requirements" else "") for k in mitigation_keys}
+
     # Perform atomic writes for all project files
     _atomic_write_json(project_dir / _PROJECT_FILE, data)
     _atomic_write_json(project_dir / "architecture.json", arch_data)
     _atomic_write_json(project_dir / "threats.json", threats_data)
     _atomic_write_json(project_dir / "vulnerabilities.json", vuln_data)
+    _atomic_write_json(project_dir / "mitigations.json", mitigation_data)

@@ -21,7 +21,7 @@
 - **Context-Aware Prompts**: Generates structured, industry-contextualized prompts for LLMs to perform detailed **STRIDE** or **LINDDUN** analysis.
 - **Multimodal Methodology**: Support for both traditional security threat modeling (STRIDE) and advanced privacy threat modeling (LINDDUN).
 - **MITRE ATT&CK® Mapping**: Automatically maps identified threats to specific MITRE ATT&CK techniques for better alignment with defensive operations.
-- **Explainable AI (XAI)**: Generate deep technical reasoning (Attack Vector, Root Cause, Risk Rationalization) for any identified threat to improve architect trust and validation.
+- **Explainable AI (XAI)**: Generate deep technical reasoning (Attack Vector, Root Cause, Risk Rationalization, or technical verification procedures) for any identified threat or mitigation requirement to improve architect trust and validation.
 - **Optimized Provider Support**: Focused support for local **Ollama** instances (for privacy) and high-performance **Google Gemini** endpoints.
 - **Segmented Analysis**: Automatically handles large-scale architectures by segmenting diagrams into batches to respect model token limits while maintaining context.
 
@@ -34,7 +34,10 @@
 ### 4. Professional Reporting & Export
 - **Comprehensive Markdown Reports**: Generates deep-dive narrative reports including methodology, executive summaries, and detailed threat registers.
 - **Lightweight Excel Exports**: Custom-built Excel generation using `openpyxl`, ensuring high-fidelity 7-tab GRC workbooks without the bloat of heavy data libraries.
-- **Git-Optimized Project Storage**: Project data is cleanly partitioned into specialized JSON sidecars (`architecture.json`, `threats.json`, `vulnerabilities.json`), enabling human-readable diffs and better collaboration in version control.
+- **Mitigation Requirements Console**: A dedicated interactive tab to review, edit, and filter consolidated security requirements mapped directly from threat mitigations.
+- **AI-Reviewed Mitigation Requirements (Excel)**: Automatically reviews, deduplicates, and groups semantically similar mitigations across all elements, mapping them to affected components (comma-separated) and generating validation test cases/criteria in a dedicated spreadsheet.
+- **Git-Optimized Project Storage**: Project data is cleanly partitioned into specialized JSON sidecars (`architecture.json`, `threats.json`, `vulnerabilities.json`, `mitigations.json`), enabling human-readable diffs and better collaboration in version control.
+
 - **Architecture Export**: Save your modeled architecture as structured JSON or export annotated diagrams.
 
 ### 5. Advanced UX & Workflow

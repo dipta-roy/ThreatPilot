@@ -65,7 +65,7 @@ from threatpilot.core.constants import (
     APP_NAME, WINDOW_WIDTH_PERCENT, WINDOW_HEIGHT_PERCENT, 
     MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT
 )
-from threatpilot.ui.workers import AnalysisWorker, AIVisionWorker, ReasoningWorker
+from threatpilot.ui.workers import AnalysisWorker, AIVisionWorker, ReasoningWorker, MitigationRequirementsWorker
 from threatpilot.ui.dialogs import ReasoningDisplayDialog, PlaceholderPanel
 from threatpilot.ui.worker_manager import WorkerManager
 from threatpilot.ui.menu_manager import MenuManager
@@ -228,6 +228,13 @@ class MainWindow(QMainWindow):
         self._risk_assessment_panel.threat_edited.connect(self._on_save_project)
         self._central_tabs.addTab(self._risk_assessment_panel, "Risk Assessment")
         
+        from threatpilot.ui.mitigation_requirements_panel import MitigationRequirementsPanel
+        self._mitigation_requirements_panel = MitigationRequirementsPanel(self)
+        self._mitigation_requirements_panel.setMinimumWidth(200)
+        self._mitigation_requirements_panel.analyze_requested.connect(self._on_analyze_mitigations_clicked)
+        self._mitigation_requirements_panel.reasoning_requested.connect(self._on_mitigation_reasoning_requested)
+        self._central_tabs.addTab(self._mitigation_requirements_panel, "Mitigation Requirements")
+        
         self._central_tabs.currentChanged.connect(self._on_tab_changed)
         self.setCentralWidget(self._central_tabs)
 
@@ -337,10 +344,13 @@ class MainWindow(QMainWindow):
     def show_progress(self, label_text: str, cancel_slot) -> None:
         """Shows the progress widget in the footer status bar."""
         self._status_progress_label.setText(label_text)
-        try:
-            self._status_cancel_btn.clicked.disconnect()
-        except RuntimeError:
-            pass
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+            try:
+                self._status_cancel_btn.clicked.disconnect()
+            except (RuntimeError, TypeError):
+                pass
         self._status_cancel_btn.clicked.connect(lambda: cancel_slot())
         self._status_progress_widget.show()
 
@@ -368,7 +378,7 @@ class MainWindow(QMainWindow):
         self._action_export_html.triggered.connect(self._on_export_html)
         self._action_export_mitigation.triggered.connect(self._on_export_mitigation_checklist)
         self._action_export_mitigation_html.triggered.connect(self._on_export_mitigation_checklist_html)
-        self._action_export_diagram.triggered.connect(self._on_export_diagram)
+        self._action_export_ai_mitigations.triggered.connect(self._on_export_ai_mitigations)
         self._action_about.triggered.connect(self._on_about)
         self._action_detect_objects.triggered.connect(self._on_detect_objects)
         self._action_edit_elements.triggered.connect(self._on_edit_elements)
@@ -419,6 +429,9 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_worker_ai_vision") and self._worker_ai_vision is not None and self._worker_ai_vision.isRunning():
             self._worker_ai_vision.terminate()
             self._worker_ai_vision.wait()
+        if hasattr(self, "_worker_ai_mitigations") and self._worker_ai_mitigations is not None and self._worker_ai_mitigations.isRunning():
+            self._worker_ai_mitigations.terminate()
+            self._worker_ai_mitigations.wait()
         if hasattr(self, "_reasoning_workers"):
             for w in self._reasoning_workers:
                 if w.isRunning():
@@ -432,6 +445,7 @@ class MainWindow(QMainWindow):
         self._linddun_threat_ledger.set_register(None)
         self._risk_assessment_panel.set_project(None)
         self._vulnerability_panel.set_project(None)
+        self._mitigation_requirements_panel.set_project(None)
         self._properties_panel.set_item(None)
         self._canvas.clear_diagram()
         self._undo_stack.clear()
@@ -468,6 +482,7 @@ class MainWindow(QMainWindow):
         self._risk_assessment_panel.set_project(self._project)
         self._vulnerability_panel.set_project(self._project)
         self._properties_panel.set_project(self._project)
+        self._mitigation_requirements_panel.set_project(self._project)
         self._current_diagram = None
         self._canvas.clear_diagram()
         self._update_title()
@@ -490,6 +505,8 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self._linddun_threat_ledger.refresh)
         if hasattr(self, "_vulnerability_panel"):
             QTimer.singleShot(0, self._vulnerability_panel.refresh)
+        if hasattr(self, "_mitigation_requirements_panel"):
+            QTimer.singleShot(0, self._mitigation_requirements_panel.refresh)
         QTimer.singleShot(0, self._refresh_canvas_overlays)
         self._update_title()
         
@@ -514,6 +531,8 @@ class MainWindow(QMainWindow):
                 self._stride_threat_ledger.refresh()
             if hasattr(self, "_linddun_threat_ledger"):
                 self._linddun_threat_ledger.refresh()
+            if hasattr(self, "_mitigation_requirements_panel"):
+                self._mitigation_requirements_panel.refresh()
             
             if not silent:
                 self.statusBar().showMessage("Project saved.")
@@ -1379,17 +1398,227 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.critical(self, "Export Error", f"Checklist export failed:\n{exc}")
 
-    def _on_export_diagram(self) -> None:
-        """Exports the annotated architecture diagram as an image file."""
-        scene = self._canvas.scene()
-        if not scene or scene.itemsBoundingRect().isEmpty(): return
-        file_path, _ = QFileDialog.getSaveFileName(self, "Export Diagram Image", "", "PNG Image (*.png);;JPEG Image (*.jpg);;All Files (*)")
-        if not file_path: return
+    def _on_export_ai_mitigations(self) -> None:
+        """Exports an AI-reviewed and consolidated mitigation list to an Excel file."""
+        if not self._project:
+            return
+
+        requirements = getattr(self._project, "mitigation_requirements", [])
+        if not requirements:
+            reply = QMessageBox.question(
+                self, "No Mitigations Available",
+                "No analyzed mitigations found. Would you like to Run AI Mitigation Review first?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self._on_analyze_mitigations_clicked()
+            return
+
+        excel_path = getattr(self._project, "mitigation_excel_path", "")
+        if excel_path and os.path.exists(os.path.dirname(excel_path)):
+            reply = QMessageBox.question(
+                self, "Export Mitigations",
+                f"Export mitigations to the configured path?\n{excel_path}",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Yes
+            )
+            if reply == QMessageBox.StandardButton.Cancel:
+                return
+            elif reply == QMessageBox.StandardButton.Yes:
+                file_path = excel_path
+            else:
+                file_path = self._select_mitigation_excel_path()
+        else:
+            file_path = self._select_mitigation_excel_path()
+
+        if not file_path:
+            return
+
         try:
-            export_scene_to_image(scene, file_path)
-            self.statusBar().showMessage(f"Diagram exported to {file_path}")
+            from threatpilot.export.mitigation_review_exporter import generate_mitigation_requirements_excel
+            req_dicts = [req.model_dump() for req in requirements]
+            generate_mitigation_requirements_excel(self._project, req_dicts, file_path)
+            self._project.mitigation_excel_path = file_path
+            self._on_save_project(silent=True)
+            self.statusBar().showMessage(f"AI-reviewed mitigations exported to {file_path}")
+            QMessageBox.information(self, "Export Success", f"AI-reviewed mitigations successfully saved to:\n{file_path}")
         except Exception as exc:
-            QMessageBox.critical(self, "Export Error", f"Diagram export failed:\n{exc}")
+            QMessageBox.critical(self, "Export Error", f"Failed to export mitigations to Excel:\n{exc}")
+
+    def _on_analyze_mitigations_clicked(self) -> None:
+        """Handles the 'Analyze Mitigations' trigger from the panel or menu."""
+        if not self._project or not self._project.threat_register.threats:
+            QMessageBox.information(self, "Analyze", "No threats found to generate mitigations.")
+            return
+
+        self._run_mitigation_ai_worker(None)
+
+    def _select_mitigation_excel_path(self) -> Optional[str]:
+        """Prompts the user to select a path for the AI-reviewed mitigations Excel file."""
+        default_path = self._get_default_export_path("Mitigation Requirements", "xlsx")
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Export AI-Reviewed Mitigations to Excel", default_path, "Excel Files (*.xlsx);;All Files (*)"
+        )
+        if file_path and not file_path.endswith(".xlsx"):
+            file_path += ".xlsx"
+        return file_path or None
+
+    def _run_mitigation_ai_worker(self, file_path: str) -> None:
+        """Invokes the background worker to analyze mitigations using AI and save to Excel."""
+        try:
+            config = AIConfig.load()
+            
+            if config.provider_type == "gemini":
+                reply = QMessageBox.warning(
+                    self, "Data Privacy Acknowledgement",
+                    "You are using Google Gemini (Cloud AI). Mitigation data will be sent to Google. Proceed?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No
+                )
+                if reply == QMessageBox.StandardButton.No:
+                    return
+
+            provider = create_ai_provider(config)
+        except Exception as exc:
+            QMessageBox.critical(self, "AI Error", f"Could not create AI provider:\n{exc}")
+            return
+
+        is_mitigations_running = hasattr(self, "_worker_ai_mitigations") and self._worker_ai_mitigations is not None and self._worker_ai_mitigations.isRunning()
+        is_analysis_running = self._worker_mgr._worker and self._worker_mgr._worker.isRunning()
+        if is_mitigations_running or is_analysis_running:
+            QMessageBox.warning(self, "AI Busy", "A background AI task is already running. Please wait until the existing task is complete.")
+            return
+
+        self._ai_log_dock.show()
+        self._ai_log_dock.raise_()
+        self.show_progress("Consolidating and reviewing mitigations with AI...", self._cancel_ai_mitigations)
+
+        self._worker_ai_mitigations = MitigationRequirementsWorker(
+            provider, self._project, file_path, parent=self
+        )
+        self._worker_ai_mitigations.completed.connect(lambda reqs: self._on_ai_mitigations_finished(reqs, file_path))
+        self._worker_ai_mitigations.finished.connect(self._on_ai_mitigations_worker_finished)
+        self._worker_ai_mitigations.failed.connect(lambda msg: self._show_concise_error("AI Review Failed", "Mitigation review failed:", msg))
+        self._worker_ai_mitigations.prompt_ready.connect(lambda p: self.append_ai_log(p, "PROMPT"))
+        self._worker_ai_mitigations.response_ready.connect(lambda r: self.append_ai_log(r, "RESPONSE"))
+        self._worker_ai_mitigations.start()
+
+    def _on_ai_mitigations_finished(self, requirements: list, file_path: Optional[str]) -> None:
+        """Called when mitigation consolidation completes successfully."""
+        if file_path:
+            self.statusBar().showMessage(f"AI-reviewed mitigations exported to {file_path}")
+        else:
+            self.statusBar().showMessage("AI mitigation review completed.")
+        
+        if self._project:
+            from threatpilot.core.domain_models import MitigationRequirement
+            req_objects = []
+            for req in requirements:
+                # Preserve existing reasoning if present
+                existing_req = next((r for r in self._project.mitigation_requirements if r.req_id == req.get("req_id", "")), None)
+                existing_reasoning = existing_req.reasoning if existing_req else ""
+
+                req_objects.append(MitigationRequirement(
+                    req_id=req.get("req_id", ""),
+                    title=req.get("title", ""),
+                    affected_components=req.get("affected_components", ""),
+                    mitigation=req.get("mitigation", ""),
+                    short_description=req.get("short_description", ""),
+                    test_case=req.get("test_case", ""),
+                    reasoning=existing_reasoning
+                ))
+            self._project.mitigation_requirements = req_objects
+            if file_path:
+                self._project.mitigation_excel_path = file_path
+            self._on_save_project(silent=True)
+            
+            if hasattr(self, "_mitigation_requirements_panel"):
+                self._mitigation_requirements_panel.refresh()
+
+        if file_path:
+            QMessageBox.information(self, "Export Success", f"AI-reviewed mitigations successfully saved to:\n{file_path}")
+        else:
+            QMessageBox.information(self, "Review Success", "AI mitigation review completed successfully and updated in the project.")
+
+    def _on_mitigation_reasoning_requested(self, requirement: MitigationRequirement) -> None:
+        """Triggers AI reasoning generation for a specific mitigation requirement."""
+        if not self._project:
+            return
+        
+        existing_reasoning = getattr(requirement, "reasoning", "")
+        if existing_reasoning and existing_reasoning.strip():
+            from threatpilot.ui.dialogs import ReasoningDisplayDialog
+            dialog = ReasoningDisplayDialog(
+                f"XAI Reasoning - {requirement.req_id}", existing_reasoning, parent=self
+            )
+            dialog.exec()
+            return
+
+        try:
+            config = AIConfig.load()
+            
+            if config.provider_type == "gemini":
+                reply = QMessageBox.warning(
+                    self, "Data Privacy Acknowledgement",
+                    "You are using Google Gemini (Cloud AI). Mitigation data will be sent to Google. Proceed?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No
+                )
+                if reply == QMessageBox.StandardButton.No:
+                    return
+
+            provider = create_ai_provider(config)
+            
+            is_mitigations_running = hasattr(self, "_worker_ai_mitigations") and self._worker_ai_mitigations is not None and self._worker_ai_mitigations.isRunning()
+            is_analysis_running = self._worker_mgr._worker and self._worker_mgr._worker.isRunning()
+            if is_mitigations_running or is_analysis_running:
+                QMessageBox.warning(self, "AI Busy", "A background AI task is already running. Please wait until the existing task is complete.")
+                return
+
+            self._ai_log_dock.show()
+            self._ai_log_dock.raise_()
+            self.show_progress("Generating XAI reasoning...", self._cancel_ai_mitigations)
+
+            from threatpilot.ui.workers import MitigationReasoningWorker
+            self._worker_ai_mitigations = MitigationReasoningWorker(
+                provider, requirement, parent=self
+            )
+            self._worker_ai_mitigations.completed.connect(self._on_mitigation_reasoning_finished)
+            self._worker_ai_mitigations.finished.connect(self._on_ai_mitigations_worker_finished)
+            self._worker_ai_mitigations.failed.connect(lambda msg: self._show_concise_error("AI Reasoning Failed", "Mitigation reasoning failed:", msg))
+            self._worker_ai_mitigations.start()
+        except Exception as exc:
+            QMessageBox.critical(self, "AI Error", f"Could not start reasoning worker:\n{exc}")
+
+    def _on_mitigation_reasoning_finished(self, reasoning: str, requirement: MitigationRequirement) -> None:
+        """Callback when mitigation reasoning completes successfully."""
+        self.statusBar().showMessage("AI mitigation reasoning generated.")
+        
+        from threatpilot.ai.response_parser import convert_mitigation_reasoning_to_markdown
+        formatted_reasoning = convert_mitigation_reasoning_to_markdown(reasoning)
+        
+        requirement.reasoning = formatted_reasoning
+        self._on_save_project(silent=True)
+        
+        if hasattr(self, "_mitigation_requirements_panel"):
+            self._mitigation_requirements_panel.refresh()
+
+        from threatpilot.ui.dialogs import ReasoningDisplayDialog
+        dialog = ReasoningDisplayDialog(
+            f"XAI Reasoning - {requirement.req_id}", formatted_reasoning, parent=self
+        )
+        dialog.exec()
+
+    def _on_ai_mitigations_worker_finished(self) -> None:
+        """Cleans up the mitigation review worker thread resources."""
+        self.hide_progress()
+        if hasattr(self, "_worker_ai_mitigations"):
+            self._worker_ai_mitigations = None
+
+    def _cancel_ai_mitigations(self) -> None:
+        """Gracefully terminates the running mitigation review background task."""
+        if hasattr(self, "_worker_ai_mitigations") and self._worker_ai_mitigations.isRunning():
+            self._worker_ai_mitigations.terminate()
+            self.statusBar().showMessage("AI review cancelled.")
 
     def _on_about(self) -> None:
         """Displays the application information dialog."""
