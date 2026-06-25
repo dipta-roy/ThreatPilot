@@ -123,7 +123,7 @@ Download Code Verification Certificate: [Dipta Roy - Code Verification Certifica
 
 - VERIFY APPLICATION AUTHENTICITY
 
-1. To confirm the application is genuine, right click on ThreatPilot-1.6.1-win64.msi and click on Properties.
+1. To confirm the application is genuine, right click on ThreatPilot-1.7.0-win64.msi and click on Properties.
 2. Go to the Digital Signatures tab.
 3. Select "Signed_By_Dipta" from the Embedded Signatures list, then choose Details.
 4. In the General tab, you should see the message "This digital signature is OK."
@@ -131,5 +131,5 @@ Download Code Verification Certificate: [Dipta Roy - Code Verification Certifica
 
 Once verified,
 ```
-Run ThreatPilot-1.6.1-win64.msi and install the application.
+Run ThreatPilot-1.7.0-win64.msi and install the application.
 ```
