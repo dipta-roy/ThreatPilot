@@ -293,6 +293,11 @@ class MainWindow(QMainWindow):
         # Only show Attributes for STRIDE (1) and LINDDUN (2) tabs
         show_attributes = (index in (1, 2))
         self._properties_panel_dock.setVisible(show_attributes)
+        
+        # Refresh the newly activated tab dynamically if it supports it
+        current_widget = self._central_tabs.widget(index)
+        if hasattr(current_widget, "refresh"):
+            QTimer.singleShot(0, current_widget.refresh)
 
     def _create_dock(self, title: str, widget: QWidget, area: Qt.DockWidgetArea, *, min_width: int = 0, min_height: int = 0) -> QDockWidget:
         """Helper to create and dock a QDockWidget with specified parameters."""
@@ -497,16 +502,11 @@ class MainWindow(QMainWindow):
 
     def _on_project_modified(self, obj: Any = None, refresh_properties: bool = True) -> None:
         """Refreshes UI components and triggers a debounced save when data changes."""
-        if hasattr(self, "_risk_assessment_panel"):
-            QTimer.singleShot(0, self._risk_assessment_panel.refresh)
-        if hasattr(self, "_stride_threat_ledger"):
-            QTimer.singleShot(0, self._stride_threat_ledger.refresh)
-        if hasattr(self, "_linddun_threat_ledger"):
-            QTimer.singleShot(0, self._linddun_threat_ledger.refresh)
-        if hasattr(self, "_vulnerability_panel"):
-            QTimer.singleShot(0, self._vulnerability_panel.refresh)
-        if hasattr(self, "_mitigation_requirements_panel"):
-            QTimer.singleShot(0, self._mitigation_requirements_panel.refresh)
+        # Only refresh the currently active tab to prevent UI freezes
+        current_widget = self._central_tabs.currentWidget()
+        if hasattr(current_widget, "refresh"):
+            QTimer.singleShot(0, current_widget.refresh)
+
         QTimer.singleShot(0, self._refresh_canvas_overlays)
         self._update_title()
         
@@ -1501,6 +1501,7 @@ class MainWindow(QMainWindow):
         self._worker_ai_mitigations.failed.connect(lambda msg: self._show_concise_error("AI Review Failed", "Mitigation review failed:", msg))
         self._worker_ai_mitigations.prompt_ready.connect(lambda p: self.append_ai_log(p, "PROMPT"))
         self._worker_ai_mitigations.response_ready.connect(lambda r: self.append_ai_log(r, "RESPONSE"))
+        self._worker_ai_mitigations.progress.connect(lambda msg: self.show_progress(msg, self._cancel_ai_mitigations))
         self._worker_ai_mitigations.start()
 
     def _on_ai_mitigations_finished(self, requirements: list, file_path: Optional[str]) -> None:

@@ -24,12 +24,14 @@
 - **Explainable AI (XAI)**: Generate deep technical reasoning (Attack Vector, Root Cause, Risk Rationalization, or technical verification procedures) for any identified threat or mitigation requirement to improve architect trust and validation.
 - **Optimized Provider Support**: Focused support for local **Ollama** instances (for privacy) and high-performance **Google Gemini** endpoints.
 - **Segmented Analysis**: Automatically handles large-scale architectures by segmenting diagrams into batches to respect model token limits while maintaining context.
+- **Map-Reduce Batch Processing**: Implements recursive background batching (Map-Reduce) to deduplicate and consolidate hundreds of mitigation requirements seamlessly, eliminating AI context limits and resource exhaustion while showing real-time UI progress.
 
 ### 3. Risk Assessment & Controls
 - **CVSS v3.1 Scoring**: Built-in calculator to determine base vulnerability scores with automatic severity categorization (Low-Critical).
 - **Decoupled Vulnerability Registry**: Manage security flaws independently from threats via a global registry, enabling many-to-many relationships and standardized remediation tracking.
 - **Interactive Risk Matrix**: Visualize your system's risk profile through a dynamic Likelihood vs. Impact matrix.
 - **High-Fidelity Tracking**: Manage threats with a modernized, flat-table Threat Ledger for rapid triage, acceptance, and manual overrides.
+- **Live Risk Counters**: Architecture elements (Components, Assets, Data Flows, Trust Boundaries) feature real-time, non-editable risk counters that dynamically sync with the Threat Register, providing instant visibility into vulnerable areas.
 
 ### 4. Professional Reporting & Export
 - **Comprehensive Markdown Reports**: Generates deep-dive narrative reports including methodology, executive summaries, and detailed threat registers.
@@ -123,7 +125,7 @@ Download Code Verification Certificate: [Dipta Roy - Code Verification Certifica
 
 - VERIFY APPLICATION AUTHENTICITY
 
-1. To confirm the application is genuine, right click on ThreatPilot-1.7.0-win64.msi and click on Properties.
+1. To confirm the application is genuine, right click on ThreatPilot-1.7.1-win64.msi and click on Properties.
 2. Go to the Digital Signatures tab.
 3. Select "Signed_By_Dipta" from the Embedded Signatures list, then choose Details.
 4. In the General tab, you should see the message "This digital signature is OK."
@@ -131,5 +133,5 @@ Download Code Verification Certificate: [Dipta Roy - Code Verification Certifica
 
 Once verified,
 ```
-Run ThreatPilot-1.7.0-win64.msi and install the application.
+Run ThreatPilot-1.7.1-win64.msi and install the application.
 ```

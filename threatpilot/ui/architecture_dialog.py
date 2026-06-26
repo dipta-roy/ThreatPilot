@@ -168,7 +168,7 @@ class ElementsDialog(BaseProjectTableDialog):
         comp_header.setStyleSheet("color: #58a6ff; margin-bottom: 5px;")
         layout.addWidget(comp_header)
 
-        self._table = QTableWidget(0, 7)
+        self._table = QTableWidget(0, 8)
         self._table.setHorizontalHeaderLabels([
             "",
             "Element Name",
@@ -176,7 +176,8 @@ class ElementsDialog(BaseProjectTableDialog):
             "Trust Boundary",
             "Technical Description",
             "Out of Scope?",
-            "Justification / Remarks"
+            "Justification / Remarks",
+            "Identified Risks"
         ])
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
@@ -186,6 +187,7 @@ class ElementsDialog(BaseProjectTableDialog):
         self._table.setColumnWidth(3, 180)
         self._table.setColumnWidth(4, 200)
         self._table.setColumnWidth(5, 90)
+        self._table.setColumnWidth(7, 120)
         header.setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
         self._table.setAlternatingRowColors(True)
         self._table.verticalHeader().setDefaultSectionSize(38)
@@ -217,11 +219,16 @@ class ElementsDialog(BaseProjectTableDialog):
         v_scroll = self._table.verticalScrollBar().value()
         h_scroll = self._table.horizontalScrollBar().value()
         
+        for comp in self._project.components:
+            count = sum(1 for t in self._project.threat_register.threats if comp.name.strip().lower() in t.affected_components.lower())
+            comp._identified_risks_count = str(count) if count > 0 else ""
+            
         column_mappers = {
             1: ("name", True, False),
             4: ("description", True, False),
             5: ("is_out_of_scope", True, True),
-            6: ("out_of_scope_justification", True, False)
+            6: ("out_of_scope_justification", True, False),
+            7: ("_identified_risks_count", False, False)
         }
         self._load_data_generic(self._project.components, column_mappers)
         
@@ -336,7 +343,7 @@ class AssetsDialog(BaseProjectTableDialog):
         asset_header.setStyleSheet("color: #e3b341; margin-bottom: 5px;")
         layout.addWidget(asset_header)
 
-        self._table = QTableWidget(0, 7)
+        self._table = QTableWidget(0, 8)
         self._table.setHorizontalHeaderLabels([
             "",
             "Asset Name",
@@ -344,7 +351,8 @@ class AssetsDialog(BaseProjectTableDialog):
             "Criticality",
             "Out of Scope?",
             "Justification",
-            "Description"
+            "Description",
+            "Identified Risks"
         ])
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
@@ -354,6 +362,7 @@ class AssetsDialog(BaseProjectTableDialog):
         self._table.setColumnWidth(3, 120)
         self._table.setColumnWidth(4, 100)
         self._table.setColumnWidth(5, 250)
+        self._table.setColumnWidth(7, 120)
         header.setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
         self._table.setAlternatingRowColors(True)
         self._table.verticalHeader().setDefaultSectionSize(38)
@@ -386,12 +395,17 @@ class AssetsDialog(BaseProjectTableDialog):
         v_scroll = self._table.verticalScrollBar().value()
         h_scroll = self._table.horizontalScrollBar().value()
         
+        for asset in self._project.assets:
+            count = sum(1 for t in self._project.threat_register.threats if asset.name.strip().lower() in t.affected_components.lower())
+            asset._identified_risks_count = str(count) if count > 0 else ""
+            
         column_mappers = {
             1: ("name", True, False),
             3: ("criticality", True, False),
             4: ("is_out_of_scope", True, True),
             5: ("out_of_scope_justification", True, False),
-            6: ("description", True, False)
+            6: ("description", True, False),
+            7: ("_identified_risks_count", False, False)
         }
         self._load_data_generic(self._project.assets, column_mappers)
         
@@ -475,8 +489,8 @@ class DataFlowDialog(BaseProjectTableDialog):
         flow_header.setFont(header_font)
         flow_header.setStyleSheet("color: #58a6ff; margin-bottom: 5px;")
         layout.addWidget(flow_header)
-        self._table = QTableWidget(0, 6)
-        self._table.setHorizontalHeaderLabels(["", "Flow Alias", "Source Element", "Destination Element", "Protocol / Port", "Bidirectional?"])
+        self._table = QTableWidget(0, 7)
+        self._table.setHorizontalHeaderLabels(["", "Flow Alias", "Source Element", "Destination Element", "Protocol / Port", "Bidirectional?", "Identified Risks"])
         self._table.setColumnWidth(0, 30)
         self._table.setHorizontalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
         self._table.setVerticalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
@@ -487,6 +501,7 @@ class DataFlowDialog(BaseProjectTableDialog):
         self._table.setColumnWidth(2, 250)
         self._table.setColumnWidth(3, 250)
         self._table.setColumnWidth(4, 140)
+        self._table.setColumnWidth(6, 120)
         header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
         self._table.setAlternatingRowColors(True)
         self._table.verticalHeader().setDefaultSectionSize(38)
@@ -518,10 +533,15 @@ class DataFlowDialog(BaseProjectTableDialog):
         v_scroll = self._table.verticalScrollBar().value()
         h_scroll = self._table.horizontalScrollBar().value()
         
+        for flow in self._project.flows:
+            count = sum(1 for t in self._project.threat_register.threats if flow.name.strip().lower() in t.affected_components.lower())
+            flow._identified_risks_count = str(count) if count > 0 else ""
+            
         column_mappers = {
             1: ("name", True, False),
             4: ("protocol", True, False),
-            5: ("is_bidirectional", True, True)
+            5: ("is_bidirectional", True, True),
+            6: ("_identified_risks_count", False, False)
         }
         self._load_data_generic(self._project.flows, column_mappers)
         
@@ -629,13 +649,14 @@ class TrustBoundaryDialog(BaseProjectTableDialog):
         tb_header.setStyleSheet("color: #7ee787; margin-bottom: 5px;")
         layout.addWidget(tb_header)
 
-        self._table = QTableWidget(0, 5)
+        self._table = QTableWidget(0, 6)
         self._table.setHorizontalHeaderLabels([
             "",
             "Boundary Name",
             "Boundary Type",
             "Parent Boundary",
-            "Description"
+            "Description",
+            "Identified Risks"
         ])
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
@@ -643,6 +664,7 @@ class TrustBoundaryDialog(BaseProjectTableDialog):
         self._table.setColumnWidth(1, 180)
         self._table.setColumnWidth(2, 120)
         self._table.setColumnWidth(3, 200)
+        self._table.setColumnWidth(5, 120)
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         self._table.setAlternatingRowColors(True)
         self._table.verticalHeader().setDefaultSectionSize(38)
@@ -675,10 +697,15 @@ class TrustBoundaryDialog(BaseProjectTableDialog):
         v_scroll = self._table.verticalScrollBar().value()
         h_scroll = self._table.horizontalScrollBar().value()
         
+        for tb in self._project.boundaries:
+            count = sum(1 for t in self._project.threat_register.threats if tb.name.strip().lower() in t.affected_components.lower())
+            tb._identified_risks_count = str(count) if count > 0 else ""
+            
         column_mappers = {
             1: ("name", True, False),
             2: ("type", True, False),
-            4: ("description", True, False)
+            4: ("description", True, False),
+            5: ("_identified_risks_count", False, False)
         }
         self._load_data_generic(self._project.boundaries, column_mappers)
         

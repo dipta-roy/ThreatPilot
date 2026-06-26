@@ -257,6 +257,7 @@ class MitigationRequirementsWorker(QThread):
     failed = Signal(str)
     prompt_ready = Signal(str)
     response_ready = Signal(str)
+    progress = Signal(str)
 
     def __init__(self, provider, project, output_path=None, parent=None):
         super().__init__(parent)
@@ -290,9 +291,12 @@ class MitigationRequirementsWorker(QThread):
                 self.failed.emit("No active mitigations found to process.")
                 return
 
-            # 2. Formulate prompt
+            # 2. Formulate prompt and batch process
             import json
-            raw_list_str = json.dumps(raw_items, indent=2)
+            batch_size = 50
+            all_requirements = []
+            total_prompt_tokens = 0
+            total_completion_tokens = 0
 
             system_instructions = (
                 "You are an expert cybersecurity threat modeler and security architect.\n"
@@ -323,25 +327,69 @@ class MitigationRequirementsWorker(QThread):
                 "Do not include any formatting other than the JSON block. Do not wrap it in markdown block unless it's standard json block."
             )
 
-            prompt = f"Here is the list of raw mitigations to consolidate and review:\n\n{raw_list_str}"
-            self.prompt_ready.emit(f"SYSTEM: {system_instructions}\n\nUSER: {prompt}")
+            async def call_ai(p):
+                return await self.provider.chat_complete(p, system_instructions=system_instructions, response_mime_type="application/json")
 
-            async def call_ai():
-                return await self.provider.chat_complete(prompt, system_instructions=system_instructions, response_mime_type="application/json")
+            from threatpilot.ai.response_parser import extract_json
 
-            response_text, usage = loop.run_until_complete(call_ai())
-            self.response_ready.emit(response_text)
-            
+            current_items = raw_items
+            pass_num = 1
+
+            while True:
+                num_batches = (len(current_items) + batch_size - 1) // batch_size
+                all_requirements = []
+                
+                self.progress.emit(f"Analyzing duplicate requirements - Iteration {pass_num} (Processing {num_batches} batches...)")
+                
+                for i in range(0, len(current_items), batch_size):
+                    batch_items = current_items[i:i + batch_size]
+                    raw_list_str = json.dumps(batch_items, indent=2)
+                    
+                    if pass_num == 1:
+                        prompt = f"Here is the list of raw mitigations to consolidate and review (Pass {pass_num}, Batch {i//batch_size + 1} of {num_batches}):\n\n{raw_list_str}"
+                    else:
+                        prompt = f"Here is a list of pre-consolidated mitigations. Please perform further review and consolidate any remaining duplicates using the exact same rules (Pass {pass_num}, Batch {i//batch_size + 1} of {num_batches}):\n\n{raw_list_str}"
+
+                    if i == 0 and pass_num == 1:
+                        self.prompt_ready.emit(f"SYSTEM: {system_instructions}\n\nUSER: {prompt}\n\n... (additional batches/passes may follow)")
+
+                    response_text, usage = loop.run_until_complete(call_ai(prompt))
+                    
+                    if i == 0 and pass_num == 1:
+                        self.response_ready.emit(f"{response_text}\n\n... (additional batch responses truncated for display)")
+
+                    if usage:
+                        total_prompt_tokens += usage.prompt_tokens
+                        total_completion_tokens += usage.completion_tokens
+
+                    batch_requirements = extract_json(response_text)
+                    if not batch_requirements or not isinstance(batch_requirements, list):
+                        self.failed.emit(f"Failed to parse AI response for Pass {pass_num}, Batch {i//batch_size + 1} as a JSON array.")
+                        return
+                    all_requirements.extend(batch_requirements)
+
+                if num_batches == 1:
+                    # Everything fit into a single batch and was consolidated. We are done!
+                    break
+                elif len(all_requirements) >= len(current_items):
+                    # Safety guard: AI wasn't able to consolidate any further across these batches.
+                    # Break to prevent an infinite loop.
+                    break
+                else:
+                    # Prepare for the next pass to combine the results of multiple batches
+                    current_items = all_requirements
+                    pass_num += 1
+
             # Log usage metadata
-            meta_log = f"METADATA: Tokens [In: {usage.prompt_tokens} | Out: {usage.completion_tokens} | Total: {usage.total_tokens}]"
+            total_tokens = total_prompt_tokens + total_completion_tokens
+            meta_log = f"METADATA: Tokens [In: {total_prompt_tokens} | Out: {total_completion_tokens} | Total: {total_tokens}] (Completed in {pass_num} passes)"
             self.response_ready.emit(meta_log)
 
-            # 3. Parse JSON response
-            from threatpilot.ai.response_parser import extract_json
-            requirements = extract_json(response_text)
-            if not requirements or not isinstance(requirements, list):
-                self.failed.emit("Failed to parse AI response as a JSON array of requirement objects.")
-                return
+            # Re-index req_ids for the final output
+            for idx, req in enumerate(all_requirements):
+                req['req_id'] = f"SR-{idx + 1}"
+
+            requirements = all_requirements
 
             # 4. Generate the Excel file if output_path is provided
             if self.output_path:
