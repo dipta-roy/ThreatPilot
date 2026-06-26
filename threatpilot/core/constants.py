@@ -131,3 +131,17 @@ RESTRICTED_PATH_KEYWORDS = [
     "windows", "system32", "program files", "programdata", 
     "etc", "var", "usr", "bin", "sbin", "tmp"
 ]
+
+# =============================================================================
+# AI Processing Constants
+# =============================================================================
+# The number of mitigations to send to the AI in a single batch during consolidation.
+# Smaller batch sizes improve map-reduce deduplication accuracy for local LLMs.
+AI_MITIGATION_BATCH_SIZE = 15
+
+# The minimum keyword-based Jaccard similarity (0.0 to 1.0) for two mitigations
+# to be considered duplicates and merged. Uses keyword extraction with stop-word
+# removal to compare only the distinguishing security terms, not boilerplate.
+# After stop-word removal, cross-control pairs score 0.0 while within-control
+# duplicates score 0.15-0.25. A threshold of 0.15 is the tested sweet spot.
+MITIGATION_SIMILARITY_THRESHOLD = 0.15

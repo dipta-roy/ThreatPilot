@@ -291,98 +291,205 @@ class MitigationRequirementsWorker(QThread):
                 self.failed.emit("No active mitigations found to process.")
                 return
 
-            # 2. Formulate prompt and batch process
+            # 2. Deterministic Text Similarity Deduplication
+            #    Local LLMs are unreliable for categorization tasks, so we use
+            #    keyword-based Jaccard similarity to group mitigations.
             import json
-            batch_size = 50
-            all_requirements = []
+            import re
+            from collections import defaultdict
+            from threatpilot.ai.response_parser import extract_json
+            from threatpilot.core.constants import MITIGATION_SIMILARITY_THRESHOLD, AI_MITIGATION_BATCH_SIZE
+            
             total_prompt_tokens = 0
             total_completion_tokens = 0
 
-            system_instructions = (
-                "You are an expert cybersecurity threat modeler and security architect.\n"
-                "Review the provided JSON list of mitigations identified for various components in a system architecture.\n"
-                "Some of these mitigations are duplicates or near-duplicates across components but worded differently.\n\n"
-                "Your task is to:\n"
-                "1. Consolidate and group only actual duplicates or near-identical semantic mitigations (e.g., 'Encrypt the data at rest' and 'Data at rest must be encrypted') into a single requirement.\n"
-                "2. AVOID OVER-CONSOLIDATION: Do not group distinct security controls or mechanisms into a single requirement just because they share a category or target component. For example:\n"
-                "   - Multi-Factor Authentication (MFA) and Web Application Firewall (WAF) are distinct controls and should NOT be combined.\n"
-                "   - Data Retention Policies are distinct from Log Masking/Redaction and should NOT be combined.\n"
-                "   - Secure Token Storage (Keystore/Keychain) is distinct from Cryptographic Token Validation (RS256/claims check) and should NOT be combined.\n"
-                "   - Mutual TLS (mTLS) is distinct from CORS/Origin validation and should NOT be combined.\n"
-                "3. If a raw mitigation text contains multiple distinct security controls (e.g., 'Enforce strict mTLS and implement database-level integrity checks'), split them and represent them in their respective consolidated requirements so that no security control is lost or hidden.\n"
-                "4. For each distinct requirement, generate:\n"
-                "   - REQ-ID: A unique ID starting with 'SR-' (e.g., SR-1, SR-2, ...)\n"
-                "   - Title: A concise, professional title (e.g., 'Data Encryption')\n"
-                "   - Mitigation: The consolidated mitigation statement\n"
-                "   - Short Description: A professional description explaining what the requirement is, which components/elements it applies to, and the recommended implementation.\n"
-                "   - Test case / Validation: Specific criteria or a test case to verify compliance.\n"
-                "   - Affected Components: A comma-separated list of components/elements where this mitigation needs to be implemented (derived from the 'component' values of the raw mitigations that were consolidated into this requirement).\n\n"
-                "Your response MUST be a valid JSON array of objects, where each object has these exact keys:\n"
-                "- 'req_id': string\n"
-                "- 'title': string\n"
-                "- 'mitigation': string\n"
-                "- 'short_description': string\n"
-                "- 'test_case': string\n"
-                "- 'affected_components': string (comma-separated, e.g., \"Web Server, Database\")\n\n"
-                "Do not include any formatting other than the JSON block. Do not wrap it in markdown block unless it's standard json block."
+            # --- Step A: Extract distinguishing keywords ---
+            # These boilerplate words appear in nearly every cybersecurity mitigation 
+            # and create false-positive matches between unrelated controls.
+            STOP_WORDS = {
+                "implement", "enforce", "ensure", "deploy", "use", "apply", "update",
+                "strict", "all", "the", "and", "or", "for", "with", "to", "in", "on",
+                "of", "a", "an", "that", "is", "are", "from", "by", "be", "not",
+                "before", "between", "within", "across", "such", "as", "should",
+                "must", "can", "may", "also", "using", "based", "provide",
+                "appropriate", "robust", "sensitive", "data", "security", "service",
+                "services", "system", "application", "including", "mechanisms",
+                "capabilities", "policies", "rules", "checks", "proper",
+                "only", "do", "does", "no", "if", "its", "their", "it",
+                "eg", "level", "specific", "directly", "explicitly",
+                "component", "server", "web", "cloud", "app", "logic",
+                "ensure", "prevent", "protect", "against",
+            }
+            
+            # Normalize synonyms to a single canonical term so that
+            # different words for the same security concept all match.
+            SYNONYMS = {
+                # Log cleaning controls
+                "scrub": "logclean", "scrubbing": "logclean", "redact": "logclean",
+                "redaction": "logclean", "masking": "logclean", "mask": "logclean",
+                "masks": "logclean", "masked": "logclean", "sanitization": "logclean",
+                "sanitize": "logclean", "sanitizing": "logclean", "scrubbed": "logclean",
+                # Hardware key storage
+                "keystore": "hwkey", "keychain": "hwkey", "enclave": "hwkey", "enclaves": "hwkey",
+                "hardwarebacked": "hwkey",
+                # Mutual TLS
+                "mtls": "mtls", "mutual": "mtls", "tls": "mtls",
+                "pinning": "mtls", "certificate": "mtls", "certificates": "mtls",
+                # Web Application Firewall
+                "waf": "waf", "firewall": "waf", "ratelimiting": "waf", "ddos": "waf",
+                # Privacy & Consent
+                "consent": "privcon", "privacy": "privcon", "disclosure": "privcon",
+                "transparency": "privcon",
+                # Multi-Factor Auth
+                "mfa": "mfa", "multifactor": "mfa",
+            }
+            
+            _keywords_cache = {}
+            def extract_keywords(text: str) -> set:
+                """Extract meaningful security keywords with synonym normalization."""
+                if text not in _keywords_cache:
+                    # Replace punctuation with spaces (not remove) so PII/PHI -> pii phi
+                    cleaned = re.sub(r'[^a-z0-9 ]', ' ', text.lower())
+                    words = cleaned.split()
+                    result = set()
+                    for w in words:
+                        if w in STOP_WORDS or len(w) <= 2:
+                            continue
+                        # Apply synonym mapping
+                        result.add(SYNONYMS.get(w, w))
+                    _keywords_cache[text] = result
+                return _keywords_cache[text]
+
+            def keyword_similarity(a: str, b: str) -> float:
+                """Jaccard similarity on keywords (intersection / union)."""
+                ka, kb = extract_keywords(a), extract_keywords(b)
+                if not ka or not kb:
+                    return 0.0
+                intersection = ka & kb
+                if not intersection:
+                    return 0.0
+                union = ka | kb
+                return len(intersection) / len(union) if union else 0.0
+
+            # --- Step B: Multi-representative grouping ---
+            #     A new item joins a group if it is similar to ANY existing member.
+            #     This handles cases where items within the same control use very 
+            #     different vocabulary (e.g., "log scrubbing" vs "PII masking").
+            groups = []  # List of [list of indices]
+            
+            n = len(raw_items)
+            last_pct = 0
+            
+            self.progress.emit(f"Analyzing similarity across {n} mitigations...")
+            
+            for i in range(n):
+                best_group = None
+                best_sim = 0.0
+                
+                for g_idx, members in enumerate(groups):
+                    # Check against all members (not just centroid)
+                    for m_idx in members:
+                        sim = keyword_similarity(raw_items[i]["mitigation"], raw_items[m_idx]["mitigation"])
+                        if sim >= MITIGATION_SIMILARITY_THRESHOLD and sim > best_sim:
+                            best_sim = sim
+                            best_group = g_idx
+                            break  # Found a match in this group, no need to check other members
+                
+                if best_group is not None:
+                    groups[best_group].append(i)
+                else:
+                    groups.append([i])
+                
+                # Emit progress every 10%
+                pct = int((i + 1) / n * 100)
+                if pct >= last_pct + 10:
+                    last_pct = pct
+                    self.progress.emit(f"Analyzing similarity... {pct}% ({i+1}/{n})")
+
+            self.progress.emit(f"Found {len(groups)} distinct security controls from {n} raw mitigations...")
+
+            # --- Step C: Consolidate each group ---
+            all_requirements = []
+            for group_indices in groups:
+                group_items = [raw_items[i] for i in group_indices]
+                
+                # Merge affected components
+                components = set()
+                for item in group_items:
+                    for comp in item["component"].split(","):
+                        components.add(comp.strip())
+                
+                # Pick the longest mitigation text as the representative
+                best_item = max(group_items, key=lambda x: len(x["mitigation"]))
+                best_mitigation = best_item["mitigation"]
+                best_title = best_item["threat_title"]
+                
+                all_requirements.append({
+                    "mitigation": best_mitigation,
+                    "short_description": f"Security control to mitigate: {best_title}.",
+                    "test_case": f"Verify implementation addresses: {best_title}.",
+                    "affected_components": ", ".join(sorted(components)),
+                    "_threat_title": best_title
+                })
+
+            # --- Step D: Use AI to generate clean titles (batched for scalability) ---
+            self.progress.emit("Generating requirement titles...")
+            
+            title_system = (
+                "You are a security architect. For each mitigation below, output a short 2-5 word title.\n"
+                "Output a JSON object mapping the index to the title.\n"
+                "Example: {\"0\": \"Multi-Factor Authentication\", \"1\": \"Log Masking\"}\n"
+                "Do not include any text outside the JSON object."
             )
 
             async def call_ai(p):
-                return await self.provider.chat_complete(p, system_instructions=system_instructions, response_mime_type="application/json")
+                return await self.provider.chat_complete(p, system_instructions=title_system, response_mime_type="application/json")
 
-            from threatpilot.ai.response_parser import extract_json
-
-            current_items = raw_items
-            pass_num = 1
-
-            while True:
-                num_batches = (len(current_items) + batch_size - 1) // batch_size
-                all_requirements = []
+            title_batch_size = AI_MITIGATION_BATCH_SIZE
+            num_title_batches = (len(all_requirements) + title_batch_size - 1) // title_batch_size
+            
+            for batch_idx in range(num_title_batches):
+                start = batch_idx * title_batch_size
+                end = min(start + title_batch_size, len(all_requirements))
+                batch_reqs = all_requirements[start:end]
                 
-                self.progress.emit(f"Analyzing duplicate requirements - Iteration {pass_num} (Processing {num_batches} batches...)")
+                self.progress.emit(f"Generating titles (Batch {batch_idx+1}/{num_title_batches})...")
                 
-                for i in range(0, len(current_items), batch_size):
-                    batch_items = current_items[i:i + batch_size]
-                    raw_list_str = json.dumps(batch_items, indent=2)
-                    
-                    if pass_num == 1:
-                        prompt = f"Here is the list of raw mitigations to consolidate and review (Pass {pass_num}, Batch {i//batch_size + 1} of {num_batches}):\n\n{raw_list_str}"
-                    else:
-                        prompt = f"Here is a list of pre-consolidated mitigations. Please perform further review and consolidate any remaining duplicates using the exact same rules (Pass {pass_num}, Batch {i//batch_size + 1} of {num_batches}):\n\n{raw_list_str}"
+                title_map = {str(i): req["mitigation"][:120] for i, req in enumerate(batch_reqs)}
+                title_prompt = f"Generate a short title for each mitigation:\n\n{json.dumps(title_map, indent=2)}"
+                
+                if batch_idx == 0:
+                    self.prompt_ready.emit(f"SYSTEM: {title_system}\n\nUSER: {title_prompt}")
 
-                    if i == 0 and pass_num == 1:
-                        self.prompt_ready.emit(f"SYSTEM: {system_instructions}\n\nUSER: {prompt}\n\n... (additional batches/passes may follow)")
+                response_text, usage = loop.run_until_complete(call_ai(title_prompt))
+                
+                if batch_idx == 0:
+                    self.response_ready.emit(response_text)
+                
+                if usage:
+                    total_prompt_tokens += usage.prompt_tokens
+                    total_completion_tokens += usage.completion_tokens
 
-                    response_text, usage = loop.run_until_complete(call_ai(prompt))
-                    
-                    if i == 0 and pass_num == 1:
-                        self.response_ready.emit(f"{response_text}\n\n... (additional batch responses truncated for display)")
+                titles = extract_json(response_text)
+                if titles and isinstance(titles, dict):
+                    for idx_str, title in titles.items():
+                        try:
+                            idx = int(idx_str)
+                            if 0 <= idx < len(batch_reqs):
+                                all_requirements[start + idx]["title"] = title.strip()
+                        except (ValueError, AttributeError):
+                            continue
 
-                    if usage:
-                        total_prompt_tokens += usage.prompt_tokens
-                        total_completion_tokens += usage.completion_tokens
-
-                    batch_requirements = extract_json(response_text)
-                    if not batch_requirements or not isinstance(batch_requirements, list):
-                        self.failed.emit(f"Failed to parse AI response for Pass {pass_num}, Batch {i//batch_size + 1} as a JSON array.")
-                        return
-                    all_requirements.extend(batch_requirements)
-
-                if num_batches == 1:
-                    # Everything fit into a single batch and was consolidated. We are done!
-                    break
-                elif len(all_requirements) >= len(current_items):
-                    # Safety guard: AI wasn't able to consolidate any further across these batches.
-                    # Break to prevent an infinite loop.
-                    break
-                else:
-                    # Prepare for the next pass to combine the results of multiple batches
-                    current_items = all_requirements
-                    pass_num += 1
+            # Ensure every requirement has a title (fallback to threat title)
+            for req in all_requirements:
+                if "title" not in req or not req["title"]:
+                    req["title"] = req.get("_threat_title", "Security Control")
+                # Clean up internal field
+                req.pop("_threat_title", None)
 
             # Log usage metadata
             total_tokens = total_prompt_tokens + total_completion_tokens
-            meta_log = f"METADATA: Tokens [In: {total_prompt_tokens} | Out: {total_completion_tokens} | Total: {total_tokens}] (Completed in {pass_num} passes)"
+            meta_log = f"METADATA: Tokens [In: {total_prompt_tokens} | Out: {total_completion_tokens} | Total: {total_tokens}] (Grouped {len(raw_items)} mitigations into {len(all_requirements)} requirements)"
             self.response_ready.emit(meta_log)
 
             # Re-index req_ids for the final output
@@ -443,7 +550,11 @@ class MitigationReasoningWorker(QThread):
             )
 
             async def call_ai():
-                return await self.provider.chat_complete(prompt, system_instructions=system_instructions)
+                return await self.provider.chat_complete(
+                    prompt, 
+                    system_instructions=system_instructions,
+                    response_mime_type="text/plain"
+                )
 
             response_text, usage = loop.run_until_complete(call_ai())
             self.completed.emit(response_text, self.requirement)

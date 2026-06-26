@@ -30,55 +30,94 @@ def map_element_type(et_str: str) -> ElementType:
 def extract_json(text: str) -> Optional[Any]:
     """Extracts and repairs JSON or Python literal objects from raw text strings."""
     if not text: return None
-    if (m := re.search(r"```(?:json|python)?\s*([\s\S]*?)(?:```|$)", text, re.IGNORECASE)): content = m.group(1).strip()
-    else:
+    
+    # Strip think tags from reasoning models
+    text = re.sub(r"<think>[\s\S]*?</think>", "", text, flags=re.IGNORECASE)
+
+    # Find all possible JSON blocks
+    blocks = re.findall(r"```(?:json|python)?\s*([\s\S]*?)(?:```|$)", text, re.IGNORECASE)
+    
+    # If no markdown blocks, fallback to brace matching
+    if not blocks:
         fb, fk = text.find("{"), text.find("[")
         start = fb if fb != -1 and (fk == -1 or fb < fk) else fk
-        if start == -1: return None
-        end = max(text.rfind("}"), text.rfind("]"))
-        content = text[start:end+1].strip() if end != -1 else text[start:].strip()
+        if start != -1:
+            end = max(text.rfind("}"), text.rfind("]"))
+            blocks.append(text[start:end+1].strip() if end != -1 else text[start:].strip())
 
-    if not content: return None
-    clean = re.sub(r",\s*([\]\}])", r"\1", content)
-    for method in [json.loads, ast.literal_eval]:
-        try: return method(clean)
-        except Exception: continue
+    # Reverse blocks so we check the last block first (usually the actual output)
+    for content in reversed(blocks):
+        if not content: continue
+        clean = re.sub(r",\s*([\]\}])", r"\1", content)
+        for method in [json.loads, ast.literal_eval]:
+            try: return method(clean)
+            except Exception: continue
 
-    # Advanced repair loop
-    stack = []; in_str = False; q_char = None; escaped = False
-    for char in clean:
-        if escaped: escaped = False; continue
-        if char == "\\": escaped = True; continue
-        if char in ('"', "'"):
-            if in_str:
-                if char == q_char: stack.pop(); in_str = False; q_char = None
-            else: stack.append(char); in_str = True; q_char = char
-        elif not in_str:
-            if char == "{": stack.append("}")
-            elif char == "[": stack.append("]")
-            elif char in ("}", "]") and stack and stack[-1] == char: stack.pop()
+        # Advanced repair loop
+        stack = []; in_str = False; q_char = None; escaped = False
+        for char in clean:
+            if escaped: escaped = False; continue
+            if char == "\\": escaped = True; continue
+            if char in ('"', "'"):
+                if in_str:
+                    if char == q_char: stack.pop(); in_str = False; q_char = None
+                else: stack.append(char); in_str = True; q_char = char
+            elif not in_str:
+                if char == "{": stack.append("}")
+                elif char == "[": stack.append("]")
+                elif char in ("}", "]") and stack and stack[-1] == char: stack.pop()
 
-    rep = clean; t_stack = stack[:]
-    if in_str: rep += q_char; t_stack.pop() if t_stack and t_stack[-1] == q_char else None
-    while t_stack:
-        delim = t_stack.pop(); rep = rep.strip()
-        if rep.endswith(","): rep = rep[:-1].strip()
-        rep += delim
-        
-    for method in [json.loads, ast.literal_eval]:
-        try: return method(re.sub(r",\s*([\]\}])", r"\1", rep))
-        except Exception: continue
+        rep = clean; t_stack = stack[:]
+        if in_str: rep += q_char; t_stack.pop() if t_stack and t_stack[-1] == q_char else None
+        while t_stack:
+            delim = t_stack.pop(); rep = rep.strip()
+            if rep.endswith(","): rep = rep[:-1].strip()
+            rep += delim
+            
+        for method in [json.loads, ast.literal_eval]:
+            try: 
+                result = method(re.sub(r",\s*([\]\}])", r"\1", rep))
+                if result is not None:
+                    return result
+            except Exception: continue
 
-    # Truncated JSON recovery
-    for marker, wrapper in [("[", "]"), ("{", "}")]:
-        if content.startswith(marker):
-            lb = content.rfind("}")
-            while lb != -1:
-                cand = re.sub(r",\s*([\]\}])", r"\1", (content[:lb + 1].strip().rstrip(",") + wrapper))
-                try: return json.loads(cand)
-                except Exception:
-                    try: return ast.literal_eval(cand)
-                    except Exception: lb = content.rfind("}", 0, lb)
+        # Truncated JSON recovery
+        lb = max(content.rfind("}"), content.rfind("]"))
+        while lb != -1:
+            cand_text = content[:lb + 1]
+            
+            # Balance brackets on cand_text
+            stack = []; in_str = False; q_char = None; escaped = False
+            for char in cand_text:
+                if escaped: escaped = False; continue
+                if char == "\\": escaped = True; continue
+                if char in ('"', "'"):
+                    if in_str:
+                        if char == q_char: stack.pop(); in_str = False; q_char = None
+                    else: stack.append(char); in_str = True; q_char = char
+                elif not in_str:
+                    if char == "{": stack.append("}")
+                    elif char == "[": stack.append("]")
+                    elif char in ("}", "]") and stack and stack[-1] == char: stack.pop()
+            
+            rep = cand_text; t_stack = stack[:]
+            if in_str: 
+                rep += q_char
+                if t_stack and t_stack[-1] == q_char: t_stack.pop()
+            while t_stack:
+                delim = t_stack.pop(); rep = rep.strip()
+                if rep.endswith(","): rep = rep[:-1].strip()
+                rep += delim
+                
+            for method in [json.loads, ast.literal_eval]:
+                try: 
+                    result = method(re.sub(r",\s*([\]\}])", r"\1", rep))
+                    if result is not None:
+                        return result
+                except Exception: pass
+                
+            lb = max(content.rfind("}", 0, lb), content.rfind("]", 0, lb))
+                        
     return None
 
 def _normalize_impact(val: Any) -> str:
