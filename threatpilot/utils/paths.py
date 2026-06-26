@@ -36,3 +36,13 @@ def get_app_icon_path() -> Path:
 def get_recent_project_file() -> Path:
     """Returns the filesystem path to the recent project tracking metadata."""
     return RECENT_PROJECTS_FILE
+
+def get_designer_dist_path() -> Path:
+    """Returns the path to the Architecture Designer's built static files (dist)."""
+    import sys
+    if getattr(sys, "frozen", False):
+        # cx_Freeze places include_files relative to the executable root
+        return Path(sys.executable).parent / "designer" / "dist"
+    else:
+        # Development mode
+        return PROJECT_ROOT / "designer" / "dist"

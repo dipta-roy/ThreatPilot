@@ -126,6 +126,11 @@ class MenuManager:
 
     def _setup_arch_menu(self, mb: QMenuBar):
         menu = mb.addMenu("&Architecture")
+        self._mw._action_open_designer = QAction("Architecture Workspace", self._mw)
+        self._mw._action_open_designer.setShortcut(QKeySequence("Ctrl+D"))
+        menu.addAction(self._mw._action_open_designer)
+        
+        menu.addSeparator()
         self._mw._action_edit_elements = QAction("Manage &System Elements...", self._mw)
         menu.addAction(self._mw._action_edit_elements)
         
@@ -143,6 +148,8 @@ class MenuManager:
         tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self._mw.addToolBar(tb)
         
+        tb.addAction(self._mw._action_open_designer)
+        tb.addSeparator()
         tb.addAction(self._mw._action_import_diagram)
         
         self._mw._action_detect_objects = QAction("Detect Elements", self._mw)

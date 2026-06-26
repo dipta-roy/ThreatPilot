@@ -38,7 +38,11 @@ ThreatPilot is designed with a "Security-First" mindset, particularly concerning
 - **Mandatory Consent**: A "Data Privacy Acknowledgement" is triggered before any architectural data is sent to cloud-based AI providers (e.g., Google Gemini).
 - **Log Redaction**: ThreatPilot automatically redacts identified API keys and secrets from application logs and error traces.
 
-### 4. Export Security
+### 4. Local Web Server Security (Architecture Designer)
+- **Localhost Binding**: The built-in HTTP server for the visual designer strictly binds to the loopback interface (`127.0.0.1`) only, preventing external devices or remote attackers on the same network from accessing or modifying the project's DFD architecture.
+- **REST Endpoint Isolation**: The `/api/project` load and save endpoints only interact with the currently active workspace directory of the desktop application, preventing arbitrary file access or directory traversal.
+
+### 5. Export Security
 - **Excel Formula Injection**: All Excel exports are sanitized to prevent CSV/Formula injection by escaping leading control characters (`=`, `+`, `-`, `@`).
 - **Markdown Integrity**: Markdown exports are sanitized to prevent structural injection and ensure report fidelity.
 

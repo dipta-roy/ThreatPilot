@@ -62,6 +62,9 @@ class Flow(BaseModel):
     start_y: float = 0.0
     end_x: float = 0.0
     end_y: float = 0.0
+    authentication: str = ""
+    encryption: str = ""
+    assets: list[str] = Field(default_factory=list)
 
 class TrustBoundary(BaseModel):
     """A boundary group encompassing multiple components and flows."""

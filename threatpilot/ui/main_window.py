@@ -75,6 +75,7 @@ logger = get_logger(__name__)
 
 class MainWindow(QMainWindow):
     """Primary application window for project management and threat modeling."""
+    designer_saved_signal = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -88,6 +89,8 @@ class MainWindow(QMainWindow):
 
         self._worker_mgr = WorkerManager(self)
         self._menu_mgr = MenuManager(self)
+        self._designer_server_thread = None
+        self.designer_saved_signal.connect(self._on_designer_saved_gui)
 
         self._setup_window()
         self._setup_central_widget()
@@ -386,6 +389,7 @@ class MainWindow(QMainWindow):
         self._action_export_ai_mitigations.triggered.connect(self._on_export_ai_mitigations)
         self._action_about.triggered.connect(self._on_about)
         self._action_detect_objects.triggered.connect(self._on_detect_objects)
+        self._action_open_designer.triggered.connect(self._on_open_designer)
         self._action_edit_elements.triggered.connect(self._on_edit_elements)
         self._action_edit_assets.triggered.connect(self._on_edit_assets)
         self._action_edit_boundaries.triggered.connect(self._on_edit_boundaries)
@@ -443,6 +447,12 @@ class MainWindow(QMainWindow):
                     w.terminate()
                     w.wait()
 
+        # Clear filesystem watcher
+        if hasattr(self, "_file_watcher") and self._file_watcher:
+            files = self._file_watcher.files()
+            if files:
+                self._file_watcher.removePaths(files)
+
         self._project = None
         self._current_diagram = None
         self._project_explorer.set_project(None)
@@ -497,6 +507,20 @@ class MainWindow(QMainWindow):
 
         self.statusBar().showMessage(f"Project '{self._project.project_name}' loaded.")
         
+        # Setup filesystem watcher
+        if hasattr(self, "_file_watcher") and self._file_watcher:
+            files = self._file_watcher.files()
+            if files:
+                self._file_watcher.removePaths(files)
+        else:
+            from PySide6.QtCore import QFileSystemWatcher
+            self._file_watcher = QFileSystemWatcher(self)
+            self._file_watcher.fileChanged.connect(self._on_architecture_file_changed)
+            
+        arch_path = Path(directory) / "architecture.json"
+        if arch_path.exists():
+            self._file_watcher.addPath(str(arch_path))
+
         recent_file = get_recent_project_file()
         recent_file.write_text(str(directory))
 
@@ -1671,3 +1695,84 @@ class MainWindow(QMainWindow):
         entry = f"<span style='color: {time_color};'>[{time_str}]</span> <b style='color: {color};'>{category}</b>: {sanitize_text(text)}<br>"
         self._ai_log_view.append(entry)
         self._ai_log_view.verticalScrollBar().setValue(self._ai_log_view.verticalScrollBar().maximum())
+
+    def _on_open_designer(self) -> None:
+        """Starts the local REST server (if not already running) and opens the Architecture Designer in the browser."""
+        if not self._project:
+            QMessageBox.warning(self, "No Project", "Please open or create a project first before opening the Architecture Designer.")
+            return
+
+        from threatpilot.core.designer_server import DesignerServerThread
+        
+        # Check if the server is running, or start it
+        if not hasattr(self, "_designer_server_thread") or self._designer_server_thread is None:
+            self.statusBar().showMessage("Starting Architecture Designer server...")
+            self._designer_server_thread = DesignerServerThread(
+                main_window=self,
+                host="127.0.0.1",
+                port=8080,
+                on_save_callback=self._on_designer_saved
+            )
+            self._designer_server_thread.start()
+        
+        # Launch browser to http://127.0.0.1:8080/
+        url = QUrl("http://127.0.0.1:8080/")
+        QDesktopServices.openUrl(url)
+        self.statusBar().showMessage("Opened Architecture Designer in web browser.")
+
+    def _on_designer_saved(self) -> None:
+        """Callback from HTTP server thread that emits a signal to update UI thread-safely."""
+        self.designer_saved_signal.emit()
+
+    def _on_designer_saved_gui(self) -> None:
+        """Reloads the project from disk when the designer saves, ensuring UI sync."""
+        if not self._project:
+            return
+        
+        try:
+            # Reblock watching to avoid recursive loops during internal updates
+            if hasattr(self, "_file_watcher") and self._file_watcher:
+                files = self._file_watcher.files()
+                if files:
+                    self._file_watcher.removePaths(files)
+
+            reloaded = load_project(self._project.project_path)
+            
+            # Update current project references in UI components
+            self._project = reloaded
+            self._project_explorer.set_project(self._project)
+            self._stride_threat_ledger.set_register(self._project.threat_register)
+            self._linddun_threat_ledger.set_register(self._project.threat_register)
+            self._risk_assessment_panel.set_project(self._project)
+            self._vulnerability_panel.set_project(self._project)
+            self._properties_panel.set_project(self._project)
+            self._mitigation_requirements_panel.set_project(self._project)
+            
+            # Redraw canvas
+            self._canvas.clear_diagram()
+            if self._project.diagrams:
+                self._on_diagram_activated(self._project.diagrams[0])
+            else:
+                self._on_project_modified(refresh_properties=True)
+                
+            # Re-register file watch
+            if hasattr(self, "_file_watcher") and self._file_watcher:
+                arch_path = Path(self._project.project_path) / "architecture.json"
+                if arch_path.exists():
+                    self._file_watcher.addPath(str(arch_path))
+
+            self.statusBar().showMessage("Architecture Designer edits synced successfully.")
+        except Exception as e:
+            logger.error(f"Failed to sync designer edits: {e}")
+            self.statusBar().showMessage(f"Error syncing designer: {e}")
+
+    def _on_architecture_file_changed(self, path: str) -> None:
+        """Triggered when architecture.json is modified outside the UI (e.g. by designer)."""
+        # Trigger reload thread-safely via custom signal
+        self.designer_saved_signal.emit()
+
+    def closeEvent(self, event) -> None:
+        """Cleans up the designer server when the MainWindow is closed."""
+        if hasattr(self, "_designer_server_thread") and self._designer_server_thread is not None:
+            self._designer_server_thread.stop()
+        super().closeEvent(event)

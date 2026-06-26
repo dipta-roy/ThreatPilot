@@ -43,7 +43,8 @@
 - **Architecture Export**: Save your modeled architecture as structured JSON or export annotated diagrams.
 
 ### 5. Advanced UX & Workflow
-- **Modern UI**: A premium desktop application built with **PySide6**, featuring **Dark** and **Light** theme support.
+- **Modern UI**: A premium desktop application built with **PySide6**, featuring seamless **Dark** and **Light** theme support.
+- **Interactive Web-Based Architecture Designer**: A built-in React Flow-powered visual modeler (served via a lightweight, standard library-based HTTP server) supporting drag-and-drop elements, boundary nesting, carried assets management, automated ASCII/Mermaid exports, real-time validation warnings, and instant sync back to the PySide6 desktop app.
 - **Undo/Redo System**: Full state management for editing components, flows, and trust boundaries.
 - **Quick Start Wizard**: Onboarding experience for new users to bootstrap their first project in seconds.
 - **Human-in-the-Loop**: Manually refine detected components, add custom threats, or override AI-generated assessments via the Project Explorer.
@@ -76,6 +77,8 @@ python main.py
 
 ## Architecture Stack
 - **UI Framework**: PySide6 (Qt for Python).
+- **Web-Based Designer**: React, TypeScript, React Flow, and Tailwind CSS.
+- **Local Web Server**: Native Python `http.server` running on a background thread.
 - **Data & Validation**: Pydantic (v2).
 - **AI Orchestration**: Custom asynchronous interface supporting Ollama and Gemini.
 - **Networking**: HTTPX.
@@ -125,7 +128,7 @@ Download Code Verification Certificate: [Dipta Roy - Code Verification Certifica
 
 - VERIFY APPLICATION AUTHENTICITY
 
-1. To confirm the application is genuine, right click on ThreatPilot-1.7.2-win64.msi and click on Properties.
+1. To confirm the application is genuine, right click on ThreatPilot-1.8.0-win64.msi and click on Properties.
 2. Go to the Digital Signatures tab.
 3. Select "Signed_By_Dipta" from the Embedded Signatures list, then choose Details.
 4. In the General tab, you should see the message "This digital signature is OK."
@@ -133,5 +136,5 @@ Download Code Verification Certificate: [Dipta Roy - Code Verification Certifica
 
 Once verified,
 ```
-Run ThreatPilot-1.7.2-win64.msi and install the application.
+Run ThreatPilot-1.8.0-win64.msi and install the application.
 ```

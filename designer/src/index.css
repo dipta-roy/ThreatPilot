@@ -1,0 +1,98 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-slate-50 dark:bg-background text-slate-800 dark:text-text font-sans antialiased;
+  }
+}
+
+/* Glassmorphism Panel styles */
+.glass-panel {
+  @apply bg-white/75 dark:bg-card/75 backdrop-blur border border-slate-200/60 dark:border-border/60;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  @apply bg-slate-100 dark:bg-slate-950;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-slate-300 dark:bg-slate-800 rounded-sm;
+}
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-slate-400 dark:bg-slate-700;
+}
+
+/* React Flow custom styling */
+.react-flow__renderer {
+  @apply bg-slate-50 dark:bg-background;
+}
+
+.react-flow__handle {
+  width: 8px;
+  height: 8px;
+  background: #3b82f6;
+  @apply border-2 border-white dark:border-background;
+  transition: all 0.2s ease;
+}
+
+.react-flow__handle:hover {
+  width: 12px;
+  height: 12px;
+  background: #60a5fa;
+}
+
+.react-flow__edge-path {
+  @apply stroke-slate-400 dark:stroke-slate-600;
+  stroke-width: 2.5;
+  transition: stroke 0.2s ease, stroke-width 0.2s ease;
+}
+
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke: #0ea5e9;
+  stroke-dasharray: 5;
+  animation: dash 1s linear infinite;
+  stroke-width: 3.5;
+}
+
+.react-flow__edge:hover .react-flow__edge-path {
+  stroke: #0ea5e9;
+  stroke-width: 3;
+}
+
+@keyframes dash {
+  from {
+    stroke-dashoffset: 10;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* Minimap adjustments */
+.react-flow__minimap {
+  @apply bg-white/80 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-lg !important;
+}
+
+.react-flow__controls-button {
+  @apply bg-white dark:bg-card border border-slate-200 dark:border-border text-slate-500 dark:text-slate-400 fill-slate-500 dark:fill-slate-400 !important;
+}
+
+.react-flow__controls-button:hover {
+  @apply bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 !important;
+}
+
+/* Edge Label Styling */
+.react-flow__edge-textbg {
+  @apply fill-white dark:fill-card border border-slate-200 dark:border-border !important;
+  rx: 4px;
+}
+
+.react-flow__edge-text {
+  @apply fill-slate-800 dark:fill-slate-300 font-semibold text-[10px] !important;
+}

@@ -10,20 +10,22 @@ The application follows a modular, layered architecture that separates presentat
 
 ```mermaid
 graph TD
-    subgraph "User Interface (PySide6)"
+    subgraph "User Interface (Desktop & Web)"
         MW[MainWindow] --> DC[Diagram Canvas]
         MW --> PP[Properties Panel]
         MW --> TP[Threat Panel]
         MW --> RA[Risk Assessment]
         MW --> PE[Project Explorer]
+        MW -- "Launches Browser" --> WD[Web Architecture Designer]
     end
 
-    subgraph "Core Logic"
+    subgraph "Core Logic & Infrastructure"
         PM[Project Manager] --> DM[Domain Models]
         PM --> TM[Threat Model]
         PM --> VR[Vulnerability Register]
         US[Undo System] --> MW
         DFD[DFD Converter]
+        DS[Designer Server] --> PM
     end
 
     subgraph "AI Analysis Engine"
@@ -40,6 +42,7 @@ graph TD
     end
 
     DC <--> PM
+    WD <--> DS
     PM <--> JSON
     MW <--> TA
     AP <--> ENV
@@ -67,7 +70,13 @@ Handles the underlying logic of threat modeling and state management.
 - **Project Manager**: Orchestrates project lifecycles using a **Multi-File Persistence** strategy (partitioning data into `project.json`, `architecture.json`, `threats.json`, and `vulnerabilities.json`).
 - **Undo System**: Uses `QUndoStack` for multi-action undo/redo capabilities.
 
-### 3. AI Analysis Engine
+### 3. Web Architecture Designer Layer
+An alternative interactive workspace built as a React single page application (`f:/ThreatPilot/designer`) and integrated via a standard library web server.
+- **Designer Server (`designer_server.py`)**: A lightweight multi-threaded HTTP server built on Python's native `http.server`. It hosts the visual designer frontend assets and exposes `/api/project` REST endpoints to read and write diagram changes dynamically.
+- **React Flow Canvas & Properties Panel**: A modern interactive canvas using Tailwind CSS and React Flow with full support for light/dark themes, trust boundary containment/resizing, carried assets management, and instant file sync.
+- **Validation & Export Panels**: Generates real-time structural warnings, ASCII diagram previews, and Mermaid code exports directly in the web UI.
+
+### 4. AI Analysis Engine
 A sophisticated pipeline that transforms architectural diagrams into structured security insights.
 - **Threat Analyzer**: The primary orchestrator that segments large architectures to fit within LLM context windows. It also includes an **XAI Reasoning engine** for generating deep technical justifications.
 - **AI Providers**: Pluggable interfaces for multiple backends:
@@ -76,7 +85,7 @@ A sophisticated pipeline that transforms architectural diagrams into structured 
 - **Prompt Builder**: Dynamically builds multi-shot, instructional prompts containing DFD context, security posture, and strict output requirements (including MITRE ATT&CK and LINDDUN context), with metadata sanitization to prevent injection.
 - **Response Parser**: A resilient parser with partial-JSON recovery logic to extract structured threats, mapping inconsistent AI keys to the unified `Threat` model.
 
-### 4. Security & Data
+### 5. Security & Data
 - **Project Files**: Projects are stored as structured JSON files.
 - **Credential Storage**: API keys are encrypted using Fernet (AES-128-CBC) and stored in `config.env`.
 - **Key Management**: Uses PBKDF2 for key derivation, supporting both OS `keyring` and session-based environment variables for encryption.

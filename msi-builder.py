@@ -55,11 +55,12 @@ build_exe_options = {
     ],
     "include_files": [
         ("threatpilot/resources", "threatpilot/resources"),
+        ("designer/dist", "designer/dist"),
     ],
     "excludes": [
         "tkinter", "unittest", "cv2", "numpy", 
         "pandas", "pyarrow", "matplotlib", 
-        "scipy", "notebook", "email", "http.server",
+        "scipy", "notebook", "email",
         "xmlrpc", "PySide6.QtWebEngine", "PySide6.QtWebEngineCore",
         "PySide6.QtQuick", "PySide6.QtQuickWidgets", "PySide6.Qt3D",
         "PySide6.QtRemoteObjects", "PySide6.QtCharts", "PySide6.QtSql",
