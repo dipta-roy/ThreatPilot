@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Node, Edge, Connection, addEdge, applyNodeChanges, applyEdgeChanges, NodeChange, EdgeChange } from 'reactflow';
+import { Node, Edge, Connection, addEdge, applyNodeChanges, applyEdgeChanges, NodeChange, EdgeChange, MarkerType } from 'reactflow';
 
 export interface Asset {
   asset_id: string;
@@ -9,6 +9,44 @@ export interface Asset {
   criticality: 'High' | 'Medium' | 'Low';
   is_out_of_scope: boolean;
   out_of_scope_justification: string;
+}
+
+export interface Threat {
+  threat_id: string;
+  category: string;
+  title: string;
+  description: string;
+  impact: string;
+  likelihood: number;
+  mitigation: string;
+  is_accepted_risk: boolean;
+  acceptance_justification: string;
+  vulnerability_ids: string[];
+  affected_components: string;
+  cvss_score: number;
+  mitre_attack_id: string;
+  reasoning?: string;
+  cvss_vector: string;
+  affected_asset_type?: string;
+}
+
+export interface Vulnerability {
+  vulnerability_id: string;
+  title: string;
+  description: string;
+  mitigation: string;
+  status: string;
+  reasoning?: string;
+}
+
+export interface MitigationRequirement {
+  req_id: string;
+  title: string;
+  affected_components: string;
+  mitigation: string;
+  short_description: string;
+  test_case: string;
+  reasoning?: string;
 }
 
 export interface ComponentData {
@@ -66,18 +104,24 @@ interface DesignerState {
   selectedElementId: string | null;
   selectedElementType: 'component' | 'boundary' | 'flow' | 'asset' | null;
 
+  threats: Threat[];
+  vulnerabilities: Vulnerability[];
+  mitigationRequirements: MitigationRequirement[];
+
   // UI state
   isLoading: boolean;
   isSaving: boolean;
   saveError: string | null;
   hasUnsavedChanges: boolean;
   isDarkMode: boolean;
+  showRiskInCanvas: boolean;
   
   // History for undo/redo
   history: { nodes: Node[]; edges: Edge[]; assets: Asset[]; boundaries: BoundaryData[] }[];
   historyIndex: number;
 
   // Actions
+  toggleRiskInCanvas: () => void;
   fetchProject: () => Promise<void>;
   saveProject: (isAutosave?: boolean) => Promise<void>;
   
@@ -95,9 +139,17 @@ interface DesignerState {
   updateBoundary: (id: string, updates: Partial<BoundaryData>) => void;
   updateFlow: (id: string, updates: Partial<FlowData>) => void;
   updateAsset: (id: string, updates: Partial<Asset>) => void;
-  
   deleteElement: (id: string, type: 'component' | 'boundary' | 'flow' | 'asset') => void;
   selectElement: (id: string | null, type: 'component' | 'boundary' | 'flow' | 'asset' | null) => void;
+  addThreat: (threat: Omit<Threat, 'threat_id'>) => void;
+  updateThreat: (id: string, updates: Partial<Threat>) => void;
+  deleteThreat: (id: string) => void;
+  addVulnerability: (vuln: Omit<Vulnerability, 'vulnerability_id'>) => void;
+  updateVulnerability: (id: string, updates: Partial<Vulnerability>) => void;
+  deleteVulnerability: (id: string) => void;
+  addMitigationRequirement: (req: Omit<MitigationRequirement, 'req_id'>) => void;
+  updateMitigationRequirement: (id: string, updates: Partial<MitigationRequirement>) => void;
+  deleteMitigationRequirement: (id: string) => void;
 
   // History Actions
   pushHistory: () => void;
@@ -109,6 +161,81 @@ interface DesignerState {
 // Generate high quality V4 UUIDs or Hex equivalent
 const generateId = () => Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 
+export interface CVSSMetrics {
+  AV: 'N' | 'A' | 'L' | 'P';
+  AC: 'L' | 'H';
+  PR: 'N' | 'L' | 'H';
+  UI: 'N' | 'R';
+  S: 'U' | 'C';
+  C: 'N' | 'L' | 'H';
+  I: 'N' | 'L' | 'H';
+  A: 'N' | 'L' | 'H';
+}
+
+export const parseCVSSVector = (v: string): CVSSMetrics => {
+  const defaults: CVSSMetrics = { AV: 'N', AC: 'L', PR: 'N', UI: 'N', S: 'U', C: 'H', I: 'H', A: 'H' };
+  if (!v || !v.startsWith('CVSS:3.')) return defaults;
+  const parts = v.split('/');
+  const metrics: CVSSMetrics = { ...defaults };
+  parts.forEach(p => {
+    const idx = p.indexOf(':');
+    if (idx !== -1) {
+      const key = p.substring(0, idx) as keyof CVSSMetrics;
+      const val = p.substring(idx + 1);
+      if (key in metrics) {
+        (metrics as any)[key] = val;
+      }
+    }
+  });
+  return metrics;
+};
+
+export const generateCVSSVector = (m: CVSSMetrics): string => {
+  return `CVSS:3.1/AV:${m.AV}/AC:${m.AC}/PR:${m.PR}/UI:${m.UI}/S:${m.S}/C:${m.C}/I:${m.I}/A:${m.A}`;
+};
+
+export const calculateCVSSBaseScore = (metrics: CVSSMetrics): number => {
+  const AVWeight = { N: 0.85, A: 0.62, L: 0.55, P: 0.2 };
+  const ACWeight = { L: 0.77, H: 0.44 };
+  const UIWeight = { N: 0.85, R: 0.62 };
+  const PRWeight = {
+    U: { N: 0.85, L: 0.62, H: 0.27 },
+    C: { N: 0.85, L: 0.68, H: 0.5 }
+  };
+  const CIAWeight = { N: 0, L: 0.22, H: 0.56 };
+
+  const scopeChanged = metrics.S === 'C';
+  const av = AVWeight[metrics.AV];
+  const ac = ACWeight[metrics.AC];
+  const pr = PRWeight[metrics.S][metrics.PR];
+  const ui = UIWeight[metrics.UI];
+  
+  const exploitability = 8.22 * av * ac * pr * ui;
+  
+  const c = CIAWeight[metrics.C];
+  const i = CIAWeight[metrics.I];
+  const a = CIAWeight[metrics.A];
+  
+  const iss = 1 - (1 - c) * (1 - i) * (1 - a);
+  let impact = 0;
+  if (scopeChanged) {
+    impact = 7.52 * (iss - 0.029) - 3.25 * Math.pow(iss - 0.02, 15);
+  } else {
+    impact = 6.42 * iss;
+  }
+  
+  if (impact <= 0) return 0;
+  
+  let baseScore = 0;
+  if (scopeChanged) {
+    baseScore = Math.min(1.08 * (impact + exploitability), 10);
+  } else {
+    baseScore = Math.min(impact + exploitability, 10);
+  }
+  
+  return Math.ceil(baseScore * 10) / 10;
+};
+
 export const useDesignerStore = create<DesignerState>((set, get) => ({
   projectName: 'New Project',
   metadata: null,
@@ -118,27 +245,42 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
   customComponentTypes: [],
   selectedElementId: null,
   selectedElementType: null,
+  threats: [],
+  vulnerabilities: [],
+  mitigationRequirements: [],
   isLoading: false,
   isSaving: false,
   saveError: null,
   hasUnsavedChanges: false,
   isDarkMode: true,
+  showRiskInCanvas: true,
   history: [],
   historyIndex: -1,
-  toggleTheme: () => set((state) => ({ isDarkMode: !state.isDarkMode })),
+  toggleTheme: () => set((state) => {
+    const newTheme = !state.isDarkMode;
+    if (newTheme) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+    return { isDarkMode: newTheme };
+  }),
+
+  toggleRiskInCanvas: () => set((state) => ({ showRiskInCanvas: !state.showRiskInCanvas })),
 
   fetchProject: async () => {
     set({ isLoading: true, saveError: null });
     try {
       // 1. Fetch metadata
-      const metaRes = await fetch('/api/project/metadata');
+      const ts = new Date().getTime();
+      const metaRes = await fetch(`/api/project/metadata?t=${ts}`, { cache: 'no-store' });
       let meta: ProjectMetadata | null = null;
       if (metaRes.ok) {
         meta = await metaRes.json();
       }
 
       // 2. Fetch architecture DFD state
-      const res = await fetch('/api/project');
+      const res = await fetch(`/api/project?t=${ts}`, { cache: 'no-store' });
       if (!res.ok) throw new Error('Failed to load project');
       const data = await res.json();
 
@@ -175,39 +317,49 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
         height: b.height || 200,
         zIndex: -5,
         style: { width: b.width || 250, height: b.height || 200 },
-        data: {
-          boundary_id: b.boundary_id,
-          name: b.name || 'Trust Boundary',
-          type: b.type || 'Internal',
-          description: b.description || '',
-          parent_boundary_id: b.parent_boundary_id || null,
-        },
+        data: { ...b },
       }));
 
-      // Convert Flows to React Flow edges
       const edges: Edge[] = (data.flows || []).map((f: any) => ({
         id: f.flow_id,
         source: f.source_id,
         target: f.target_id,
-        label: f.name || f.protocol || 'Flow',
+        label: f.protocol || '',
+        markerEnd: { type: MarkerType.ArrowClosed },
+        markerStart: f.is_bidirectional ? { type: MarkerType.ArrowClosed } : undefined,
         data: {
-          flow_id: f.flow_id,
-          name: f.name || 'Data Flow',
-          source_id: f.source_id,
-          target_id: f.target_id,
-          protocol: f.protocol || 'HTTPS',
-          description: f.description || '',
-          is_out_of_scope: f.is_out_of_scope || false,
-          out_of_scope_justification: f.out_of_scope_justification || '',
-          is_bidirectional: f.is_bidirectional || false,
-          trust_boundary_id: f.trust_boundary_id || null,
-          authentication: f.authentication || '',
-          encryption: f.encryption || '',
+          ...f,
           assets: f.assets || [],
         },
       }));
 
       const nodes = [...boundaryNodes, ...componentNodes];
+
+      const seenThreatIds = new Set<string>();
+      const mappedThreats = (data.threats || []).map((t: any) => {
+        let tid = t.threat_id;
+        if (!tid || seenThreatIds.has(tid)) {
+          tid = `threat_${generateId()}`;
+        }
+        seenThreatIds.add(tid);
+        return {
+          ...t,
+          threat_id: tid
+        };
+      });
+
+      const seenVulnIds = new Set<string>();
+      const mappedVulns = (data.vulnerabilities || []).map((v: any) => {
+        let vid = v.vulnerability_id;
+        if (!vid || seenVulnIds.has(vid)) {
+          vid = `vuln_${generateId()}`;
+        }
+        seenVulnIds.add(vid);
+        return {
+          ...v,
+          vulnerability_id: vid
+        };
+      });
 
       set({
         projectName: meta?.project_name || 'ThreatPilot Project',
@@ -216,6 +368,9 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
         edges,
         assets,
         customComponentTypes,
+        threats: mappedThreats,
+        vulnerabilities: mappedVulns,
+        mitigationRequirements: data.mitigation_requirements || [],
         isLoading: false,
         hasUnsavedChanges: false,
         history: [{ nodes, edges, assets, boundaries: (data.boundaries || []) }],
@@ -227,13 +382,12 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
   },
 
   saveProject: async (isAutosave = false) => {
-    const { nodes, edges, assets, customComponentTypes } = get();
+    const { nodes, edges, assets, customComponentTypes, threats, vulnerabilities, mitigationRequirements } = get();
     if (!isAutosave) {
       set({ isSaving: true });
     }
     
     try {
-      // Map React Flow nodes back to ThreatPilot components and boundaries
       const components = nodes
         .filter((n) => n.type === 'componentNode')
         .map((n) => ({
@@ -280,7 +434,7 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
         authentication: e.data.authentication || '',
         encryption: e.data.encryption || '',
         assets: e.data.assets || [],
-        start_x: 0, // Placeholder coords since they are recomputed, but keep them in schema
+        start_x: 0,
         start_y: 0,
         end_x: 0,
         end_y: 0,
@@ -292,6 +446,9 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
         flows,
         assets,
         custom_component_types: customComponentTypes,
+        threats,
+        vulnerabilities,
+        mitigation_requirements: mitigationRequirements,
       };
 
       const endpoint = isAutosave ? '/api/project/autosave' : '/api/project';
@@ -310,30 +467,20 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
   },
 
   onNodesChange: (changes: NodeChange[]) => {
-    // Apply changes
     const currentNodes = get().nodes;
     const newNodes = applyNodeChanges(changes, currentNodes);
-
-    // Dynamic parent boundary resizing and moving logic
-    // For position updates: if a component moves, check if it has entered/exited any boundary.
-    // Also, if a boundary moves, we can offset all components inside it
     let modifiedNodes = [...newNodes];
 
-    // Fast check for drags
     const positionDrags = changes.filter(c => c.type === 'position' && (c as any).dragging) as any[];
-    
     if (positionDrags.length > 0) {
       for (const drag of positionDrags) {
         const node = modifiedNodes.find(n => n.id === drag.id);
         if (!node) continue;
-
-        // If it's a boundary node being dragged, find components inside it and offset them
         if (node.type === 'boundaryNode') {
           const oldNode = currentNodes.find(n => n.id === node.id);
           if (oldNode && drag.position) {
             const dx = drag.position.x - oldNode.position.x;
             const dy = drag.position.y - oldNode.position.y;
-            
             if (dx !== 0 || dy !== 0) {
               modifiedNodes = modifiedNodes.map(n => {
                 if (n.type === 'componentNode' && n.data.trust_boundary_id === node.id) {
@@ -350,27 +497,21 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
       }
     }
 
-    // Check boundary intersections when drag ENDS (not dragging)
     const positionDragEnd = changes.filter(c => c.type === 'position' && !(c as any).dragging) as any[];
     if (positionDragEnd.length > 0) {
       for (const drag of positionDragEnd) {
         const node = modifiedNodes.find(n => n.id === drag.id);
         if (node && node.type === 'componentNode') {
-          // Find if node position is inside any boundary node
           const nx = node.position.x;
           const ny = node.position.y;
-          
           let newBoundaryId: string | null = null;
-          // Look for smallest overlapping boundary
           let minArea = Infinity;
-          
           for (const b of modifiedNodes) {
             if (b.type === 'boundaryNode') {
               const bx = b.position.x;
               const by = b.position.y;
               const bw = b.width || 250;
               const bh = b.height || 200;
-              
               if (nx >= bx && nx <= bx + bw && ny >= by && ny <= by + bh) {
                 const area = bw * bh;
                 if (area < minArea) {
@@ -380,7 +521,6 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
               }
             }
           }
-          
           if (node.data.trust_boundary_id !== newBoundaryId) {
             modifiedNodes = modifiedNodes.map(n => {
               if (n.id === node.id) {
@@ -396,9 +536,6 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
       }
     }
 
-    // Auto-adjust boundary sizes if components lie outside them
-    // Loop through all boundary nodes and check if components inside them fit.
-    // If not, increase width/height dynamically
     for (const b of modifiedNodes) {
       if (b.type === 'boundaryNode') {
         const bx = b.position.x;
@@ -406,21 +543,13 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
         let maxRight = bx + (b.width || 250);
         let maxBottom = by + (b.height || 200);
         let resized = false;
-
         const childComponents = modifiedNodes.filter(n => n.type === 'componentNode' && n.data.trust_boundary_id === b.id);
         for (const child of childComponents) {
           const cx = child.position.x + (child.width || 120);
           const cy = child.position.y + (child.height || 100);
-          if (cx > maxRight) {
-            maxRight = cx + 20;
-            resized = true;
-          }
-          if (cy > maxBottom) {
-            maxBottom = cy + 20;
-            resized = true;
-          }
+          if (cx > maxRight) { maxRight = cx + 20; resized = true; }
+          if (cy > maxBottom) { maxBottom = cy + 20; resized = true; }
         }
-
         if (resized) {
           b.width = maxRight - bx;
           b.height = maxBottom - by;
@@ -430,8 +559,6 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
     }
 
     set({ nodes: modifiedNodes, hasUnsavedChanges: true });
-    
-    // Push history if drag finished
     if (changes.some(c => c.type === 'position' && !c.dragging)) {
       get().pushHistory();
     }
@@ -455,6 +582,7 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
       source: connection.source,
       target: connection.target,
       label: 'HTTPS',
+      markerEnd: { type: MarkerType.ArrowClosed },
       data: {
         flow_id: newEdgeId,
         name: 'Data Flow',
@@ -586,26 +714,106 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
   },
 
   updateFlow: (id, updates) => {
-    set((state) => ({
-      edges: state.edges.map((e) => {
-        if (e.id === id) {
-          const updatedData = { ...e.data, ...updates };
-          return {
-            ...e,
-            label: updatedData.name || updatedData.protocol || 'Flow',
-            data: updatedData,
+    set((state) => {
+      const newEdges = state.edges.map((edge) => {
+        if (edge.id === id) {
+          const newData = { ...edge.data, ...updates };
+          const markerStart = newData.is_bidirectional ? { type: MarkerType.ArrowClosed } : undefined;
+          
+          return { 
+            ...edge, 
+            data: newData, 
+            label: newData.protocol || '',
+            markerEnd: { type: MarkerType.ArrowClosed },
+            markerStart 
           };
         }
-        return e;
-      }),
-      hasUnsavedChanges: true,
-    }));
+        return edge;
+      });
+      return { edges: newEdges, hasUnsavedChanges: true };
+    });
     get().pushHistory();
   },
 
   updateAsset: (id, updates) => {
     set((state) => ({
       assets: state.assets.map((a) => (a.asset_id === id ? { ...a, ...updates } : a)),
+      hasUnsavedChanges: true,
+    }));
+    get().pushHistory();
+  },
+
+  deleteVulnerability: (id) => {
+    set((state) => ({
+      vulnerabilities: state.vulnerabilities.filter((v) => v.vulnerability_id !== id),
+      threats: state.threats.map((t) => ({
+        ...t,
+        vulnerability_ids: (t.vulnerability_ids || []).filter((vid) => vid !== id),
+      })),
+      hasUnsavedChanges: true,
+    }));
+    get().pushHistory();
+  },
+
+  addThreat: (threat) => {
+    set((state) => ({
+      threats: [...state.threats, { ...threat, threat_id: `TH-${generateId()}` }],
+      hasUnsavedChanges: true,
+    }));
+    get().pushHistory();
+  },
+
+  updateThreat: (id, updates) => {
+    set((state) => ({
+      threats: state.threats.map((t) => (t.threat_id === id ? { ...t, ...updates } : t)),
+      hasUnsavedChanges: true,
+    }));
+    get().pushHistory();
+  },
+
+  deleteThreat: (id) => {
+    set((state) => ({
+      threats: state.threats.filter((t) => t.threat_id !== id),
+      hasUnsavedChanges: true,
+    }));
+    get().pushHistory();
+  },
+
+  addVulnerability: (vuln) => {
+    set((state) => ({
+      vulnerabilities: [...state.vulnerabilities, { ...vuln, vulnerability_id: `VULN-${generateId()}` }],
+      hasUnsavedChanges: true,
+    }));
+    get().pushHistory();
+  },
+
+  updateVulnerability: (id, updates) => {
+    set((state) => ({
+      vulnerabilities: state.vulnerabilities.map((v) => (v.vulnerability_id === id ? { ...v, ...updates } : v)),
+      hasUnsavedChanges: true,
+    }));
+    get().pushHistory();
+  },
+
+  addMitigationRequirement: (req) => {
+    set((state) => ({
+      mitigationRequirements: [...state.mitigationRequirements, { ...req, req_id: `MIT-${generateId()}` }],
+      hasUnsavedChanges: true,
+    }));
+    get().pushHistory();
+  },
+
+  updateMitigationRequirement: (id, updates) => {
+    set((state) => ({
+      mitigationRequirements: state.mitigationRequirements.map((r) => (r.req_id === id ? { ...r, ...updates } : r)),
+      hasUnsavedChanges: true,
+    }));
+    get().pushHistory();
+  },
+
+  deleteMitigationRequirement: (id) => {
+    set((state) => ({
+      mitigationRequirements: state.mitigationRequirements.filter((r) => r.req_id !== id),
       hasUnsavedChanges: true,
     }));
     get().pushHistory();

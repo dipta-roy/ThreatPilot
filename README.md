@@ -21,17 +21,20 @@
 - **Context-Aware Prompts**: Generates structured, industry-contextualized prompts for LLMs to perform detailed **STRIDE** or **LINDDUN** analysis.
 - **Multimodal Methodology**: Support for both traditional security threat modeling (STRIDE) and advanced privacy threat modeling (LINDDUN).
 - **MITRE ATT&CK® Mapping**: Automatically maps identified threats to specific MITRE ATT&CK techniques for better alignment with defensive operations.
-- **Explainable AI (XAI)**: Generate deep technical reasoning (Attack Vector, Root Cause, Risk Rationalization, or technical verification procedures) for any identified threat or mitigation requirement to improve architect trust and validation.
-- **Optimized Provider Support**: Focused support for local **Ollama** instances (for privacy) and high-performance **Google Gemini** endpoints.
+- **Explainable AI (XAI)**: Generate deep technical reasoning (Attack Vector, Root Cause, Risk Rationalization, or technical verification procedures) for any identified threat, vulnerability, or mitigation requirement to improve architect trust and validation. These are dynamically rendered inline and in modals using a custom-built markdown formatter.
+- **Optimized Provider Support**: Focused support for local **Ollama** instances (for privacy) and high-performance **Google Gemini** endpoints, with configurable response caps (`max_tokens`).
 - **Segmented Analysis**: Automatically handles large-scale architectures by segmenting diagrams into batches to respect model token limits while maintaining context.
 - **Map-Reduce Batch Processing**: Implements recursive background batching (Map-Reduce) to deduplicate and consolidate hundreds of mitigation requirements seamlessly, eliminating AI context limits and resource exhaustion while showing real-time UI progress.
 
 ### 3. Risk Assessment & Controls
 - **CVSS v3.1 Scoring**: Built-in calculator to determine base vulnerability scores with automatic severity categorization (Low-Critical).
 - **Decoupled Vulnerability Registry**: Manage security flaws independently from threats via a global registry, enabling many-to-many relationships and standardized remediation tracking.
+- **Vulnerability Mitigation Fallbacks**: Automatically falls back to parent threat mitigations if vulnerability-specific controls are not explicitly configured.
 - **Interactive Risk Matrix**: Visualize your system's risk profile through a dynamic Likelihood vs. Impact matrix.
-- **High-Fidelity Tracking**: Manage threats with a modernized, flat-table Threat Ledger for rapid triage, acceptance, and manual overrides.
+- **Manual Data Entry**: Easily augment AI results by manually adding Threats, Risks, Vulnerabilities, and Mitigations via dedicated interactive modals with built-in CVSS calculators.
+- **High-Fidelity Tracking**: Manage threats with a modernized, flat-table Threat Ledger split into Threats, Vulnerabilities, Risk Assessment, and Mitigation Requirements tabs.
 - **Live Risk Counters**: Architecture elements (Components, Assets, Data Flows, Trust Boundaries) feature real-time, non-editable risk counters that dynamically sync with the Threat Register, providing instant visibility into vulnerable areas.
+- **Dynamic DFD Asset Mapping**: Inspects element edge data flows to automatically map carried assets in the Risk Assessment view.
 
 ### 4. Professional Reporting & Export
 - **Comprehensive Markdown Reports**: Generates deep-dive narrative reports including methodology, executive summaries, and detailed threat registers.
@@ -39,12 +42,14 @@
 - **Mitigation Requirements Console**: A dedicated interactive tab to review, edit, and filter consolidated security requirements mapped directly from threat mitigations.
 - **AI-Reviewed Mitigation Requirements (Excel)**: Automatically reviews, deduplicates, and groups semantically similar mitigations across all elements, mapping them to affected components (comma-separated) and generating validation test cases/criteria in a dedicated spreadsheet.
 - **Git-Optimized Project Storage**: Project data is cleanly partitioned into specialized JSON sidecars (`architecture.json`, `threats.json`, `vulnerabilities.json`, `mitigations.json`), enabling human-readable diffs and better collaboration in version control.
-
 - **Architecture Export**: Save your modeled architecture as structured JSON or export annotated diagrams.
 
 ### 5. Advanced UX & Workflow
 - **Modern UI**: A premium desktop application built with **PySide6**, featuring seamless **Dark** and **Light** theme support.
-- **Interactive Web-Based Architecture Designer**: A built-in React Flow-powered visual modeler (served via a lightweight, standard library-based HTTP server) supporting drag-and-drop elements, boundary nesting, carried assets management, automated ASCII/Mermaid exports, real-time validation warnings, and instant sync back to the PySide6 desktop app.
+- **Interactive Web-Based Architecture Designer**: A built-in React Flow-powered visual modeler (served via a lightweight, standard library-based HTTP server) supporting drag-and-drop elements, boundary nesting, carried assets management, automated ASCII/Mermaid exports, real-time validation warnings, and instant sync back to the PySide6 desktop app. Now includes full support for configuring **Business Context** and **AI Providers** directly from the web interface.
+- **Threat Count Badges**: Visual component nodes render real-time, pulsing red badges displaying the number of active threats affecting them.
+- **Resizable Properties Panel**: Supports mouse drag-resizing (260px - 800px) and fully selectable, copyable text container layouts for easy documentation retrieval.
+- **Workspace Screenshot Capture**: Save the visual layout as a JPG image (`architecture.jpg`) directly in the project directory on the backend while downloading it client-side.
 - **Undo/Redo System**: Full state management for editing components, flows, and trust boundaries.
 - **Quick Start Wizard**: Onboarding experience for new users to bootstrap their first project in seconds.
 - **Human-in-the-Loop**: Manually refine detected components, add custom threats, or override AI-generated assessments via the Project Explorer.
@@ -56,7 +61,7 @@
 ### Prerequisites
 - **Python 3.11+**
 - **Local LLM** (Ollama recommended) or a **Google Gemini API Key**.
-- **Recommended Models**: `qwen2.5vl:3b` or `qwen2.5vl:7b` (for Ollama) and `gemini-3.1-flash-lite-preview` or `gemini-2.0-flash`.
+- **Recommended Models**: `qwen2.5vl:3b` or `qwen2.5vl:7b` (for Ollama) and `gemini-3.1-flash-lite` or `gemini-2.0-flash`.
 
 ### Installation
 ```bash
@@ -128,7 +133,7 @@ Download Code Verification Certificate: [Dipta Roy - Code Verification Certifica
 
 - VERIFY APPLICATION AUTHENTICITY
 
-1. To confirm the application is genuine, right click on ThreatPilot-1.8.0-win64.msi and click on Properties.
+1. To confirm the application is genuine, right click on ThreatPilot-2.0.0-win64.msi and click on Properties.
 2. Go to the Digital Signatures tab.
 3. Select "Signed_By_Dipta" from the Embedded Signatures list, then choose Details.
 4. In the General tab, you should see the message "This digital signature is OK."
@@ -136,5 +141,5 @@ Download Code Verification Certificate: [Dipta Roy - Code Verification Certifica
 
 Once verified,
 ```
-Run ThreatPilot-1.8.0-win64.msi and install the application.
+Run ThreatPilot-2.0.0-win64.msi and install the application.
 ```

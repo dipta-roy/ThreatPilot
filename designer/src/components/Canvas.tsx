@@ -6,7 +6,8 @@ import ReactFlow, {
   BackgroundVariant,
   Node,
   Edge,
-  ReactFlowInstance
+  ReactFlowInstance,
+  ConnectionMode
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 
@@ -186,6 +187,7 @@ export default function Canvas() {
           onInit={setReactFlowInstance}
           onDrop={onDrop}
           onDragOver={onDragOver}
+          connectionMode={ConnectionMode.Loose}
           snapToGrid={true}
           snapGrid={[10, 10]}
           fitView

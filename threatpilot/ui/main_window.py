@@ -1696,29 +1696,49 @@ class MainWindow(QMainWindow):
         self._ai_log_view.append(entry)
         self._ai_log_view.verticalScrollBar().setValue(self._ai_log_view.verticalScrollBar().maximum())
 
+    def start_designer_server(self, host: str = "127.0.0.1", shared: bool = False, pin: str = "") -> None:
+        from threatpilot.core.designer_server import DesignerServerThread
+        self.stop_designer_server()
+        
+        self.statusBar().showMessage(f"Starting Architecture Designer server on {host}...")
+        self._designer_server_thread = DesignerServerThread(
+            main_window=self,
+            host=host,
+            port=8080,
+            on_save_callback=self._on_designer_saved
+        )
+        self._designer_server_thread.start()
+        
+        # Give the thread a moment to initialize the socket server
+        import time
+        for _ in range(10):
+            time.sleep(0.05)
+            if self._designer_server_thread.server:
+                break
+        
+        if self._designer_server_thread.server:
+            self._designer_server_thread.server.sharing_active = shared
+            self._designer_server_thread.server.pin_code = pin
+            self._designer_server_thread.server.authenticated_sessions = set()
+
+    def stop_designer_server(self) -> None:
+        if hasattr(self, "_designer_server_thread") and self._designer_server_thread is not None:
+            self._designer_server_thread.stop()
+            self._designer_server_thread = None
+
     def _on_open_designer(self) -> None:
-        """Starts the local REST server (if not already running) and opens the Architecture Designer in the browser."""
+        """Starts the sharing dialog configuration wizard for the Architecture Designer."""
         if not self._project:
             QMessageBox.warning(self, "No Project", "Please open or create a project first before opening the Architecture Designer.")
             return
 
-        from threatpilot.core.designer_server import DesignerServerThread
-        
-        # Check if the server is running, or start it
+        # Make sure server is running locally by default if not already initialized
         if not hasattr(self, "_designer_server_thread") or self._designer_server_thread is None:
-            self.statusBar().showMessage("Starting Architecture Designer server...")
-            self._designer_server_thread = DesignerServerThread(
-                main_window=self,
-                host="127.0.0.1",
-                port=8080,
-                on_save_callback=self._on_designer_saved
-            )
-            self._designer_server_thread.start()
-        
-        # Launch browser to http://127.0.0.1:8080/
-        url = QUrl("http://127.0.0.1:8080/")
-        QDesktopServices.openUrl(url)
-        self.statusBar().showMessage("Opened Architecture Designer in web browser.")
+            self.start_designer_server(host="127.0.0.1", shared=False)
+            
+        from threatpilot.ui.designer_sharing_dialog import DesignerSharingDialog
+        dialog = DesignerSharingDialog(self, parent=self, is_dark=self._is_dark_theme)
+        dialog.exec()
 
     def _on_designer_saved(self) -> None:
         """Callback from HTTP server thread that emits a signal to update UI thread-safely."""

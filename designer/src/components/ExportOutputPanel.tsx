@@ -70,24 +70,6 @@ export default function ExportOutputPanel() {
         {activeTab === 'summary' && (
           <div className="p-4 flex flex-col gap-4">
             <h4 className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest border-b border-slate-200 dark:border-border pb-1.5">
-              Project Infrastructure Statistics
-            </h4>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-border p-3 rounded-lg flex flex-col gap-1">
-                <span className="text-[10px] text-slate-500 dark:text-slate-400 uppercase">Components</span>
-                <span className="text-xl font-bold text-slate-800 dark:text-text">{components.length}</span>
-              </div>
-              <div className="bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-border p-3 rounded-lg flex flex-col gap-1">
-                <span className="text-[10px] text-slate-500 dark:text-slate-400 uppercase">Trust Boundaries</span>
-                <span className="text-xl font-bold text-slate-800 dark:text-text">{boundaries.length}</span>
-              </div>
-              <div className="bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-border p-3 rounded-lg flex flex-col gap-1 col-span-2">
-                <span className="text-[10px] text-slate-500 dark:text-slate-400 uppercase">Data Flows</span>
-                <span className="text-xl font-bold text-slate-800 dark:text-text">{edges.length}</span>
-              </div>
-            </div>
-
-            <h4 className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest border-b border-slate-200 dark:border-border pb-1.5 mt-2">
               Component Classifications
             </h4>
             <div className="flex flex-col gap-2">
@@ -106,6 +88,24 @@ export default function ExportOutputPanel() {
               <div className="flex justify-between items-center bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-border/30 p-2 px-3 rounded-lg text-xs">
                 <span className="text-slate-500 dark:text-slate-400">Global Security Assets</span>
                 <span className="font-bold text-purple-600 dark:text-purple-400">{assets.length}</span>
+              </div>
+            </div>
+
+            <h4 className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest border-b border-slate-200 dark:border-border pb-1.5 mt-2">
+              Project Infrastructure Statistics
+            </h4>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-border p-3 rounded-lg flex flex-col gap-1">
+                <span className="text-[10px] text-slate-500 dark:text-slate-400 uppercase">Components</span>
+                <span className="text-xl font-bold text-slate-800 dark:text-text">{components.length}</span>
+              </div>
+              <div className="bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-border p-3 rounded-lg flex flex-col gap-1">
+                <span className="text-[10px] text-slate-500 dark:text-slate-400 uppercase">Trust Boundaries</span>
+                <span className="text-xl font-bold text-slate-800 dark:text-text">{boundaries.length}</span>
+              </div>
+              <div className="bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-border p-3 rounded-lg flex flex-col gap-1 col-span-2">
+                <span className="text-[10px] text-slate-500 dark:text-slate-400 uppercase">Data Flows</span>
+                <span className="text-xl font-bold text-slate-800 dark:text-text">{edges.length}</span>
               </div>
             </div>
           </div>

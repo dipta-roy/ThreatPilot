@@ -33,7 +33,7 @@ class GeminiProvider(AIProviderInterface):
     ) -> tuple[str, TokenUsage]:
         """Sends a text-based chat completion request to the Gemini API."""
         contents = [{"role": "user", "parts": [{"text": prompt}]}]
-        max_out = max(self.config.max_tokens, 16384)
+        max_out = self.config.max_tokens if self.config.max_tokens > 0 else 8192
         mime_type = kwargs.get("response_mime_type", "application/json")
         
         payload: Dict[str, Any] = {
@@ -91,7 +91,7 @@ class GeminiProvider(AIProviderInterface):
             "contents": contents,
             "generationConfig": {
                 "temperature": self.config.temperature,
-                "maxOutputTokens": max(self.config.max_tokens, 16384),
+                "maxOutputTokens": self.config.max_tokens if self.config.max_tokens > 0 else 8192,
                 "topP": 0.95, "topK": 40, "responseMimeType": "application/json"
             }
         }

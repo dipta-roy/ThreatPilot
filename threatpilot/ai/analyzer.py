@@ -171,3 +171,17 @@ class ThreatAnalyzer:
             raw_response, _ = await self.provider.chat_complete(prompt=prompt, system_instructions=system_prompt, response_mime_type="text/plain")
             return str(raw_response or "AI returned empty response.")
         except Exception as exc: return f"Vulnerability XAI failed: {exc}"
+
+    async def analyze_mitigation_reasoning(self, req: any) -> str:
+        """Generates deep-dive technical reasoning for a specific mitigation requirement."""
+        prompt = self.builder.build_mitigation_reasoning_prompt(req)
+        system_prompt = (
+            "LANGUAGE DIRECTIVE: You MUST respond exclusively in English. "
+            "You are 'ThreatPilot XAI', a specialized security research engine. "
+            "Provide a detailed technical explanation of the security control, implementation guide, and testing strategy. "
+            "Use markdown."
+        )
+        try:
+            raw_response, _ = await self.provider.chat_complete(prompt=prompt, system_instructions=system_prompt, response_mime_type="text/plain")
+            return str(raw_response or "AI returned empty response.")
+        except Exception as exc: return f"Mitigation XAI failed: {exc}"

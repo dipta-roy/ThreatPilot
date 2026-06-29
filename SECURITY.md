@@ -31,6 +31,7 @@ ThreatPilot is designed with a "Security-First" mindset, particularly concerning
 ### 2. AI Interaction Security
 - **Prompt Injection Defense**: All user-provided metadata, architectural descriptions, and custom prompts are sanitized (XML escaping and newline removal) before being embedded into AI system instructions.
 - **SSRF Protection**: AI endpoint URLs are strictly validated to prevent Server-Side Request Forgery against internal metadata services (e.g., `169.254.169.254`) and private IP ranges.
+- **Resource Limits**: Configurable parameters (like `max_tokens`) exist for AI endpoints to cap response size, mitigating potential resource exhaustion (Denial of Wallet/Service) caused by runaway LLM generation.
 - **Header-Based Authentication**: Gemini API keys are transmitted via the `x-goog-api-key` HTTP header, ensuring they are not exposed in URL logs or intermediate proxies.
 
 ### 3. Data Privacy & Consent
@@ -39,8 +40,11 @@ ThreatPilot is designed with a "Security-First" mindset, particularly concerning
 - **Log Redaction**: ThreatPilot automatically redacts identified API keys and secrets from application logs and error traces.
 
 ### 4. Local Web Server Security (Architecture Designer)
-- **Localhost Binding**: The built-in HTTP server for the visual designer strictly binds to the loopback interface (`127.0.0.1`) only, preventing external devices or remote attackers on the same network from accessing or modifying the project's DFD architecture.
-- **REST Endpoint Isolation**: The `/api/project` load and save endpoints only interact with the currently active workspace directory of the desktop application, preventing arbitrary file access or directory traversal.
+- **Default Localhost Binding**: By default, the built-in HTTP server for the visual designer strictly binds to the loopback interface (`127.0.0.1`) only, preventing external devices or remote attackers on the same network from accessing or modifying the project's DFD architecture.
+- **Network Sharing with PIN Authentication**: When sharing is explicitly enabled via the "Host Architecture Workspace" dialog, the server rebinds to `0.0.0.0`. Remote clients are immediately redirected to a `/auth` login page where they must enter a randomly generated 6-digit numeric PIN displayed only in the desktop application. Successful authentication issues a cryptographically unique session cookie (`threatpilot_session`) that is validated on all subsequent API requests. Local loopback connections (`127.0.0.1`, `::1`) bypass PIN authentication entirely.
+- **Session Isolation**: Each sharing session generates a fresh PIN and clears all prior session tokens. Stopping sharing immediately invalidates all remote sessions and rebinds the server to localhost only.
+- **REST Endpoint Isolation**: The `/api/project` and `/api/project/prompt_config` load and save endpoints only interact with the currently active workspace directory of the desktop application, preventing arbitrary file access or directory traversal.
+- **Project Image Save Validation**: The `/api/project/image` screenshot endpoint strictly decodes base64-encoded JPG payloads and writes them solely to `architecture.jpg` in the project's root folder, preventing path traversal attacks and raw binary writes outside the workspace.
 
 ### 5. Export Security
 - **Excel Formula Injection**: All Excel exports are sanitized to prevent CSV/Formula injection by escaping leading control characters (`=`, `+`, `-`, `@`).
@@ -54,8 +58,8 @@ Currently, security updates are provided for the latest stable release of Threat
 
 | Version | Supported |
 | ------- | --------- |
-| 1.0.x   | ✅ Yes    |
-| <= 0.5  | ❌ No     |
+| 2.x.x   | ✅ Yes    |
+| < 2.0.0   | ❌ No     |
 
 ---
 

@@ -1,5 +1,73 @@
-import { useDesignerStore } from '../store/useDesignerStore';
-import { Trash2, Plus, ShieldAlert, KeyRound, Globe, FileText, CheckCircle2 } from 'lucide-react';
+import React from 'react';
+import { useDesignerStore, parseCVSSVector, generateCVSSVector, calculateCVSSBaseScore } from '../store/useDesignerStore';
+import { Trash2, Plus, ShieldAlert, KeyRound, Globe, FileText, CheckCircle2, Shield, Edit, Sparkles } from 'lucide-react';
+
+const renderInlineBold = (text: string) => {
+  const parts = text.split('**');
+  return parts.map((part, i) => {
+    if (i % 2 === 1) {
+      return <strong key={i} className="font-bold text-slate-950 dark:text-white">{part}</strong>;
+    }
+    return part;
+  });
+};
+
+const renderMarkdown = (md: string) => {
+  const lines = md.split('\n');
+  return (
+    <div className="space-y-2.5 leading-relaxed text-slate-650 dark:text-slate-350 select-text text-[10px]">
+      {lines.map((line, idx) => {
+        const trimmed = line.trim();
+        
+        // Horizontal rule
+        if (trimmed === '---') {
+          return <hr key={idx} className="border-t border-slate-200 dark:border-border/30 my-3" />;
+        }
+        
+        // Headers
+        if (trimmed.startsWith('# ')) {
+          return <h1 key={idx} className="text-xs font-extrabold text-slate-900 dark:text-white mt-3 mb-1.5">{trimmed.substring(2)}</h1>;
+        }
+        if (trimmed.startsWith('## ')) {
+          return <h2 key={idx} className="text-[11px] font-bold text-slate-900 dark:text-white mt-3 mb-1.5">{trimmed.substring(3)}</h2>;
+        }
+        if (trimmed.startsWith('### ')) {
+          return <h3 key={idx} className="text-[10px] font-bold text-slate-900 dark:text-white mt-2 mb-1">{trimmed.substring(4)}</h3>;
+        }
+        if (trimmed.startsWith('#### ')) {
+          return <h4 key={idx} className="text-[9px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mt-2 mb-1">{trimmed.substring(5)}</h4>;
+        }
+        
+        // Bullet points
+        if (trimmed.startsWith('* ') || trimmed.startsWith('- ')) {
+          const content = trimmed.substring(2);
+          return (
+            <li key={idx} className="ml-3 list-disc pl-0.5 text-[10px]">
+              {renderInlineBold(content)}
+            </li>
+          );
+        }
+
+        // Ordered lists
+        const matchOrdered = trimmed.match(/^(\d+)\.\s+(.*)$/);
+        if (matchOrdered) {
+          return (
+            <li key={idx} className="ml-3 list-decimal pl-0.5 text-[10px]">
+              {renderInlineBold(matchOrdered[2])}
+            </li>
+          );
+        }
+
+        // Normal paragraph
+        if (trimmed === '') {
+          return <div key={idx} className="h-0.5" />;
+        }
+        
+        return <p key={idx} className="text-[10px]">{renderInlineBold(line)}</p>;
+      })}
+    </div>
+  );
+};
 
 export default function PropertiesPanel() {
   const {
@@ -13,8 +81,559 @@ export default function PropertiesPanel() {
     updateFlow,
     updateAsset,
     addAsset,
-    deleteElement
+    deleteElement,
+    threats,
+    vulnerabilities,
+    updateThreat,
+    deleteThreat,
+    updateVulnerability,
+    deleteVulnerability
   } = useDesignerStore();
+
+  const [editingThreatId, setEditingThreatId] = React.useState<string | null>(null);
+  const [editingVulnId, setEditingVulnId] = React.useState<string | null>(null);
+  const [generatingReasoningId, setGeneratingReasoningId] = React.useState<string | null>(null);
+
+  const [sidebarWidth, setSidebarWidth] = React.useState(350);
+  const isResizing = React.useRef(false);
+
+  const startResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    isResizing.current = true;
+    document.addEventListener('mousemove', handleResize);
+    document.addEventListener('mouseup', stopResize);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  };
+
+  const handleResize = React.useCallback((e: MouseEvent) => {
+    if (!isResizing.current) return;
+    const newWidth = window.innerWidth - e.clientX;
+    if (newWidth > 260 && newWidth < 800) {
+      setSidebarWidth(newWidth);
+    }
+  }, []);
+
+  const stopResize = React.useCallback(() => {
+    isResizing.current = false;
+    document.removeEventListener('mousemove', handleResize);
+    document.removeEventListener('mouseup', stopResize);
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  }, [handleResize]);
+
+  React.useEffect(() => {
+    return () => {
+      document.removeEventListener('mousemove', handleResize);
+      document.removeEventListener('mouseup', stopResize);
+    };
+  }, [handleResize, stopResize]);
+
+  const generateReasoning = async (threatId?: string, vulnId?: string) => {
+    const targetId = threatId || vulnId;
+    if (!targetId) return;
+    
+    setGeneratingReasoningId(targetId);
+    try {
+      const res = await fetch('/api/ai/reason', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ threat_id: threatId, vulnerability_id: vulnId })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (threatId) {
+          updateThreat(threatId, { reasoning: data.reasoning });
+        } else if (vulnId) {
+          updateVulnerability(vulnId, { reasoning: data.reasoning });
+        }
+      } else {
+        const err = await res.json();
+        alert(err.error || 'Failed to generate reasoning');
+      }
+    } catch (e) {
+      console.error(e);
+      alert('Error generating reasoning');
+    } finally {
+      setGeneratingReasoningId(null);
+    }
+  };
+
+  const renderReasoning = (reasoning: string) => {
+    try {
+      let clean = reasoning.trim();
+      if (clean.startsWith('```json')) {
+        clean = clean.substring(7);
+      }
+      if (clean.endsWith('```')) {
+        clean = clean.substring(0, clean.length - 3);
+      }
+      clean = clean.trim();
+      
+      const parsed = JSON.parse(clean);
+      return (
+        <div className="space-y-2 mt-1 select-text">
+          {parsed.attack_vector && (
+            <div>
+              <span className="font-bold text-red-500 text-[9px] uppercase tracking-wider block">Attack Vector</span>
+              <p className="text-[10px] text-slate-700 dark:text-slate-300 mt-0.5 leading-normal">{parsed.attack_vector}</p>
+            </div>
+          )}
+          {parsed.architectural_root_cause && (
+            <div className="border-t border-slate-200 dark:border-border/30 pt-1.5">
+              <span className="font-bold text-amber-500 text-[9px] uppercase tracking-wider block">Architectural Root Cause</span>
+              <p className="text-[10px] text-slate-700 dark:text-slate-300 mt-0.5 leading-normal">{parsed.architectural_root_cause}</p>
+            </div>
+          )}
+          {parsed.risk_rationalization && (
+            <div className="border-t border-slate-200 dark:border-border/30 pt-1.5">
+              <span className="font-bold text-primary-500 text-[9px] uppercase tracking-wider block">Risk Rationalization</span>
+              <p className="text-[10px] text-slate-700 dark:text-slate-300 mt-0.5 leading-normal">{parsed.risk_rationalization}</p>
+            </div>
+          )}
+          {parsed.framework_alignment && (
+            <div className="border-t border-slate-200 dark:border-border/30 pt-1.5">
+              <span className="font-bold text-emerald-500 text-[9px] uppercase tracking-wider block">Framework Alignment</span>
+              <p className="text-[10px] text-slate-700 dark:text-slate-300 mt-0.5 leading-normal">{parsed.framework_alignment}</p>
+            </div>
+          )}
+        </div>
+      );
+    } catch (e) {
+      return renderMarkdown(reasoning);
+    }
+  };
+
+  const getSelectedNames = () => {
+    const names: string[] = [];
+    const singleNode = selectedElementId ? nodes.find(n => n.id === selectedElementId) : null;
+    const singleEdge = selectedElementId ? edges.find(e => e.id === selectedElementId) : null;
+    
+    let activeNodes = nodes.filter(n => n.selected);
+    if (activeNodes.length === 0 && singleNode) {
+      activeNodes = [singleNode];
+    }
+    
+    let activeEdges = edges.filter(e => e.selected);
+    if (activeEdges.length === 0 && singleEdge) {
+      activeEdges = [singleEdge];
+    }
+    
+    activeNodes.forEach(n => {
+      if (n.data?.name) {
+        names.push(n.data.name.trim().toLowerCase());
+        if (n.type === 'boundaryNode') {
+          nodes.forEach(c => {
+            if (c.type === 'componentNode' && c.data?.trust_boundary_id === n.id && c.data?.name) {
+              names.push(c.data.name.trim().toLowerCase());
+            }
+          });
+        }
+      }
+    });
+    
+    activeEdges.forEach(e => {
+      if (e.data?.name) {
+        names.push(e.data.name.trim().toLowerCase());
+      }
+    });
+    
+    return names;
+  };
+
+  const selectedNames = getSelectedNames();
+  
+  const filteredThreats = threats.filter(t => {
+    if (selectedNames.length === 0) return false;
+    const aff = (t.affected_components || '').toLowerCase();
+    return selectedNames.some(name => aff.includes(name));
+  });
+
+  const selectedNodes = nodes.filter((n) => n.selected);
+  const selectedEdges = edges.filter((e) => e.selected);
+  const isMultiSelection = (selectedNodes.length + selectedEdges.length) > 1;
+
+  const renderThreatsSection = () => {
+    if (selectedNames.length === 0) return null;
+    
+    return (
+      <div className="border-t border-slate-200 dark:border-border pt-4 mt-4 flex flex-col gap-4">
+        <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+          <Shield className="w-4 h-4 text-amber-500" />
+          Threats & Risks ({filteredThreats.length})
+        </h4>
+        
+        {filteredThreats.length === 0 ? (
+          <p className="text-xs text-slate-400 italic">No threats identified for selected elements.</p>
+        ) : (
+          <div className="space-y-3">
+            {filteredThreats.map(t => {
+              const linkedVulns = vulnerabilities.filter(v => t.vulnerability_ids?.includes(v.vulnerability_id));
+              const isEditing = editingThreatId === t.threat_id;
+              const isGenerating = generatingReasoningId === t.threat_id;
+              
+              return (
+                <div key={t.threat_id} className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-border p-3 rounded-lg flex flex-col gap-2 relative group">
+                  
+                  {/* Action buttons */}
+                  <div className="absolute top-2 right-2 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition">
+                    <button
+                      onClick={() => generateReasoning(t.threat_id, undefined)}
+                      disabled={isGenerating}
+                      className="text-slate-500 hover:text-emerald-500 transition disabled:opacity-50"
+                      title="Generate AI Technical Reasoning (XAI)"
+                    >
+                      <Sparkles className={`w-3 h-3 ${isGenerating ? 'animate-pulse text-emerald-500' : ''}`} />
+                    </button>
+                    <button
+                      onClick={() => setEditingThreatId(isEditing ? null : t.threat_id)}
+                      className="text-slate-500 hover:text-primary-500 transition"
+                      title="Edit Threat"
+                    >
+                      <Edit className="w-3 h-3" />
+                    </button>
+                    <button
+                      onClick={() => { if (confirm('Delete this threat?')) deleteThreat(t.threat_id); }}
+                      className="text-slate-500 hover:text-red-400 transition"
+                      title="Delete Threat"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+
+                  <div className="flex justify-between items-start gap-2 pr-16">
+                    {isEditing ? (
+                      <select
+                        value={t.category}
+                        onChange={(e) => updateThreat(t.threat_id, { category: e.target.value })}
+                        className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-border text-[10px] text-slate-800 dark:text-white rounded p-1"
+                      >
+                        <option value="Spoofing">Spoofing</option>
+                        <option value="Tampering">Tampering</option>
+                        <option value="Repudiation">Repudiation</option>
+                        <option value="Information Disclosure">Information Disclosure</option>
+                        <option value="Denial of Service">Denial of Service</option>
+                        <option value="Elevation of Privilege">Elevation of Privilege</option>
+                        <option value="Linkability">Linkability</option>
+                        <option value="Identifiability">Identifiability</option>
+                        <option value="Non-repudiation">Non-repudiation</option>
+                        <option value="Detectability">Detectability</option>
+                        <option value="Disclosure of Information">Disclosure of Information</option>
+                        <option value="Unawareness">Unawareness</option>
+                        <option value="Non-compliance">Non-compliance</option>
+                      </select>
+                    ) : (
+                      <span className="px-1.5 py-0.5 bg-amber-500/10 text-amber-500 text-[9px] font-bold uppercase tracking-wider rounded border border-amber-500/20">
+                        {t.category}
+                      </span>
+                    )}
+                    {isEditing ? (
+                      <span className="text-[10px] font-mono font-bold text-slate-500 bg-slate-100 dark:bg-slate-950 px-1.5 py-0.5 rounded">
+                        Score: {t.cvss_score || 0}
+                      </span>
+                    ) : (
+                      t.cvss_score > 0 && (
+                        <span className="text-[10px] font-mono text-slate-400">
+                          CVSS: {t.cvss_score}
+                        </span>
+                      )
+                    )}
+                  </div>
+
+                  {isEditing ? (
+                    <div className="space-y-2 mt-1">
+                      <input
+                        type="text"
+                        value={t.title}
+                        onChange={(e) => updateThreat(t.threat_id, { title: e.target.value })}
+                        className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-border text-xs rounded p-1 text-slate-800 dark:text-white"
+                        placeholder="Threat Title"
+                      />
+                      <textarea
+                        value={t.description}
+                        onChange={(e) => updateThreat(t.threat_id, { description: e.target.value })}
+                        className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-border text-xs rounded p-1 text-slate-750 dark:text-slate-300 resize-none h-14"
+                        placeholder="Description"
+                      />
+                      <textarea
+                        value={t.mitigation}
+                        onChange={(e) => updateThreat(t.threat_id, { mitigation: e.target.value })}
+                        className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-border text-xs rounded p-1 text-slate-750 dark:text-slate-300 resize-none h-14"
+                        placeholder="Mitigation"
+                      />
+
+                      {/* CVSS Metrics Editor */}
+                      <div className="border-t border-slate-200 dark:border-border pt-2 mt-2 space-y-2">
+                        <span className="text-[9px] font-bold uppercase tracking-wider text-slate-500 block">CVSS Metrics Editor</span>
+                        <div className="grid grid-cols-2 gap-1.5 text-[10px]">
+                          <div>
+                            <label className="block text-[8px] uppercase font-bold text-slate-455 mb-0.5">Attack Vector (AV)</label>
+                            <select
+                              value={parseCVSSVector(t.cvss_vector).AV}
+                              onChange={(e) => {
+                                const m = parseCVSSVector(t.cvss_vector);
+                                m.AV = e.target.value as any;
+                                const vec = generateCVSSVector(m);
+                                const score = calculateCVSSBaseScore(m);
+                                updateThreat(t.threat_id, { cvss_vector: vec, cvss_score: score });
+                              }}
+                              className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-border p-0.5 rounded text-[10px] text-slate-800 dark:text-white"
+                            >
+                              <option value="N">Network (N)</option>
+                              <option value="A">Adjacent (A)</option>
+                              <option value="L">Local (L)</option>
+                              <option value="P">Physical (P)</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[8px] uppercase font-bold text-slate-455 mb-0.5">Complexity (AC)</label>
+                            <select
+                              value={parseCVSSVector(t.cvss_vector).AC}
+                              onChange={(e) => {
+                                const m = parseCVSSVector(t.cvss_vector);
+                                m.AC = e.target.value as any;
+                                const vec = generateCVSSVector(m);
+                                const score = calculateCVSSBaseScore(m);
+                                updateThreat(t.threat_id, { cvss_vector: vec, cvss_score: score });
+                              }}
+                              className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-border p-0.5 rounded text-[10px] text-slate-800 dark:text-white"
+                            >
+                              <option value="L">Low (L)</option>
+                              <option value="H">High (H)</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[8px] uppercase font-bold text-slate-455 mb-0.5">Privileges (PR)</label>
+                            <select
+                              value={parseCVSSVector(t.cvss_vector).PR}
+                              onChange={(e) => {
+                                const m = parseCVSSVector(t.cvss_vector);
+                                m.PR = e.target.value as any;
+                                const vec = generateCVSSVector(m);
+                                const score = calculateCVSSBaseScore(m);
+                                updateThreat(t.threat_id, { cvss_vector: vec, cvss_score: score });
+                              }}
+                              className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-border p-0.5 rounded text-[10px] text-slate-800 dark:text-white"
+                            >
+                              <option value="N">None (N)</option>
+                              <option value="L">Low (L)</option>
+                              <option value="H">High (H)</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[8px] uppercase font-bold text-slate-455 mb-0.5">Interaction (UI)</label>
+                            <select
+                              value={parseCVSSVector(t.cvss_vector).UI}
+                              onChange={(e) => {
+                                const m = parseCVSSVector(t.cvss_vector);
+                                m.UI = e.target.value as any;
+                                const vec = generateCVSSVector(m);
+                                const score = calculateCVSSBaseScore(m);
+                                updateThreat(t.threat_id, { cvss_vector: vec, cvss_score: score });
+                              }}
+                              className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-border p-0.5 rounded text-[10px] text-slate-800 dark:text-white"
+                            >
+                              <option value="N">None (N)</option>
+                              <option value="R">Required (R)</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[8px] uppercase font-bold text-slate-455 mb-0.5">Scope (S)</label>
+                            <select
+                              value={parseCVSSVector(t.cvss_vector).S}
+                              onChange={(e) => {
+                                const m = parseCVSSVector(t.cvss_vector);
+                                m.S = e.target.value as any;
+                                const vec = generateCVSSVector(m);
+                                const score = calculateCVSSBaseScore(m);
+                                updateThreat(t.threat_id, { cvss_vector: vec, cvss_score: score });
+                              }}
+                              className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-border p-0.5 rounded text-[10px] text-slate-800 dark:text-white"
+                            >
+                              <option value="U">Unchanged (U)</option>
+                              <option value="C">Changed (C)</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[8px] uppercase font-bold text-slate-455 mb-0.5">Confidentiality (C)</label>
+                            <select
+                              value={parseCVSSVector(t.cvss_vector).C}
+                              onChange={(e) => {
+                                const m = parseCVSSVector(t.cvss_vector);
+                                m.C = e.target.value as any;
+                                const vec = generateCVSSVector(m);
+                                const score = calculateCVSSBaseScore(m);
+                                updateThreat(t.threat_id, { cvss_vector: vec, cvss_score: score });
+                              }}
+                              className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-border p-0.5 rounded text-[10px] text-slate-800 dark:text-white"
+                            >
+                              <option value="N">None (N)</option>
+                              <option value="L">Low (L)</option>
+                              <option value="H">High (H)</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[8px] uppercase font-bold text-slate-455 mb-0.5">Integrity (I)</label>
+                            <select
+                              value={parseCVSSVector(t.cvss_vector).I}
+                              onChange={(e) => {
+                                const m = parseCVSSVector(t.cvss_vector);
+                                m.I = e.target.value as any;
+                                const vec = generateCVSSVector(m);
+                                const score = calculateCVSSBaseScore(m);
+                                updateThreat(t.threat_id, { cvss_vector: vec, cvss_score: score });
+                              }}
+                              className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-border p-0.5 rounded text-[10px] text-slate-800 dark:text-white"
+                            >
+                              <option value="N">None (N)</option>
+                              <option value="L">Low (L)</option>
+                              <option value="H">High (H)</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[8px] uppercase font-bold text-slate-455 mb-0.5">Availability (A)</label>
+                            <select
+                              value={parseCVSSVector(t.cvss_vector).A}
+                              onChange={(e) => {
+                                const m = parseCVSSVector(t.cvss_vector);
+                                m.A = e.target.value as any;
+                                const vec = generateCVSSVector(m);
+                                const score = calculateCVSSBaseScore(m);
+                                updateThreat(t.threat_id, { cvss_vector: vec, cvss_score: score });
+                              }}
+                              className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-border p-0.5 rounded text-[10px] text-slate-800 dark:text-white"
+                            >
+                              <option value="N">None (N)</option>
+                              <option value="L">Low (L)</option>
+                              <option value="H">High (H)</option>
+                            </select>
+                          </div>
+                        </div>
+                        <div className="text-[8px] font-mono bg-slate-100 dark:bg-slate-950 p-1.5 rounded select-all break-all leading-normal text-slate-500 mt-1">
+                          Vector: {t.cvss_vector || 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H'}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <h5 className="text-xs font-bold text-slate-950 dark:text-white leading-snug">
+                        {t.title}
+                      </h5>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-normal">
+                        {t.description}
+                      </p>
+                      
+                      {t.mitigation && (
+                        <div className="mt-1 border-t border-slate-200 dark:border-border/50 pt-1.5">
+                          <span className="text-[9px] font-bold uppercase tracking-wider text-emerald-500">Mitigation</span>
+                          <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-normal italic mt-0.5">
+                            {t.mitigation}
+                          </p>
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {t.reasoning && !isEditing && (
+                    <div className="mt-2 border-t border-slate-200 dark:border-border/50 pt-2 bg-slate-100/50 dark:bg-slate-950/40 p-2.5 rounded text-[10px] leading-relaxed max-h-56 overflow-y-auto">
+                      <span className="text-[8px] font-bold uppercase tracking-wider text-primary-500 block mb-1">Technical Reasoning (XAI)</span>
+                      {renderReasoning(t.reasoning)}
+                    </div>
+                  )}
+
+                  {linkedVulns.length > 0 && (
+                    <div className="mt-2 border-t border-slate-200 dark:border-border/50 pt-2 space-y-1.5">
+                      <span className="text-[9px] font-bold uppercase tracking-wider text-red-400">Vulnerabilities</span>
+                      {linkedVulns.map(v => {
+                        const isVulnEditing = editingVulnId === v.vulnerability_id;
+                        const isVulnGenerating = generatingReasoningId === v.vulnerability_id;
+
+                        return (
+                          <div key={v.vulnerability_id} className="bg-white dark:bg-slate-950 border border-slate-100 dark:border-border/30 p-2 rounded text-[10px] flex flex-col gap-1 relative group/vuln">
+                            
+                            <div className="absolute top-1 right-1 flex items-center gap-1 opacity-0 group-hover/vuln:opacity-100 transition">
+                              <button
+                                onClick={() => generateReasoning(undefined, v.vulnerability_id)}
+                                disabled={isVulnGenerating}
+                                className="text-slate-400 hover:text-emerald-500 transition disabled:opacity-50"
+                                title="Generate XAI reasoning"
+                              >
+                                <Sparkles className={`w-3 h-3 ${isVulnGenerating ? 'animate-pulse text-emerald-500' : ''}`} />
+                              </button>
+                              <button
+                                onClick={() => setEditingVulnId(isVulnEditing ? null : v.vulnerability_id)}
+                                className="text-slate-400 hover:text-primary-500 transition"
+                                title="Edit Vulnerability"
+                              >
+                                <Edit className="w-3 h-3" />
+                              </button>
+                              <button
+                                onClick={() => { if (confirm('Delete vulnerability?')) deleteVulnerability(v.vulnerability_id); }}
+                                className="text-slate-400 hover:text-red-450 transition"
+                                title="Delete Vulnerability"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+
+                            {isVulnEditing ? (
+                              <div className="space-y-1.5 mt-1 pr-12">
+                                <input
+                                  type="text"
+                                  value={v.title}
+                                  onChange={(e) => updateVulnerability(v.vulnerability_id, { title: e.target.value })}
+                                  className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-border text-[10px] rounded p-0.5 text-slate-800 dark:text-white"
+                                />
+                                <textarea
+                                  value={v.description}
+                                  onChange={(e) => updateVulnerability(v.vulnerability_id, { description: e.target.value })}
+                                  className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-border text-[10px] rounded p-0.5 text-slate-750 dark:text-slate-300 resize-none h-10"
+                                />
+                                <textarea
+                                  value={v.mitigation}
+                                  onChange={(e) => updateVulnerability(v.vulnerability_id, { mitigation: e.target.value })}
+                                  className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-border text-[10px] rounded p-0.5 text-slate-750 dark:text-slate-300 resize-none h-10"
+                                />
+                                <select
+                                  value={v.status}
+                                  onChange={(e) => updateVulnerability(v.vulnerability_id, { status: e.target.value })}
+                                  className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-border text-[9px] text-slate-800 dark:text-white rounded p-0.5"
+                                >
+                                  <option value="Open">Open</option>
+                                  <option value="Mitigated">Mitigated</option>
+                                </select>
+                              </div>
+                            ) : (
+                              <>
+                                <div className="flex justify-between items-center pr-12">
+                                  <span className="font-semibold text-slate-800 dark:text-text">{v.title}</span>
+                                  <span className="text-[8px] px-1 bg-red-500/10 text-red-500 font-bold uppercase rounded">{v.status}</span>
+                                </div>
+                                <p className="text-slate-500 dark:text-slate-400 leading-normal">{v.description}</p>
+                                {v.mitigation && (
+                                  <p className="text-[9px] text-slate-400 leading-normal mt-0.5"><span className="font-semibold text-emerald-500">Mitigation:</span> {v.mitigation}</p>
+                                )}
+                                {v.reasoning && (
+                                  <div className="mt-2 border-t border-slate-100 dark:border-border/30 pt-2 bg-slate-50 dark:bg-slate-950/50 p-2 rounded text-[10px] leading-relaxed max-h-40 overflow-y-auto">
+                                    <span className="text-[8px] font-bold uppercase tracking-wider text-primary-500 block mb-1">Reasoning</span>
+                                    {renderReasoning(v.reasoning)}
+                                  </div>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   // Find currently selected element
   const getSelectedElement = () => {
@@ -31,10 +650,36 @@ export default function PropertiesPanel() {
   const element = getSelectedElement();
   const boundaries = nodes.filter((n) => n.type === 'boundaryNode');
 
+  // Handle Multi-Selection view
+  if (isMultiSelection) {
+    return (
+      <div style={{ width: `${sidebarWidth}px` }} className="relative border-l border-slate-200 dark:border-border bg-white dark:bg-card p-6 overflow-y-auto shrink-0 flex flex-col gap-5 select-text">
+        <div
+          onMouseDown={startResize}
+          className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary-500/50 active:bg-primary-600 transition-colors z-50"
+        />
+        <div className="flex justify-between items-center border-b border-border pb-3">
+          <h3 className="text-sm font-bold text-text uppercase tracking-wider flex items-center gap-1.5">
+            <ShieldAlert className="w-4 h-4 text-amber-500" />
+            Batch Selection
+          </h3>
+        </div>
+        <p className="text-xs text-slate-400 leading-relaxed">
+          Showing threats, mitigations, and vulnerabilities for all {selectedNodes.length} selected elements and {selectedEdges.length} flows.
+        </p>
+        {renderThreatsSection()}
+      </div>
+    );
+  }
+
   // Handle asset management when nothing is selected
   if (!element || !selectedElementType) {
     return (
-      <div className="w-80 border-l border-slate-200 dark:border-border bg-white dark:bg-card p-6 overflow-y-auto select-none shrink-0 flex flex-col gap-6">
+      <div style={{ width: `${sidebarWidth}px` }} className="relative border-l border-slate-200 dark:border-border bg-white dark:bg-card p-6 overflow-y-auto select-text shrink-0 flex flex-col gap-6">
+        <div
+          onMouseDown={startResize}
+          className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary-500/50 active:bg-primary-600 transition-colors z-50"
+        />
         <div>
           <h3 className="text-sm font-bold text-text uppercase tracking-wider mb-2 flex items-center gap-1.5">
             <KeyRound className="w-4 h-4 text-primary-500" />
@@ -115,7 +760,11 @@ export default function PropertiesPanel() {
   if (selectedElementType === 'component') {
     const data = element.data;
     return (
-      <div className="w-80 border-l border-slate-200 dark:border-border bg-white dark:bg-card p-6 overflow-y-auto shrink-0 flex flex-col gap-5 select-none">
+      <div style={{ width: `${sidebarWidth}px` }} className="relative border-l border-slate-200 dark:border-border bg-white dark:bg-card p-6 overflow-y-auto shrink-0 flex flex-col gap-5 select-text">
+        <div
+          onMouseDown={startResize}
+          className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary-500/50 active:bg-primary-600 transition-colors z-50"
+        />
         <div className="flex justify-between items-center border-b border-border pb-3">
           <h3 className="text-sm font-bold text-text uppercase tracking-wider flex items-center gap-1.5">
             <Globe className="w-4 h-4 text-emerald-500" />
@@ -232,6 +881,7 @@ export default function PropertiesPanel() {
             </div>
           )}
         </div>
+        {renderThreatsSection()}
       </div>
     );
   }
@@ -242,7 +892,11 @@ export default function PropertiesPanel() {
   if (selectedElementType === 'boundary') {
     const data = element.data;
     return (
-      <div className="w-80 border-l border-slate-200 dark:border-border bg-white dark:bg-card p-6 overflow-y-auto shrink-0 flex flex-col gap-5 select-none">
+      <div style={{ width: `${sidebarWidth}px` }} className="relative border-l border-slate-200 dark:border-border bg-white dark:bg-card p-6 overflow-y-auto shrink-0 flex flex-col gap-5 select-text">
+        <div
+          onMouseDown={startResize}
+          className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary-500/50 active:bg-primary-600 transition-colors z-50"
+        />
         <div className="flex justify-between items-center border-b border-border pb-3">
           <h3 className="text-sm font-bold text-text uppercase tracking-wider flex items-center gap-1.5">
             <ShieldAlert className="w-4 h-4 text-red-500" />
@@ -308,6 +962,7 @@ export default function PropertiesPanel() {
             className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-border rounded-lg text-xs p-2 text-slate-750 dark:text-slate-300 focus:outline-none focus:border-primary-500 resize-none h-20"
           />
         </div>
+        {renderThreatsSection()}
       </div>
     );
   }
@@ -327,7 +982,11 @@ export default function PropertiesPanel() {
     };
 
     return (
-      <div className="w-80 border-l border-slate-200 dark:border-border bg-white dark:bg-card p-6 overflow-y-auto shrink-0 flex flex-col gap-5 select-none">
+      <div style={{ width: `${sidebarWidth}px` }} className="relative border-l border-slate-200 dark:border-border bg-white dark:bg-card p-6 overflow-y-auto shrink-0 flex flex-col gap-5 select-text">
+        <div
+          onMouseDown={startResize}
+          className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary-500/50 active:bg-primary-600 transition-colors z-50"
+        />
         <div className="flex justify-between items-center border-b border-slate-200 dark:border-border pb-3">
           <h3 className="text-sm font-bold text-text uppercase tracking-wider flex items-center gap-1.5">
             <FileText className="w-4 h-4 text-blue-500" />
@@ -434,6 +1093,7 @@ export default function PropertiesPanel() {
             className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-border rounded-lg text-xs p-2 text-slate-750 dark:text-slate-300 focus:outline-none focus:border-primary-500 resize-none h-16"
           />
         </div>
+        {renderThreatsSection()}
       </div>
     );
   }

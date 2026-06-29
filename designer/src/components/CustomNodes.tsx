@@ -1,11 +1,19 @@
 import { memo } from 'react';
 import { Handle, Position, NodeProps, NodeResizer } from 'reactflow';
-import { Server, Database, User, ShieldAlert, EyeOff } from 'lucide-react';
+import { Server, Database, Box, ShieldAlert, EyeOff } from 'lucide-react';
+import { useDesignerStore } from '../store/useDesignerStore';
 
 // Custom Component Node
 export const ComponentNode = memo(({ data, selected }: NodeProps) => {
   const isOutOfScope = data.is_out_of_scope;
   const elementType = data.element_type;
+  const threats = useDesignerStore((state) => state.threats || []);
+  const showRiskInCanvas = useDesignerStore((state) => state.showRiskInCanvas);
+
+  const compName = (data.name || '').trim().toLowerCase();
+  const componentThreatsCount = compName 
+    ? threats.filter(t => (t.affected_components || '').toLowerCase().includes(compName)).length
+    : 0;
 
   // Icon selector based on component element type
   const getIcon = () => {
@@ -15,7 +23,7 @@ export const ComponentNode = memo(({ data, selected }: NodeProps) => {
       case 'Data Store':
         return <Database className="w-5 h-5 text-store" />;
       case 'Entity':
-        return <User className="w-5 h-5 text-entity" />;
+        return <Box className="w-5 h-5 text-entity" />;
       default:
         return <Server className="w-5 h-5 text-blue-400" />;
     }
@@ -36,26 +44,46 @@ export const ComponentNode = memo(({ data, selected }: NodeProps) => {
 
   return (
     <div
-      className={`px-4 py-3 rounded-lg border-2 w-[140px] h-[90px] flex flex-col justify-between transition-all duration-200 shadow-lg ${
+      className={`group px-4 py-3 rounded-lg border-2 w-[140px] h-[90px] flex flex-col justify-between transition-all duration-200 shadow-lg ${
         isOutOfScope 
           ? 'border-dashed border-slate-600 bg-slate-800/40 opacity-60' 
           : getTypeColor()
       } ${selected ? 'ring-2 ring-primary-500 ring-offset-2 ring-offset-background scale-105' : ''}`}
     >
-      {/* Target Handles (All Directions) */}
-      <Handle type="target" position={Position.Top} id="top" className="opacity-0 group-hover:opacity-100" />
-      <Handle type="target" position={Position.Left} id="left" className="opacity-0 group-hover:opacity-100" />
-      <Handle type="target" position={Position.Right} id="right" className="opacity-0 group-hover:opacity-100" />
-      <Handle type="target" position={Position.Bottom} id="bottom" className="opacity-0 group-hover:opacity-100" />
+      {/* Handles (8 points: corners and sides) */}
+      {[
+        { id: 'top-left', pos: Position.Top, style: { left: '15%' } },
+        { id: 'top', pos: Position.Top, style: { left: '50%' } },
+        { id: 'top-right', pos: Position.Top, style: { left: '85%' } },
+        { id: 'bottom-left', pos: Position.Bottom, style: { left: '15%' } },
+        { id: 'bottom', pos: Position.Bottom, style: { left: '50%' } },
+        { id: 'bottom-right', pos: Position.Bottom, style: { left: '85%' } },
+        { id: 'left', pos: Position.Left, style: { top: '50%' } },
+        { id: 'right', pos: Position.Right, style: { top: '50%' } },
+      ].map((h) => (
+        <Handle
+          key={h.id}
+          type="source"
+          position={h.pos}
+          id={h.id}
+          style={{ ...h.style, zIndex: 11 }}
+          className="opacity-0 group-hover:opacity-100 transition-opacity !bg-primary-500 !w-2.5 !h-2.5 !border-2 !border-white dark:!border-slate-800"
+        />
+      ))}
 
       <div className="flex items-center justify-between">
         <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500 dark:text-slate-400">
           {elementType}
         </span>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1.5">
           {isOutOfScope && (
             <span title="Out of Scope">
               <EyeOff className="w-3.5 h-3.5 text-slate-400" />
+            </span>
+          )}
+          {showRiskInCanvas && componentThreatsCount > 0 && (
+            <span className="flex items-center justify-center bg-red-500 text-white text-[9px] font-extrabold w-4 h-4 rounded-full shadow-sm animate-pulse" title={`${componentThreatsCount} risks identified`}>
+              {componentThreatsCount}
             </span>
           )}
           {getIcon()}
@@ -74,11 +102,7 @@ export const ComponentNode = memo(({ data, selected }: NodeProps) => {
         {data.type || 'Generic'}
       </div>
 
-      {/* Source Handles (All Directions) */}
-      <Handle type="source" position={Position.Top} id="top-src" className="opacity-0 group-hover:opacity-100" />
-      <Handle type="source" position={Position.Left} id="left-src" className="opacity-0 group-hover:opacity-100" />
-      <Handle type="source" position={Position.Right} id="right-src" className="opacity-0 group-hover:opacity-100" />
-      <Handle type="source" position={Position.Bottom} id="bottom-src" className="opacity-0 group-hover:opacity-100" />
+      {/* Source handles are now generated above with the target handles */}
     </div>
   );
 });

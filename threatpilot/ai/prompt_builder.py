@@ -193,3 +193,16 @@ class PromptBuilder:
             f"Vulnerability: {vuln.description}\nStatus: {vuln.status}\nMitigation: {vuln.mitigation}\n\n"
             "Provide: 1. Attack Scenario, 2. Root Cause, 3. Remediation Deep-Dive (Markdown)."
         )
+
+    def build_mitigation_reasoning_prompt(self, req: any) -> str:
+        """Constructs a request for root-cause analysis and remediation strategy for a mitigation requirement."""
+        return (
+            "LANGUAGE DIRECTIVE: You MUST respond exclusively in English.\n\n"
+            f"Control ID: {req.req_id}\n"
+            f"Control Title: {req.title}\n"
+            f"Affected Components: {req.affected_components}\n"
+            f"Requirement Description: {req.mitigation}\n"
+            f"Test Case: {req.test_case}\n\n"
+            "Provide a detailed technical explanation of the security control, why it is necessary, how to implement it securely, "
+            "and how to validate it (test strategy). Output the report in markdown format."
+        )
