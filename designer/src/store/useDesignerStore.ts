@@ -27,6 +27,7 @@ export interface Threat {
   mitre_attack_id: string;
   reasoning?: string;
   cvss_vector: string;
+  cvss_rationale?: string;
   affected_asset_type?: string;
 }
 
@@ -252,7 +253,7 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
   isSaving: false,
   saveError: null,
   hasUnsavedChanges: false,
-  isDarkMode: true,
+  isDarkMode: false,
   showRiskInCanvas: true,
   history: [],
   historyIndex: -1,

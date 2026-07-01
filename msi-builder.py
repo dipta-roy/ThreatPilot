@@ -46,7 +46,7 @@ build_exe_options = {
         "os", "sys", "threatpilot", "threatpilot.ai", "threatpilot.ui", 
         "threatpilot.core", "threatpilot.utils", "threatpilot.detection",
         "threatpilot.config", "threatpilot.export", "threatpilot.risk",
-        "pydantic", "pydantic_core", "httpx", "cryptography", "keyring",
+        "pydantic", "pydantic_core", "httpx", "cryptography", "keyring", "ssl",
         "keyring.backends", "keyring.backends.Windows",
         "shiboken6",
         "dotenv", "openpyxl", "certifi", "anyio", "idna", "sniffio", "httpcore",

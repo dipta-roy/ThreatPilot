@@ -300,7 +300,7 @@ export default function App() {
   const [endpointUrl, setEndpointUrl] = React.useState('http://localhost:11434');
   const [modelName, setModelName] = React.useState('');
   const [geminiApiKey, setGeminiApiKey] = React.useState('');
-  const [maxTokens, setMaxTokens] = React.useState<number | ''>(4096);
+  const [maxTokens, setMaxTokens] = React.useState<number | ''>(16384);
   const [ollamaModels, setOllamaModels] = React.useState<string[]>([]);
   const [ollamaModelsLoading, setOllamaModelsLoading] = React.useState(false);
 
@@ -358,7 +358,7 @@ export default function App() {
         setEndpointUrl(data.endpoint_url || 'http://localhost:11434');
         setModelName(data.model_name || '');
         setGeminiApiKey(data.gemini_api_key || '');
-        setMaxTokens(data.max_tokens || 4096);
+        setMaxTokens(data.max_tokens || 16384);
         // Auto-fetch ollama models if provider is ollama
         if ((data.provider_type || 'ollama') === 'ollama') {
           fetchOllamaModels();
@@ -379,7 +379,7 @@ export default function App() {
           endpoint_url: endpointUrl,
           model_name: modelName,
           gemini_api_key: geminiApiKey,
-          max_tokens: maxTokens ? Number(maxTokens) : 4096
+          max_tokens: maxTokens ? Number(maxTokens) : 16384
         })
       });
       if (res.ok) {
@@ -529,11 +529,19 @@ export default function App() {
 
   // Poll for project changes (e.g. when user opens a new project in desktop app)
   useEffect(() => {
+    let errorCount = 0;
     const intervalId = setInterval(async () => {
       try {
         const ts = new Date().getTime();
         const res = await fetch(`/api/project/metadata?t=${ts}`, { cache: 'no-store' });
+        
+        if (res.status === 401) {
+          window.location.reload();
+          return;
+        }
+        
         if (res.ok) {
+          errorCount = 0; // reset on success
           const data = await res.json();
           // Use the current store state to check if project path changed
           const currentMeta = useDesignerStore.getState().metadata;
@@ -541,9 +549,18 @@ export default function App() {
             console.log('Project changed detected in backend, reloading workspace...');
             fetchProject();
           }
+        } else {
+          errorCount++;
         }
       } catch (e) {
-        // Ignore network errors during polling
+        // Track network errors (e.g. server stopped)
+        errorCount++;
+      }
+      
+      // If we fail 3 times consecutively (9 seconds), forcefully kick out
+      if (errorCount >= 3) {
+        console.warn('Lost connection to backend or sharing stopped. Reloading to lock workspace.');
+        window.location.reload();
       }
     }, 3000);
     return () => clearInterval(intervalId);
@@ -2112,13 +2129,15 @@ export default function App() {
                 <label className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider">
                   Max Tokens
                 </label>
-                <input
-                  type="number"
+                <select
                   value={maxTokens}
-                  onChange={(e) => setMaxTokens(e.target.value === '' ? '' : Number(e.target.value))}
-                  placeholder="e.g. 4096"
+                  onChange={(e) => setMaxTokens(Number(e.target.value))}
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-border rounded-lg text-xs font-semibold focus:outline-none focus:border-primary-500 text-slate-800 dark:text-white"
-                />
+                >
+                  <option value={8192}>8192</option>
+                  <option value={16384}>16384</option>
+                  <option value={32768}>32768</option>
+                </select>
               </div>
             </div>
             <div className="px-6 py-4 border-t border-slate-200 dark:border-border bg-slate-50 dark:bg-slate-950 flex justify-end gap-3">
@@ -2459,6 +2478,16 @@ export default function App() {
 
                 <div className="text-[10px] font-mono bg-slate-100 dark:bg-slate-950 p-2 rounded break-all leading-normal text-slate-500 select-all border border-slate-200/50 dark:border-border/30">
                   Vector String: {editingThreat.cvss_vector || 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H'}
+                </div>
+
+                <div className="mt-2">
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">CVSS Modification Rationale</label>
+                  <textarea
+                    value={editingThreat.cvss_rationale || ''}
+                    onChange={(e) => setEditingThreat({ ...editingThreat, cvss_rationale: e.target.value })}
+                    className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-border rounded-lg text-xs p-2 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-primary-500 h-16 resize-none"
+                    placeholder="Provide justification if you are manually modifying the AI-suggested CVSS vector..."
+                  />
                 </div>
               </div>
 

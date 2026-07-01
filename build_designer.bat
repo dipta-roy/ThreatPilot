@@ -8,7 +8,7 @@ rem Navigate to the designer directory relative to this script
 cd %~dp0designer
 
 echo [1/3] Checking and installing dependencies...
-call npm install
+call npm install --legacy-peer-deps
 
 echo.
 echo [2/3] Running TypeScript compilation checks...

@@ -59,6 +59,7 @@ class Threat(BaseModel):
     affected_asset_type: str = ""
     cvss_score: float = 0.0
     cvss_vector: str = ""
+    cvss_rationale: str = ""
     mitre_attack_id: str = ""
     mitre_attack_technique: str = ""
     reasoning: str = ""

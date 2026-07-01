@@ -20,7 +20,8 @@ THREATPILOT_HOME = Path.home() / ".threatpilot"
 CONFIG_FILE = THREATPILOT_HOME / "config.env"
 RECENT_PROJECTS_FILE = THREATPILOT_HOME / "recent_projects.json"
 KEYSTORE_FILE = THREATPILOT_HOME / ".keystore"
-
+SSL_CERT_FILE = THREATPILOT_HOME / "cert.pem"
+SSL_KEY_FILE = THREATPILOT_HOME / "key.pem"
 # Log directory
 LOG_DIR = THREATPILOT_HOME / "logs"
 LOG_FILENAME = "threatpilot.log"

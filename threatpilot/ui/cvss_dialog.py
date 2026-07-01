@@ -9,6 +9,8 @@ from PySide6.QtWidgets import (
     QLabel,
     QDialogButtonBox,
     QGroupBox,
+    QTextEdit,
+    QWidget,
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QColor
@@ -17,12 +19,14 @@ from threatpilot.risk.cvss_calculator import parse_cvss_vector, calculate_cvss_b
 class CVSSCalculatorDialog(QDialog):
     """An interactive CVSS 3.1 score calculator."""
 
-    def __init__(self, initial_vector: str, parent=None) -> None:
+    def __init__(self, current_vector: str = "", current_rationale: str = "", parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("CVSS 3.1 Calculator")
-        self.resize(550, 600)
-        self.setSizeGripEnabled(True)
-        self._vector = initial_vector if initial_vector.startswith("CVSS:3.1/") else "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+        self.setWindowTitle("CVSS v3.1 Calculator")
+        self.setMinimumWidth(500)
+        
+        self._vector = current_vector if current_vector.startswith("CVSS:3.1/") else "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+        self._score = 0.0
+        self._rationale = current_rationale
         self._setup_ui()
         self._parse_vector(self._vector)
 
@@ -79,9 +83,15 @@ class CVSSCalculatorDialog(QDialog):
         layout.addWidget(self._score_label)
 
         self._vector_label = QLabel(self._vector)
-        self._vector_label.setProperty("class", "cvss-vector-text")
-        self._vector_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._vector_label.setStyleSheet("font-family: Consolas; font-size: 11px;")
         layout.addWidget(self._vector_label)
+        
+        # Rationale Field
+        layout.addWidget(QLabel("Modification Rationale:"))
+        self._rationale_input = QTextEdit(self._rationale)
+        self._rationale_input.setMinimumHeight(60)
+        self._rationale_input.setPlaceholderText("Provide justification if you are manually modifying the AI-suggested CVSS vector...")
+        layout.addWidget(self._rationale_input)
 
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         btns.accepted.connect(self.accept)
@@ -135,7 +145,10 @@ class CVSSCalculatorDialog(QDialog):
         self._score_label.style().unpolish(self._score_label)
         self._score_label.style().polish(self._score_label)
         self._vector_label.setText(vector)
+        self._rationale = self._rationale_input.toPlainText()
 
-    def get_result(self) -> tuple[float, str]:
-        """Return the resulting score and vector."""
-        return self._score, self._vector
+    def get_result(self) -> tuple[float, str, str]:
+        """Return the resulting score, vector, and rationale."""
+        # Ensure latest rationale is captured
+        self._rationale = self._rationale_input.toPlainText()
+        return self._score, self._vector, self._rationale

@@ -56,46 +56,46 @@ graph TD
 
 ### 1. User Interface (UI) Layer
 The UI is built using Python and PySide6, providing a desktop-native experience for complex modeling tasks.
-- **MainWindow**: The central hub that orchestrates the layout, menus, and global state transitions.
-- **Diagram Canvas**: A specialized component for drawing and interacting with DFD elements (Components, Flows, Trust Boundaries).
-- **Properties Panel**: A context-aware side dock for editing attributes of selected architectural elements.
-- **Threat Panel**: A tabular view of all identified threats with filtering and prioritization controls.
-- **Risk Assessment Suite**: Includes interactive CVSS 3.1 calculators and a Risk Matrix visualization for severity analysis.
+- **MainWindow**: The central hub orchestrating layout, menus, and global state transitions.
+- **Diagram Canvas**: A specialized component for drawing and interacting with DFD elements.
+- **Properties Panel**: A context-aware side dock for editing attributes. Features drag-resizing (260px - 800px) and fully selectable, copyable text container layouts.
+- **Threat Panel**: A tabular view of all identified threats with filtering controls.
+- **Risk Assessment Suite**: Includes interactive CVSS 3.1 calculators and a Risk Matrix visualization.
 
 ### 2. Core Engine
 Handles the underlying logic of threat modeling and state management.
 - **Domain Models**: Pydantic-based schemas for architectural elements (Entity, Process, Data Store, Flow).
-- **Threat Model**: Implements both **STRIDE** (Security) and **LINDDUN** (Privacy) categorization, CVSS 3.1 scoring, and **MITRE ATT&CK** technique mapping.
-- **Vulnerability Register**: A global repository of identified security flaws. Decouples technical vulnerabilities from high-level threats, allowing for standardized remediation tracking across multiple elements.
-- **Project Manager**: Orchestrates project lifecycles using a **Multi-File Persistence** strategy (partitioning data into `project.json`, `architecture.json`, `threats.json`, and `vulnerabilities.json`).
+- **Threat Model**: Implements both **STRIDE** (Security) and **LINDDUN** (Privacy) categorization, CVSS 3.1 scoring, and **MITRE ATT&CK** technique mapping. Now includes dedicated tracking for **CVSS Modification Rationales**.
+- **Vulnerability Register**: A global repository of identified security flaws. Decouples technical vulnerabilities from high-level threats for standardized remediation tracking.
+- **Project Manager**: Orchestrates project lifecycles using a **Multi-File Persistence** strategy (partitioning data into specialized JSON sidecars).
 - **Undo System**: Uses `QUndoStack` for multi-action undo/redo capabilities.
 
 ### 3. Web Architecture Designer Layer
-An alternative interactive workspace built as a React single page application (`f:/ThreatPilot/designer`) and integrated via a standard library web server.
-- **Designer Server (`designer_server.py`)**: A lightweight multi-threaded HTTP server built on Python's native `http.server`. It hosts the visual designer frontend assets and exposes `/api/project` REST endpoints to read/write diagram changes, as well as `/api/project/image` to save screenshot uploads.
-- **React Flow Canvas**: A modern interactive canvas using Tailwind CSS and React Flow with full support for light/dark themes, trust boundary containment/resizing, and instant file sync. Component nodes render a dynamic, pulsing red badge showing the active threat count.
-- **Properties Panel**: A mouse-resizable sidebar dock (260px - 800px) that enables fully selectable and copyable text container layouts for easy copy-pasting of metadata.
-- **Workspace Screenshot Capture**: A toolbar control that dynamically imports `html-to-image` at runtime, serializes the viewport, downloads the JPEG client-side, and POSTs it to the backend to be persisted as the project's default `architecture.jpg` design.
+An alternative interactive workspace built as a React Single Page Application (SPA) (`f:/ThreatPilot/designer`) and integrated via a standard library web server.
+- **Designer Server (`designer_server.py`)**: A multi-threaded HTTP/HTTPS server built on Python's native `http.server`. Hosts the frontend assets and exposes REST endpoints.
+- **React Flow Canvas**: A modern interactive canvas using Tailwind CSS with full support for light/dark themes, trust boundary nesting, and instant file sync. Component nodes render dynamic, pulsing red badges showing active threat counts.
+- **Workspace Screenshot Capture**: Dynamically imports `html-to-image` at runtime, serializes the viewport, downloads the JPEG client-side, and POSTs it to the backend.
 - **Validation & Export Panels**: Generates real-time structural warnings, ASCII diagram previews, and Mermaid code exports directly in the web UI.
-- **Network Sharing & PIN Session Security**: Allows users to toggle "Host Architecture Workspace" between **Shared (Yes/No)** modes. If "Yes" is toggled, the server binds to `0.0.0.0` (accessible from any computer on the local network) and generates a random 6-digit PIN. Remote users are forced to authenticate via a dedicated `/auth` login portal using the PIN, which stores a cryptographically safe session cookie (`threatpilot_session`) validated on subsequent API calls. Local loopback (`127.0.0.1`) accesses automatically bypass authentication. If toggled "No", the server binds strictly to `127.0.0.1`.
-- **Manual Data Entry & Modeling Control**: Comprehensive modals (Add Threat, Add Risk, Add Vulnerability, Add Mitigation) allow full manual overrides with integrated real-time CVSS v3.1 calculators inside the browser.
+- **Network Sharing & Advanced Security**: 
+  - Allows toggling "Host Architecture Workspace" between local-only and shared modes. 
+  - **Shared Mode**: The server binds to `0.0.0.0` and enforces strict authentication via a generated **8-Digit PIN**. Access requires validation through a `/auth` portal which issues a cryptographically secure (`HttpOnly`, `SameSite=Strict`) `threatpilot_session` cookie. 
+  - **TLS Encrytpion**: Traffic can optionally be secured via self-signed TLS certificates directly from the UI.
+  - **Session Revocation**: The SPA actively polls for connectivity. If sharing is stopped (or restarted), the backend flushes sessions, and the frontend instantly forces a page reload upon receiving `401 Unauthorized` or network errors, locking the screen and wiping lingering memory.
+- **Manual Data Entry & Modeling Control**: Comprehensive modals (Add Threat, Add Risk, Add Vulnerability, Add Mitigation) allow full manual overrides, including CVSS scoring rationale justification, with real-time CVSS calculators inside the browser.
 
 ### 4. AI Analysis Engine
-A sophisticated pipeline that transforms architectural diagrams into structured security insights.
-- **Threat Analyzer**: The primary orchestrator that segments large architectures to fit within LLM context windows. It integrates the **XAI Reasoning engine** across all tables (Threats, Vulnerabilities, and Mitigation Requirements).
-- **Vulnerability & Mitigation XAI**: Implements dynamic prompt construction and async analysis for both vulnerabilities and mitigation controls. Reports are parsed and rendered via a dedicated client-side markdown formatter that handles nested headers, bullet/ordered lists, horizontal rules, and bold styling.
+A sophisticated pipeline transforming architectural diagrams into structured security insights.
+- **Threat Analyzer**: The primary orchestrator that segments large architectures to fit within LLM context windows. Integrates the **XAI Reasoning engine** across all tables (Threats, Vulnerabilities, and Mitigation Requirements).
+- **Vulnerability & Mitigation XAI**: Implements dynamic prompt construction and async analysis. Reports are parsed and rendered via a dedicated client-side markdown formatter.
 - **Vulnerability Registry Fallbacks**: If a vulnerability has no description, it dynamically falls back to its parent threat's mitigation description.
-- **Asset Mapping & Deduplication**: Configures deduplication logic during project load to resolve ID collisions. Risk Assessment tables dynamically inspect DFD edges (data flows) to map carried assets back to components, falling back to elements' `asset_type` or "System Data".
+- **Asset Mapping & Deduplication**: Risk Assessment tables dynamically inspect DFD edges (data flows) to map carried assets back to components.
 - **AI Providers**: Pluggable interfaces for Google Gemini and Ollama.
-- **Prompt Builder**: Dynamically builds multi-shot, instructional prompts.
-- **Response Parser**: Resilient parser with partial-JSON recovery logic.
+- **Prompt Builder & Parser**: Multi-shot, instructional prompts paired with resilient partial-JSON recovery parsing.
 
 ### 5. Security & Data
-- **Project Files**: Projects are stored as structured JSON files, separating threats, vulnerabilities, mitigations, and design layouts.
-- **Project Design Image**: Integrates `architecture.jpg` stored directly in the project directory, captured dynamically from the workspace.
-- **Credential Storage**: API keys encrypted using Fernet (AES-128-CBC) and stored in `config.env`.
-- **Key Management**: Uses PBKDF2 for key derivation.
-- **Centralized Infrastructure**: Unifies path logic in `utils/paths.py` and constants in `core/constants.py`.
+- **Project Files**: Projects are stored as structured JSON files, separating threats, vulnerabilities, mitigations, and layouts.
+- **Credential Storage**: API keys are encrypted using Fernet (AES-128-CBC) and stored in `config.env`.
+- **Key Management**: Uses PBKDF2 (100,000 iterations) for master key derivation.
 
 ---
 
@@ -130,10 +130,11 @@ A sophisticated pipeline that transforms architectural diagrams into structured 
 
 ## Web Designer REST API Endpoints
 
-The local visual designer interacts with the desktop application backend through the following local HTTP server routes (served on loopback address `127.0.0.1`):
+The local visual designer interacts with the desktop application backend through the following local HTTP/HTTPS server routes:
 
 ### 1. Project Management
 *   **`GET /api/project`**: Loads the active project. Merges and formats data from `project.json`, `architecture.json`, `threats.json`, `vulnerabilities.json`, and `mitigations.json` sidecar files into a unified JSON workspace.
+*   **`GET /api/project/metadata`**: Retrieves lightweight project metadata (project path, timestamps) used for fast background polling.
 *   **`POST /api/project`**: Saves current diagrams, components, boundaries, custom component types, threats, vulnerabilities, and mitigations back to the project files.
 *   **`POST /api/project/autosave`**: Performs periodic background auto-saving to prevent loss of editing states.
 *   **`POST /api/project/image`**: Accepts base64 encoded JPG data, decodes it, and saves it as `architecture.jpg` in the project directory.
@@ -143,11 +144,19 @@ The local visual designer interacts with the desktop application backend through
 *   **`POST /api/project/prompt_config`**: Saves updates to the project's business context and prompt configuration.
 *   **`GET /api/ai/config`**: Retrieves active AI configurations, model names, endpoints, and credentials status.
 *   **`POST /api/ai/config`**: Updates and encrypts AI provider credentials and configurations (including caps like `max_tokens`).
+*   **`GET /api/ai/ollama/models`**: Automatically fetches a list of locally available models from the Ollama service.
 *   **`POST /api/ai/analyze`**: Runs STRIDE/LINDDUN threat analysis against DFD components.
+*   **`GET /api/ai/status`**: Polls the real-time progress and status of an ongoing threat analysis batch.
 *   **`POST /api/ai/mitigations`**: Initiates a background Map-Reduce review to group, deduplicate, and compile security requirements.
+*   **`GET /api/ai/mitigations/status`**: Polls the real-time progress of an ongoing mitigation compilation batch.
 *   **`POST /api/ai/reason`**: Triggers Explainable AI (XAI) deep-dives. Accepts a payload specifying `threat_id`, `vulnerability_id`, or `req_id` to generate targeted technical reports.
 
-### 3. Exports
-*   **`GET /api/export/checklist_excel`**: Renders and downloads a consolidated Excel workbook containing security mitigation checklists.
+### 3. Authentication & Security
+*   **`GET /auth`**: Serves the standalone HTML portal for entering the PIN when network sharing is active.
+*   **`POST /api/auth/verify`**: Validates the user-submitted PIN and issues a secure `threatpilot_session` cookie if correct.
 
-- **Delta Updates**: Optimized save operations maintain undo/redo consistency during heavy modeling sessions.
+### 4. Exports
+*   **`GET /api/export/html`**: Generates and downloads a complete interactive HTML report of the threat model.
+*   **`GET /api/export/excel`**: Generates and downloads the standard 7-tab Excel GRC workbook.
+*   **`GET /api/export/checklist`**: Retrieves mitigation requirements formatted as a raw markdown checklist.
+*   **`GET /api/export/checklist_excel`**: Renders and downloads a consolidated Excel workbook specifically focused on security mitigation checklists.

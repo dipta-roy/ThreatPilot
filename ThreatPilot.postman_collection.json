@@ -1,0 +1,389 @@
+{
+  "info": {
+    "name": "ThreatPilot API",
+    "description": "API collection for the ThreatPilot Web Designer Backend.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8080",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Project Management",
+      "item": [
+        {
+          "name": "Get Project",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/project",
+              "host": ["{{base_url}}"],
+              "path": ["api", "project"]
+            },
+            "description": "Loads the active project."
+          }
+        },
+        {
+          "name": "Get Project Metadata",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/project/metadata",
+              "host": ["{{base_url}}"],
+              "path": ["api", "project", "metadata"]
+            },
+            "description": "Retrieves lightweight project metadata."
+          }
+        },
+        {
+          "name": "Save Project",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"components\": [],\n  \"boundaries\": [],\n  \"custom_component_types\": [],\n  \"threats\": [],\n  \"vulnerabilities\": [],\n  \"mitigationRequirements\": []\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/project",
+              "host": ["{{base_url}}"],
+              "path": ["api", "project"]
+            },
+            "description": "Saves current diagrams and state back to project files."
+          }
+        },
+        {
+          "name": "Autosave Project",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"components\": []\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/project/autosave",
+              "host": ["{{base_url}}"],
+              "path": ["api", "project", "autosave"]
+            },
+            "description": "Performs periodic background auto-saving."
+          }
+        },
+        {
+          "name": "Save Architecture Image",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"image_data\": \"data:image/jpeg;base64,...\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/project/image",
+              "host": ["{{base_url}}"],
+              "path": ["api", "project", "image"]
+            },
+            "description": "Accepts base64 encoded JPG data to save as architecture.jpg."
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. AI Infrastructure & Orchestration",
+      "item": [
+        {
+          "name": "Get Prompt Config",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/project/prompt_config",
+              "host": ["{{base_url}}"],
+              "path": ["api", "project", "prompt_config"]
+            },
+            "description": "Retrieves the active project's business context and prompt instructions."
+          }
+        },
+        {
+          "name": "Update Prompt Config",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"business_context\": \"\",\n  \"risk_preferences\": \"\",\n  \"custom_instructions\": \"\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/project/prompt_config",
+              "host": ["{{base_url}}"],
+              "path": ["api", "project", "prompt_config"]
+            }
+          }
+        },
+        {
+          "name": "Get AI Config",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/ai/config",
+              "host": ["{{base_url}}"],
+              "path": ["api", "ai", "config"]
+            },
+            "description": "Retrieves active AI configurations."
+          }
+        },
+        {
+          "name": "Update AI Config",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"provider\": \"ollama\",\n  \"model_name\": \"qwen2.5-vl\",\n  \"endpoint\": \"http://localhost:11434\",\n  \"max_tokens\": 4096\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/ai/config",
+              "host": ["{{base_url}}"],
+              "path": ["api", "ai", "config"]
+            }
+          }
+        },
+        {
+          "name": "Get Ollama Models",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/ai/ollama/models",
+              "host": ["{{base_url}}"],
+              "path": ["api", "ai", "ollama", "models"]
+            },
+            "description": "Fetches a list of locally available models from Ollama."
+          }
+        },
+        {
+          "name": "Run Threat Analysis",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/ai/analyze",
+              "host": ["{{base_url}}"],
+              "path": ["api", "ai", "analyze"]
+            },
+            "description": "Runs STRIDE/LINDDUN threat analysis against DFD components."
+          }
+        },
+        {
+          "name": "Get Threat Analysis Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/ai/status",
+              "host": ["{{base_url}}"],
+              "path": ["api", "ai", "status"]
+            },
+            "description": "Polls the real-time progress of an ongoing threat analysis batch."
+          }
+        },
+        {
+          "name": "Compile Mitigations",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/ai/mitigations",
+              "host": ["{{base_url}}"],
+              "path": ["api", "ai", "mitigations"]
+            },
+            "description": "Initiates a background Map-Reduce review to group and compile security requirements."
+          }
+        },
+        {
+          "name": "Get Mitigations Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/ai/mitigations/status",
+              "host": ["{{base_url}}"],
+              "path": ["api", "ai", "mitigations", "status"]
+            }
+          }
+        },
+        {
+          "name": "Generate XAI Reasoning",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"threat_id\": \"T-001\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/ai/reason",
+              "host": ["{{base_url}}"],
+              "path": ["api", "ai", "reason"]
+            },
+            "description": "Triggers Explainable AI deep-dives for a threat, vulnerability, or requirement."
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Authentication & Security",
+      "item": [
+        {
+          "name": "Get Auth Portal",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/auth",
+              "host": ["{{base_url}}"],
+              "path": ["auth"]
+            },
+            "description": "Serves the standalone HTML portal for entering the PIN."
+          }
+        },
+        {
+          "name": "Verify PIN",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "pin",
+                  "value": "12345678",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/verify",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "verify"]
+            },
+            "description": "Validates the PIN and issues a secure cookie."
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Exports",
+      "item": [
+        {
+          "name": "Export HTML Report",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/export/html",
+              "host": ["{{base_url}}"],
+              "path": ["api", "export", "html"]
+            }
+          }
+        },
+        {
+          "name": "Export Excel Report",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/export/excel",
+              "host": ["{{base_url}}"],
+              "path": ["api", "export", "excel"]
+            }
+          }
+        },
+        {
+          "name": "Export Mitigation Checklist (MD)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/export/checklist",
+              "host": ["{{base_url}}"],
+              "path": ["api", "export", "checklist"]
+            }
+          }
+        },
+        {
+          "name": "Export Mitigation Checklist (Excel)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/export/checklist_excel",
+              "host": ["{{base_url}}"],
+              "path": ["api", "export", "checklist_excel"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

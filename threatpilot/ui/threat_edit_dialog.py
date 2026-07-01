@@ -123,6 +123,12 @@ class ThreatEditDialog(QDialog):
         self._cvss_vector_display = QLineEdit()
         self._cvss_vector_display.setReadOnly(True)
         cvss_layout.addRow("Vector String:", self._cvss_vector_display)
+        
+        self._cvss_rationale_display = QTextEdit()
+        self._cvss_rationale_display.setMinimumHeight(50)
+        self._cvss_rationale_display.setPlaceholderText("Provide justification if you are manually modifying the AI-suggested CVSS vector...")
+        cvss_layout.addRow("Modification Rationale:", self._cvss_rationale_display)
+        
         self._main_form.addRow(cvss_group)
         remedy_group = QGroupBox("Technical Analysis & Remediation")
         remedy_layout = QFormLayout(remedy_group)
@@ -221,6 +227,7 @@ class ThreatEditDialog(QDialog):
                 val = getattr(metrics, attr)
                 combo.setCurrentText(val)
         
+        self._cvss_rationale_display.setText(self._threat.cvss_rationale)
         self._update_cvss_results()
 
     def _on_cvss_metric_changed(self) -> None:
@@ -249,5 +256,6 @@ class ThreatEditDialog(QDialog):
         self._threat.likelihood = self._likelihood_spin.value()
         self._threat.cvss_score = float(self._cvss_score_display.text())
         self._threat.cvss_vector = self._cvss_vector_display.text()
+        self._threat.cvss_rationale = self._cvss_rationale_display.toPlainText()
         self._threat.mitigation = self._mitigation_input.toPlainText()
         super().accept()

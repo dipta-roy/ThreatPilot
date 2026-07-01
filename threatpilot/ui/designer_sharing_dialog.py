@@ -1,7 +1,8 @@
 from __future__ import annotations
+import os
 import random
 import socket
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QUrl, QTimer
 from PySide6.QtGui import QFont, QDesktopServices
 from PySide6.QtWidgets import (
     QDialog,
@@ -13,8 +14,12 @@ from PySide6.QtWidgets import (
     QRadioButton,
     QButtonGroup,
     QFrame,
-    QMessageBox
+    QMessageBox,
+    QCheckBox,
+    QApplication,
 )
+from threatpilot.utils.paths import SSL_CERT_FILE, SSL_KEY_FILE
+from threatpilot.utils.ssl_cert import generate_self_signed_cert
 
 def get_local_ip() -> str:
     try:
@@ -40,12 +45,14 @@ class DesignerSharingDialog(QDialog):
         self.generated_pin = ""
         self.active_host = "127.0.0.1"
         self.active_shared = False
+        self.active_use_https = False
         
         # Pull current server status if running
         server_thread = getattr(self.main_window, "_designer_server_thread", None)
         if server_thread and server_thread.server:
             self.active_host = server_thread.host
             self.active_shared = getattr(server_thread.server, "sharing_active", False)
+            self.active_use_https = getattr(server_thread.server, "use_https", False)
             self.generated_pin = getattr(server_thread.server, "pin_code", "")
             
         self.setup_ui()
@@ -96,6 +103,11 @@ class DesignerSharingDialog(QDialog):
         self.group.addButton(self.radio_shared)
         options_layout.addWidget(self.radio_shared)
         
+        self.https_checkbox = QCheckBox("Enable HTTPS (Encrypted Connection)")
+        self.https_checkbox.setChecked(self.active_use_https)
+        self.https_checkbox.setStyleSheet("margin-left: 20px; font-weight: bold; color: #10b981;")
+        options_layout.addWidget(self.https_checkbox)
+        
         layout.addWidget(options_frame)
         
         # Details/PIN display panel
@@ -108,12 +120,12 @@ class DesignerSharingDialog(QDialog):
         detail_layout.setSpacing(8)
         
         # PIN code field
-        pin_lbl = QLabel("6-Digit Authentication PIN:")
-        pin_lbl.setFont(QFont("Arial", 11, QFont.Bold))
-        pin_lbl.setAlignment(Qt.AlignCenter)
-        detail_layout.addWidget(pin_lbl)
+        self.pin_lbl = QLabel("8-Digit Authentication PIN:")
+        self.pin_lbl.setFont(QFont("Arial", 11, QFont.Bold))
+        self.pin_lbl.setAlignment(Qt.AlignCenter)
+        detail_layout.addWidget(self.pin_lbl)
         
-        self.pin_val = QLabel("123456")
+        self.pin_val = QLabel("12345678")
         pin_font = QFont("Courier New", 32, QFont.Bold)
         pin_font.setLetterSpacing(QFont.AbsoluteSpacing, 8.0)
         self.pin_val.setFont(pin_font)
@@ -133,14 +145,24 @@ class DesignerSharingDialog(QDialog):
                 margin-right: 20px;
             }}
         """)
+        self.pin_val.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.pin_val.setToolTip("Click to copy PIN to clipboard")
+        
+        def _copy_pin(event):
+            QApplication.clipboard().setText(self.generated_pin)
+            self.pin_val.setText("Copied!")
+            QTimer.singleShot(1500, lambda: self.pin_val.setText(self.generated_pin))
+            
+        self.pin_val.mousePressEvent = _copy_pin
+        
         detail_layout.addWidget(self.pin_val)
         
         # URL field
-        url_lbl = QLabel("Network Access URL:")
-        url_lbl.setFont(QFont("Arial", 10, QFont.Bold))
-        url_lbl.setAlignment(Qt.AlignCenter)
-        url_lbl.setStyleSheet("margin-top: 10px;")
-        detail_layout.addWidget(url_lbl)
+        self.url_lbl = QLabel("Network Access URL:")
+        self.url_lbl.setFont(QFont("Arial", 10, QFont.Bold))
+        self.url_lbl.setAlignment(Qt.AlignCenter)
+        self.url_lbl.setStyleSheet("margin-top: 10px;")
+        detail_layout.addWidget(self.url_lbl)
         
         self.url_val = QLabel(f"http://{self.local_ip}:8080/")
         self.url_val.setFont(QFont("Courier New", 12))
@@ -162,12 +184,39 @@ class DesignerSharingDialog(QDialog):
                 margin-right: 20px;
             }}
         """)
+        self.url_val.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.url_val.setToolTip("Click to copy URL to clipboard")
+        
+        def _copy_url(event):
+            proto = "https" if self.https_checkbox.isChecked() else "http"
+            actual_url = f"{proto}://{self.local_ip}:8080/"
+            QApplication.clipboard().setText(actual_url)
+            self.url_val.setText("Copied URL!")
+            QTimer.singleShot(1500, lambda: self.url_val.setText(actual_url))
+            
+        self.url_val.mousePressEvent = _copy_url
+        
         detail_layout.addWidget(self.url_val)
         
         self.status_lbl = QLabel("Status: Shared workspace is active on local network.")
         self.status_lbl.setAlignment(Qt.AlignCenter)
         self.status_lbl.setStyleSheet("color: #10b981; font-size: 11px; font-weight: bold; margin-top: 5px;")
         detail_layout.addWidget(self.status_lbl)
+        
+        # SSL Cert Frame
+        self.cert_frame = QFrame()
+        cert_layout = QHBoxLayout(self.cert_frame)
+        cert_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.cert_status_lbl = QLabel("Cert Status: ")
+        self.cert_status_lbl.setStyleSheet("font-size: 11px;")
+        cert_layout.addWidget(self.cert_status_lbl)
+        
+        self.cert_action_btn = QPushButton("Generate Certificate")
+        self.cert_action_btn.clicked.connect(self._on_cert_action)
+        cert_layout.addWidget(self.cert_action_btn)
+        
+        detail_layout.addWidget(self.cert_frame)
         
         layout.addWidget(self.detail_frame)
         
@@ -194,24 +243,53 @@ class DesignerSharingDialog(QDialog):
         # Connect toggles
         self.radio_local.toggled.connect(self.sync_ui_state)
         self.radio_shared.toggled.connect(self.sync_ui_state)
+        self.https_checkbox.toggled.connect(self.sync_ui_state)
+
+    def _on_cert_action(self):
+        try:
+            generate_self_signed_cert(SSL_CERT_FILE, SSL_KEY_FILE)
+            QMessageBox.information(self, "Certificate Generated", "Self-signed SSL certificate has been successfully generated.")
+            self.sync_ui_state()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to generate certificate: {e}")
 
     def sync_ui_state(self):
         is_shared = self.radio_shared.isChecked()
+        use_https = self.https_checkbox.isChecked()
+        
+        self.https_checkbox.setVisible(is_shared)
+        self.cert_frame.setVisible(use_https)
         
         if is_shared:
             if not self.generated_pin:
-                self.generated_pin = str(random.randint(100000, 999999))
+                self.generated_pin = str(random.randint(10000000, 99999999))
             
+            proto = "https" if use_https else "http"
             self.pin_val.setText(self.generated_pin)
-            self.url_val.setText(f"http://{self.local_ip}:8080/")
+            self.url_val.setText(f"{proto}://{self.local_ip}:8080/")
             self.detail_frame.setVisible(True)
             self.btn_action.setEnabled(True)
             
+            if os.path.exists(SSL_CERT_FILE) and os.path.exists(SSL_KEY_FILE):
+                self.cert_status_lbl.setText("TLS Certificate Status: Found existing certificate.")
+                self.cert_action_btn.setText("Renew TLS Certificate")
+            else:
+                self.cert_status_lbl.setText("TLS Certificate Status: No certificate found.")
+                self.cert_action_btn.setText("Generate TLS Certificate")
+            
             if self.active_shared:
+                self.pin_lbl.setVisible(True)
+                self.pin_val.setVisible(True)
+                self.url_lbl.setVisible(True)
+                self.url_val.setVisible(True)
                 self.btn_action.setText("Stop Sharing")
                 self.status_lbl.setText("Status: Sharing active. Remote users must enter PIN to access.")
                 self.status_lbl.setStyleSheet("color: #10b981; font-size: 10px; font-weight: bold;")
             else:
+                self.pin_lbl.setVisible(False)
+                self.pin_val.setVisible(False)
+                self.url_lbl.setVisible(False)
+                self.url_val.setVisible(False)
                 self.btn_action.setText("Start Sharing")
                 self.status_lbl.setText("Status: Configured. Click 'Start Sharing' to bind to all interfaces.")
                 self.status_lbl.setStyleSheet("color: #f59e0b; font-size: 10px; font-weight: bold;")
@@ -229,34 +307,44 @@ class DesignerSharingDialog(QDialog):
 
     def _on_action_clicked(self):
         is_shared = self.radio_shared.isChecked()
+        use_https = self.https_checkbox.isChecked()
         
         if is_shared:
-            if self.active_shared:
+            if use_https and (not os.path.exists(SSL_CERT_FILE) or not os.path.exists(SSL_KEY_FILE)):
+                QMessageBox.warning(self, "Missing Certificate", "Please generate an SSL certificate before enabling HTTPS.")
+                return
+
+            if self.active_shared and self.active_use_https == use_https:
                 # Stop sharing -> Drop back to local bound server
-                self.main_window.start_designer_server(host="127.0.0.1", shared=False)
+                self.main_window.start_designer_server(host="127.0.0.1", shared=False, use_https=False)
                 self.active_shared = False
                 self.active_host = "127.0.0.1"
+                self.active_use_https = False
                 self.generated_pin = ""
                 QMessageBox.information(self, "Sharing Stopped", "Visual workspace sharing has been disabled. Server reverted to localhost only.")
             else:
                 # Start sharing
                 if not self.generated_pin:
-                    self.generated_pin = str(random.randint(100000, 999999))
-                self.main_window.start_designer_server(host="0.0.0.0", shared=True, pin=self.generated_pin)
+                    self.generated_pin = str(random.randint(10000000, 99999999))
+                self.main_window.start_designer_server(host="0.0.0.0", shared=True, pin=self.generated_pin, use_https=use_https)
                 self.active_shared = True
                 self.active_host = "0.0.0.0"
-                QMessageBox.information(self, "Sharing Enabled", f"Visual workspace is now shared on local network!\n\nAccess URL: http://{self.local_ip}:8080/\nPIN Code: {self.generated_pin}")
+                self.active_use_https = use_https
+                proto = "https" if use_https else "http"
+                QMessageBox.information(self, "Sharing Enabled", f"Visual workspace is now shared on local network!\n\nAccess URL: {proto}://{self.local_ip}:8080/\nPIN Code: {self.generated_pin}")
         else:
             # Revert from shared to local only
-            self.main_window.start_designer_server(host="127.0.0.1", shared=False)
+            self.main_window.start_designer_server(host="127.0.0.1", shared=False, use_https=False)
             self.active_shared = False
             self.active_host = "127.0.0.1"
+            self.active_use_https = False
             self.generated_pin = ""
             QMessageBox.information(self, "Configuration Reverted", "Server has been bound to local loopback (127.0.0.1) only.")
             
         self.sync_ui_state()
 
     def _on_launch_clicked(self):
-        url_str = f"http://{self.local_ip if self.active_shared else '127.0.0.1'}:8080/"
+        proto = "https" if (self.active_shared and self.active_use_https) else "http"
+        url_str = f"{proto}://{self.local_ip if self.active_shared else '127.0.0.1'}:8080/"
         QDesktopServices.openUrl(QUrl(url_str))
         self.accept()

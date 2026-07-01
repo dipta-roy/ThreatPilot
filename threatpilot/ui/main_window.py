@@ -1696,7 +1696,7 @@ class MainWindow(QMainWindow):
         self._ai_log_view.append(entry)
         self._ai_log_view.verticalScrollBar().setValue(self._ai_log_view.verticalScrollBar().maximum())
 
-    def start_designer_server(self, host: str = "127.0.0.1", shared: bool = False, pin: str = "") -> None:
+    def start_designer_server(self, host: str = "127.0.0.1", shared: bool = False, pin: str = "", use_https: bool = False) -> None:
         from threatpilot.core.designer_server import DesignerServerThread
         self.stop_designer_server()
         
@@ -1705,21 +1705,12 @@ class MainWindow(QMainWindow):
             main_window=self,
             host=host,
             port=8080,
-            on_save_callback=self._on_designer_saved
+            on_save_callback=self._on_designer_saved,
+            use_https=use_https,
+            shared=shared,
+            pin=pin
         )
         self._designer_server_thread.start()
-        
-        # Give the thread a moment to initialize the socket server
-        import time
-        for _ in range(10):
-            time.sleep(0.05)
-            if self._designer_server_thread.server:
-                break
-        
-        if self._designer_server_thread.server:
-            self._designer_server_thread.server.sharing_active = shared
-            self._designer_server_thread.server.pin_code = pin
-            self._designer_server_thread.server.authenticated_sessions = set()
 
     def stop_designer_server(self) -> None:
         if hasattr(self, "_designer_server_thread") and self._designer_server_thread is not None:

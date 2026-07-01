@@ -7,30 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.0] - 2026-07-01
+
+This release brings significant enhancements to Workspace Sharing security, auditability features for risk assessments, and quality-of-life improvements to the UI.
+
+### Added
+- **Workspace Sharing Security Overhaul**: 
+  - Upgraded authentication from 6-digit to an **8-digit PIN** to better protect against brute force attacks on local networks.
+  - Introduced optional **TLS (HTTPS)** encryption directly from the Sharing Dialog using dynamically generated self-signed certificates.
+  - Enforced `HttpOnly`, `SameSite=Strict`, and `Secure` attributes on session cookies to prevent XSS-based cookie theft.
+  - Implemented **Instant Access Revocation**: The React frontend now actively monitors connection state. If sharing is stopped (or restarted), the browser instantly detects `401 Unauthorized` responses or network failures and forcefully reloads, securely wiping sensitive architectural data from memory.
+- **CVSS Modification Rationale**: Added a dedicated `cvss_rationale` field to Threat and Vulnerability models. Users must now supply a free-text justification when manually overriding AI-suggested CVSS vectors to maintain strong audit trails. This field is fully integrated into both the Desktop App (`properties_panel.py`, `threat_edit_dialog.py`, `cvss_dialog.py`) and the Web Designer modals.
+- **Postman Collection**: Created an official `ThreatPilot.postman_collection.json` containing exhaustive documentation and examples for all REST APIs to streamline developer onboarding.
+- **Click-to-Copy Connectivity Details**: The PIN and Network URL fields in the Designer Sharing Dialog are now fully clickable, automatically copying their values to the clipboard with visual "Copied!" feedback.
+
+### Changed
+- **Web Workspace Theme**: Switched the default theme of the Web Designer to Light Mode based on user feedback.
+- **Terminology Update**: Migrated UI labels from "SSL" to "TLS" to accurately reflect the underlying protocol versions used (TLS 1.2/1.3).
+
 ## [2.0.0] - 2026-06-29
 
 This major release introduces a complete overhaul of the threat modeling engine, incorporating multi-modal AI vision, explainable AI reasoning, map-reduce data processing, and highly interactive manual modeling controls to create a truly hybrid AI/Human workflow.
 
 ### Added
 #### Core AI & Architecture Engine
-- **AI Vision Analysis**: Completely replaced traditional computer vision (OpenCV) with state-of-the-art Multi-Modal AI (Qwen2.5-VL & Gemini 3.1-Flash-Lite) for flawless, zero-dependency detection of architectural diagrams, components, and trust boundaries.
-- **Explainable AI (XAI)**: Introduced a deep technical reasoning engine that dynamically generates inline rationalizations (Attack Vectors, Root Causes, Verification Procedures) for any threat, vulnerability, or mitigation.
 - **Map-Reduce Mitigation Processor**: Implemented a recursive background batching (Map-Reduce) algorithm to automatically review, deduplicate, and consolidate hundreds of raw mitigations into cohesive security requirements, bypassing LLM context limits.
 
 #### Risk Assessment & Visuals
-- **Live Risk Counters**: Architecture nodes now feature real-time, pulsing badges displaying active threat counts that dynamically sync with the threat ledger.
-- **Dynamic DFD Asset Mapping**: Automatically inspects data flow edges to map carried assets directly into the Risk Assessment matrix.
-- **Vulnerability Mitigation Fallbacks**: The engine now dynamically inherits and falls back to parent threat mitigations if vulnerability-specific controls are missing.
-
-#### Manual Data Entry & UX
-- **Manual Risk & Threat Modeling**: Introduced comprehensive interactive modals (`AddThreatModal`, `AddRiskModal`, `AddVulnerabilityModal`, `AddMitigationModal`) into the web workspace, empowering users to manually override or augment AI-generated threat data effortlessly.
-- **Integrated CVSS v3.1 Calculator**: Embedded a real-time CVSS base score calculator directly within the new manual entry UI, automatically resolving vector strings and severity categories.
-- **AI Token Controls**: Added a `max_tokens` configuration parameter to both the backend API and the frontend AI Provider Settings to help control LLM generation sizes and prevent resource exhaustion.
-- **Dynamic Context Resolving**: The Risk Assessment matrix and manual modals now dynamically extract elements and assets directly from active design nodes to streamline manual entry.
-
-### Changed
-- **Architecture Diagram Export**: Removed unreliable local `html-to-image` screenshot captures in favor of a cleaner export strategy or external tooling.
-- **Dependency Reduction**: Dropped heavy legacy OpenCV dependencies, reducing the application footprint by over 80% while dramatically improving component detection accuracy.
+- **Live Risk Counters in workspace**: Architecture nodes now feature real-time, pulsing badges displaying active threat counts that dynamically sync with the threat ledger.
 
 ---
 

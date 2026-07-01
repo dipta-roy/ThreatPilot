@@ -1,58 +1,71 @@
-<table style="border: none; border-collapse: collapse; width: 100%;">
-  <tr style="border: none;">
-    <td valign="top" align="center" width="200" style="border: none; min-width: 200px;">
-      <img src="./threatpilot/resources/app-icon.png" alt="ThreatPilot Logo" width="200" style="border: none;" />
-    </td>
-    <td valign="top" style="border: none; padding-right: 20px;">
-      <h1>ThreatPilot</h1>
-      <p><strong>ThreatPilot</strong> is an advanced, AI-driven threat modeling application designed specifically for cyber security architects and engineers. It automates the extraction of architectural components from diagrams, converts them into formal Data Flow Diagrams (DFDs), and performs automated STRIDE-based risk assessments using large language models (LLMs).</p>
-    </td>
-  </tr>
-</table>
+<div align="center">
+  <img src="./threatpilot/resources/app-icon.png" alt="ThreatPilot Logo" width="150" />
+  
+  # ThreatPilot
+  
+  **Advanced AI-Driven Threat Modeling for Security Architects and Engineers.**
+</div>
+
+<br/>
+
+**ThreatPilot** automates the extraction of architectural components from diagrams, converts them into formal Data Flow Diagrams (DFDs), and performs automated STRIDE and LINDDUN-based risk assessments using large language models (LLMs). Built on a robust desktop-and-web hybrid architecture, it bridges the gap between fast-paced engineering and rigorous security compliance.
+
+---
+
+## Core Capabilities
+
+- **AI Vision Analysis:** Identifies architectural components, trust boundaries, and communication flows directly from images.
+- **Multimodal Risk Assessment:** Supports both traditional security threat modeling (STRIDE) and advanced privacy threat modeling (LINDDUN).
+- **Explainable AI (XAI):** Generates deep technical reasoning—from attack vectors to verification procedures—for identified threats.
+- **Seamless Integrations:** Out-of-the-box support for both local privacy-first models (Ollama) and high-performance cloud endpoints (Google Gemini).
+- **Real-Time Web Designer:** Drag-and-drop React Flow architecture designer with instant sync to your desktop client.
+
+---
 
 ## Key Features
 
-### 1. Intelligent Architecture Detection
-- **AI Vision Analysis**: Automatically identify architectural components, trust boundaries, and communication flows from images using multimodal AI (Recommended Qwen2.5-VL or Gemini 3.1-Flash-Lite).
-- **Formal DFD Conversion**: Transforms logical architectural elements into industry-standard Data Flow Diagrams (DFD) with distinct **Process**, **Data Store**, **External Entity**, and **Data Flow** nodes.
-- **Zero-Dependency Detection**: Traditional Computer Vision (OpenCV) has been replaced by more accurate AI-driven detection, reducing application size by 80%.
+### Intelligent Architecture Detection
+- **Formal DFD Conversion**: Transforms logical architectural elements into industry-standard Data Flow Diagrams with distinct Process, Data Store, External Entity, and Data Flow nodes.
+- **Zero-Dependency Detection**: Traditional Computer Vision (OpenCV) is replaced by highly accurate AI-driven detection, reducing application weight by 80%.
+- **Segmented Analysis**: Intelligently segments large architectures into batches to respect model token limits without losing structural context.
 
-### 2. Streamlined AI Threat Analysis
-- **Context-Aware Prompts**: Generates structured, industry-contextualized prompts for LLMs to perform detailed **STRIDE** or **LINDDUN** analysis.
-- **Multimodal Methodology**: Support for both traditional security threat modeling (STRIDE) and advanced privacy threat modeling (LINDDUN).
-- **MITRE ATT&CK® Mapping**: Automatically maps identified threats to specific MITRE ATT&CK techniques for better alignment with defensive operations.
-- **Explainable AI (XAI)**: Generate deep technical reasoning (Attack Vector, Root Cause, Risk Rationalization, or technical verification procedures) for any identified threat, vulnerability, or mitigation requirement to improve architect trust and validation. These are dynamically rendered inline and in modals using a custom-built markdown formatter.
-- **Optimized Provider Support**: Focused support for local **Ollama** instances (for privacy) and high-performance **Google Gemini** endpoints, with configurable response caps (`max_tokens`).
-- **Segmented Analysis**: Automatically handles large-scale architectures by segmenting diagrams into batches to respect model token limits while maintaining context.
-- **Map-Reduce Batch Processing**: Implements recursive background batching (Map-Reduce) to deduplicate and consolidate hundreds of mitigation requirements seamlessly, eliminating AI context limits and resource exhaustion while showing real-time UI progress.
+### Streamlined AI Threat Analysis
+- **Context-Aware Prompts**: Generates structured, industry-contextualized prompts for LLMs.
+- **MITRE ATT&CK® Mapping**: Automatically maps identified threats to specific MITRE ATT&CK techniques, aligning risk with defensive operations.
+- **Map-Reduce Batch Processing**: Implements recursive background batching to deduplicate and consolidate hundreds of mitigation requirements seamlessly.
 
-### 3. Risk Assessment & Controls
-- **CVSS v3.1 Scoring**: Built-in calculator to determine base vulnerability scores with automatic severity categorization (Low-Critical).
-- **Decoupled Vulnerability Registry**: Manage security flaws independently from threats via a global registry, enabling many-to-many relationships and standardized remediation tracking.
-- **Vulnerability Mitigation Fallbacks**: Automatically falls back to parent threat mitigations if vulnerability-specific controls are not explicitly configured.
-- **Interactive Risk Matrix**: Visualize your system's risk profile through a dynamic Likelihood vs. Impact matrix.
-- **Manual Data Entry**: Easily augment AI results by manually adding Threats, Risks, Vulnerabilities, and Mitigations via dedicated interactive modals with built-in CVSS calculators.
-- **High-Fidelity Tracking**: Manage threats with a modernized, flat-table Threat Ledger split into Threats, Vulnerabilities, Risk Assessment, and Mitigation Requirements tabs.
-- **Live Risk Counters**: Architecture elements (Components, Assets, Data Flows, Trust Boundaries) feature real-time, non-editable risk counters that dynamically sync with the Threat Register, providing instant visibility into vulnerable areas.
-- **Dynamic DFD Asset Mapping**: Inspects element edge data flows to automatically map carried assets in the Risk Assessment view.
+### Risk Assessment & Controls
+- **CVSS v3.1 Scoring**: Built-in calculator determines base vulnerability scores with automatic severity categorization.
+- **CVSS Modification Rationale**: Track manual adjustments to AI-suggested CVSS vectors with dedicated rationale fields to maintain auditability and justification for overrides.
+- **Decoupled Vulnerability Registry**: Manage security flaws independently from threats via a global registry for standardized remediation tracking.
+- **Live Risk Counters**: Architecture elements feature real-time, non-editable risk badges that dynamically sync with the active Threat Register.
 
-### 4. Professional Reporting & Export
-- **Comprehensive Markdown Reports**: Generates deep-dive narrative reports including methodology, executive summaries, and detailed threat registers.
-- **Lightweight Excel Exports**: Custom-built Excel generation using `openpyxl`, ensuring high-fidelity 7-tab GRC workbooks without the bloat of heavy data libraries.
-- **Mitigation Requirements Console**: A dedicated interactive tab to review, edit, and filter consolidated security requirements mapped directly from threat mitigations.
-- **AI-Reviewed Mitigation Requirements (Excel)**: Automatically reviews, deduplicates, and groups semantically similar mitigations across all elements, mapping them to affected components (comma-separated) and generating validation test cases/criteria in a dedicated spreadsheet.
-- **Git-Optimized Project Storage**: Project data is cleanly partitioned into specialized JSON sidecars (`architecture.json`, `threats.json`, `vulnerabilities.json`, `mitigations.json`), enabling human-readable diffs and better collaboration in version control.
-- **Architecture Export**: Save your modeled architecture as structured JSON or export annotated diagrams.
+### Professional Reporting & Export
+- **Comprehensive Markdown Reports**: Generates deep-dive narrative reports including executive summaries and detailed threat registers.
+- **Lightweight Excel Exports**: Custom-built, bloat-free Excel generation (`openpyxl`) for 7-tab GRC workbooks.
+- **AI-Reviewed Mitigation Requirements**: Automatically reviews and deduplicates mitigations, mapping them to affected components and generating testing criteria.
+- **Git-Optimized Storage**: Project data is partitioned into clean JSON sidecars (`architecture.json`, `threats.json`, etc.) enabling human-readable diffs in version control.
 
-### 5. Advanced UX & Workflow
-- **Modern UI**: A premium desktop application built with **PySide6**, featuring seamless **Dark** and **Light** theme support.
-- **Interactive Web-Based Architecture Designer**: A built-in React Flow-powered visual modeler (served via a lightweight, standard library-based HTTP server) supporting drag-and-drop elements, boundary nesting, carried assets management, automated ASCII/Mermaid exports, real-time validation warnings, and instant sync back to the PySide6 desktop app. Now includes full support for configuring **Business Context** and **AI Providers** directly from the web interface.
-- **Threat Count Badges**: Visual component nodes render real-time, pulsing red badges displaying the number of active threats affecting them.
-- **Resizable Properties Panel**: Supports mouse drag-resizing (260px - 800px) and fully selectable, copyable text container layouts for easy documentation retrieval.
-- **Workspace Screenshot Capture**: Save the visual layout as a JPG image (`architecture.jpg`) directly in the project directory on the backend while downloading it client-side.
-- **Undo/Redo System**: Full state management for editing components, flows, and trust boundaries.
-- **Quick Start Wizard**: Onboarding experience for new users to bootstrap their first project in seconds.
-- **Human-in-the-Loop**: Manually refine detected components, add custom threats, or override AI-generated assessments via the Project Explorer.
+---
+
+## Security & Privacy
+
+### API Key Management & Encryption
+- **PBKDF2 Key Derivation**: Master keys are derived using PBKDF2 with 100,000 iterations and SHA-256.
+- **AES-128 Encryption**: Sensitive API keys are encrypted using Fernet (AES-CBC) before being stored.
+- **Secure Transmission**: Uses the `x-goog-api-key` header for Gemini requests, preventing key exposure in URL logs.
+
+### Workspace Sharing Security
+ThreatPilot allows you to host the web-based visual designer locally or share it securely across your local network. Strict controls are enforced:
+- **TLS Encryption**: Network traffic can be secured via TLS (HTTPS) using self-signed certificates generated directly within the app.
+- **8-Digit PIN Authentication**: Shared sessions require an 8-digit secure PIN, protecting against unauthorized network access and brute-force attempts.
+- **Strict Session Management**: Authentication relies on cryptographically secure session cookies enforcing `HttpOnly`, `SameSite=Strict`, and `Secure` attributes, preventing XSS-based cookie theft.
+- **Instant Access Revocation**: Stopping a shared session instantly clears all backend sessions. The React SPA actively monitors its connection and forcefully locks and wipes the browser screen upon receiving a `401 Unauthorized` response or losing connection to the host, ensuring data is never left lingering.
+
+### Data Privacy & Safe Interaction
+- **Local Analysis Support**: Using **Ollama** ensures your architecture diagrams and threat models never leave your local machine.
+- **Injection Protection**: XML-style delimiters and metadata sanitization prevent prompt-injection attacks.
+- **Masked Logs**: Application logs and error traces automatically redact identified API keys and sensitive credentials.
 
 ---
 
@@ -61,7 +74,7 @@
 ### Prerequisites
 - **Python 3.11+**
 - **Local LLM** (Ollama recommended) or a **Google Gemini API Key**.
-- **Recommended Models**: `qwen2.5vl:3b` or `qwen2.5vl:7b` (for Ollama) and `gemini-3.1-flash-lite` or `gemini-2.0-flash`.
+- **Recommended Models**: `qwen2.5-vl` (Ollama) or `gemini-3.1-flash-lite` (Google).
 
 ### Installation
 ```bash
@@ -85,61 +98,29 @@ python main.py
 - **Web-Based Designer**: React, TypeScript, React Flow, and Tailwind CSS.
 - **Local Web Server**: Native Python `http.server` running on a background thread.
 - **Data & Validation**: Pydantic (v2).
-- **AI Orchestration**: Custom asynchronous interface supporting Ollama and Gemini.
-- **Networking**: HTTPX.
-- **Exporting**: OpenPyXL (Native Excel generation).
+- **Exporting**: OpenPyXL.
 - **Build System**: cx_Freeze optimized for lean MSI installers (~200MB).
 
----
-
-## Security & Privacy
-
-### API Key Management & Encryption
-ThreatPilot implements industry-standard protection for your credentials:
-- **PBKDF2 Key Derivation**: Master keys are derived using **PBKDF2 with 100,000 iterations** and SHA-256.
-- **Hardware-Bound & Session Keys**: Supports both OS-native **Credential Manager** (via `keyring`) for usability and the `THREATPILOT_MASTER_KEY` environment variable for high-security, session-based key rotation.
-- **AES-128 Encryption**: Sensitive API keys are encrypted using **Fernet (AES-CBC)** before being stored in `config.env`.
-
-### AI Interaction Security
-- **Injection Protection**: XML-style delimiters and metadata sanitization prevent "jailbreaking" through architectural descriptions or custom prompts.
-- **SSRF Defense**: Strict validation of AI endpoint URLs to block access to internal metadata services and private network ranges.
-- **Secure Transmission**: Uses the `x-goog-api-key` header for Gemini requests, preventing key exposure in URL logs or proxy history.
-
-### Data Privacy
-- **Local Analysis**: Using the **Ollama** provider ensures that your architecture diagrams and threat models never leave your local machine.
-- **Privacy Acknowledgement**: Mandatory user consent before transmitting any data to cloud AI providers (e.g., Gemini).
-- **Masked Logs**: Application logs and error traces automatically redact identified API keys and sensitive credentials.
+*Detailed developer documentation can be found in the [Architecture Overview](./ARCHITECTURE.md).*
 
 ---
 
-## Design Philosophy
-ThreatPilot is built on a **Modular Domain-Driven Architecture**. Each core package—`ai`, `detection`, `risk`, `core`, and `ui`—is isolated, making it easy to add new AI backends or export formats without side effects.
+## ✅ Trust & Verification
 
-Detailed developer documentation: [Architecture Overview](./ARCHITECTURE.md).
+Download the Code Verification Certificate: [Dipta Roy - Code Verification Certificate](https://github.com/dipta-roy/dipta-roy.github.io/blob/main/downloads/Code%20Verifying%20Certificates.zip).
 
----
-## Trust & Verification
+**How to Install the Certificate:**
+1. Download and extract the certificate from the link above.
+2. Right-click `Signed_By_Dipta_CodeSigningPublicKey.cer` → **Install Certificate**.
+3. Select **Local Machine** (requires admin privileges).
+4. Choose **Place all certificates in the following store**.
+5. Click **Browse** → Select **Trusted Root Certification Authorities**.
+6. Click **Next** → **Finish**.
 
-Download Code Verification Certificate: [Dipta Roy - Code Verification Certificate](https://github.com/dipta-roy/dipta-roy.github.io/blob/main/downloads/Code%20Verifying%20Certificates.zip).
-```
-- HOW TO TRUST
+**Verify Application Authenticity:**
+1. Right-click on `ThreatPilot-2.1.0-win64.msi` and select **Properties**.
+2. Go to the **Digital Signatures** tab.
+3. Select "Signed_By_Dipta" from the Embedded Signatures list, then click **Details**.
+4. In the General tab, you should see the message: *"This digital signature is OK."*
 
-1. Download certficate from above link.
-1. Right-click `Signed_By_Dipta_CodeSigningPublicKey.cer` → **Install Certificate**
-2. Select **Local Machine** (requires admin)
-3. Choose **Place all certificates in the following store**
-4. Click **Browse** → Select **Trusted Root Certification Authorities**
-5. Click **Next** → **Finish**
-
-- VERIFY APPLICATION AUTHENTICITY
-
-1. To confirm the application is genuine, right click on ThreatPilot-2.0.0-win64.msi and click on Properties.
-2. Go to the Digital Signatures tab.
-3. Select "Signed_By_Dipta" from the Embedded Signatures list, then choose Details.
-4. In the General tab, you should see the message "This digital signature is OK."
-```
-
-Once verified,
-```
-Run ThreatPilot-2.0.0-win64.msi and install the application.
-```
+Once verified, you may safely run the installer to set up ThreatPilot!

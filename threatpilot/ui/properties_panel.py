@@ -184,6 +184,7 @@ class PropertiesPanel(QWidget):
             self._add_combo_row("Likelihood Score:", "likelihood", str(item.likelihood), ["1", "2", "3", "4", "5"])
             self._add_text_row("CVSS Score:", "cvss_score", str(item.cvss_score))
             self._add_text_row("CVSS Vector:", "cvss_vector", item.cvss_vector)
+            self._add_text_row("CVSS Rationale:", "cvss_rationale", item.cvss_rationale)
             self._add_text_row("MITRE ATT&CK ID:", "mitre_attack_id", item.mitre_attack_id)
             self._add_text_row("MITRE Technique:", "mitre_attack_technique", item.mitre_attack_technique)
             self._add_textarea_row("Affected Components:", "affected_components", item.affected_components)
@@ -224,15 +225,28 @@ class PropertiesPanel(QWidget):
     def _add_text_row(self, label: str, field: str, value: Any) -> None:
         """Inserts an editable text field for a model property."""
         edit = QLineEdit(str(value))
+        edit.setProperty("field_name", field)
         if field == "cvss_vector":
             edit.setReadOnly(True); edit.setCursor(Qt.CursorShape.PointingHandCursor); edit.setObjectName("cvss_vector_edit")
-            def launch_calc():
-                dialog = CVSSCalculatorDialog(edit.text(), self)
+            def _open_cvss_dialog(*args) -> None:
+                dialog = CVSSCalculatorDialog(edit.text(), getattr(self._current_item, "cvss_rationale", ""), self)
                 if dialog.exec():
-                    score, vector = dialog.get_result()
-                    edit.setText(vector); self._on_field_changed("cvss_vector", vector); self._on_field_changed("cvss_score", score)
-                    self.set_item(self._current_item)
-            edit.mousePressEvent = lambda e: launch_calc()
+                    score, vector, rationale = dialog.get_result()
+                    edit.setText(vector)
+                    self._on_field_changed("cvss_vector", vector)
+                    self._on_field_changed("cvss_score", score)
+                    self._on_field_changed("cvss_rationale", rationale)
+                    
+                    # Also update UI display of these linked fields if they exist
+                    for c in range(self._form_layout.rowCount()):
+                        w = self._form_layout.itemAt(c, QFormLayout.ItemRole.FieldRole).widget()
+                        if isinstance(w, QLineEdit):
+                            if w.property("field_name") == "cvss_score":
+                                w.setText(str(score))
+                            if w.property("field_name") == "cvss_rationale":
+                                w.setText(rationale)
+            
+            edit.mousePressEvent = _open_cvss_dialog
         edit.editingFinished.connect(lambda: self._on_field_changed(field, edit.text()))
         self._form_layout.addRow(label, edit)
 
