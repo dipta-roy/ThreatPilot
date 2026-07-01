@@ -43,6 +43,7 @@ from threatpilot.detection.image_loader import import_diagram_file
 from threatpilot.ui.diagram_canvas import DiagramCanvas
 from threatpilot.ui.project_explorer import ProjectExplorer
 from threatpilot.ui.ai_settings_dialog import AISettingsDialog
+from threatpilot.ui.workspace_settings_dialog import WorkspaceSettingsDialog
 from threatpilot.ui.prompt_settings_dialog import PromptSettingsDialog
 from threatpilot.ui.properties_panel import PropertiesPanel
 from threatpilot.ui.threat_panel import ThreatPanel
@@ -379,6 +380,7 @@ class MainWindow(QMainWindow):
         self._action_import_diagram.triggered.connect(self._on_import_diagram)
         self._action_fit_diagram.triggered.connect(self._on_fit_diagram)
         self._action_ai_settings.triggered.connect(self._on_ai_settings)
+        self._action_workspace_settings.triggered.connect(self._on_workspace_settings)
         self._action_prompt_config.triggered.connect(self._on_prompt_config)
         self._action_run_analysis.triggered.connect(self._on_run_analysis)
         self._action_export_excel.triggered.connect(self._on_export_excel)
@@ -670,6 +672,18 @@ class MainWindow(QMainWindow):
                 return
             
             self._autosave_timer.setInterval(config.autosave_interval * 60000)
+
+    def _on_workspace_settings(self) -> None:
+        """Edit the workspace port configuration."""
+        config = AIConfig.load()
+        dialog = WorkspaceSettingsDialog(config.workspace_port, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            config.workspace_port = dialog.selected_port
+            try:
+                config.save()
+                self.statusBar().showMessage(f"Workspace Port updated to {config.workspace_port}. A server restart is required.")
+            except Exception as exc:
+                QMessageBox.critical(self, "Save Error", f"Failed to save settings:\n\n{exc}")
 
     def _on_prompt_config(self) -> None:
         """Opens the prompt configuration dialog for business context and policy."""
@@ -1704,7 +1718,7 @@ class MainWindow(QMainWindow):
         self._designer_server_thread = DesignerServerThread(
             main_window=self,
             host=host,
-            port=8080,
+            port=AIConfig.load().workspace_port,
             on_save_callback=self._on_designer_saved,
             use_https=use_https,
             shared=shared,

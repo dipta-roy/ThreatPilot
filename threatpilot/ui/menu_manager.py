@@ -70,6 +70,9 @@ class MenuManager:
         self._mw._action_ai_settings = QAction("&AI Settings...", self._mw)
         menu.addAction(self._mw._action_ai_settings)
         
+        self._mw._action_workspace_settings = QAction("&Workspace Settings...", self._mw)
+        menu.addAction(self._mw._action_workspace_settings)
+        
         self._mw._action_prompt_config = QAction("&Business Context & Policy...", self._mw)
         menu.addAction(self._mw._action_prompt_config)
 

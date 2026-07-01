@@ -49,9 +49,8 @@ class DesignerHandler(BaseHTTPRequestHandler):
         cookie_header = self.headers.get("Cookie", "")
         if "threatpilot_session=" in cookie_header:
             import re
-            match = re.search(r"threatpilot_session=([a-zA-Z0-9]+)", cookie_header)
-            if match:
-                token = match.group(1)
+            matches = re.findall(r"threatpilot_session=([a-zA-Z0-9]+)", cookie_header)
+            for token in matches:
                 if token in getattr(self.server, "authenticated_sessions", set()):
                     return True
         return False

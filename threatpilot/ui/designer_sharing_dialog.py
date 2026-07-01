@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 from threatpilot.utils.paths import SSL_CERT_FILE, SSL_KEY_FILE
 from threatpilot.utils.ssl_cert import generate_self_signed_cert
+from threatpilot.config.ai_config import AIConfig
 
 def get_local_ip() -> str:
     try:
@@ -46,6 +47,7 @@ class DesignerSharingDialog(QDialog):
         self.active_host = "127.0.0.1"
         self.active_shared = False
         self.active_use_https = False
+        self.port = AIConfig.load().workspace_port
         
         # Pull current server status if running
         server_thread = getattr(self.main_window, "_designer_server_thread", None)
@@ -164,7 +166,7 @@ class DesignerSharingDialog(QDialog):
         self.url_lbl.setStyleSheet("margin-top: 10px;")
         detail_layout.addWidget(self.url_lbl)
         
-        self.url_val = QLabel(f"http://{self.local_ip}:8080/")
+        self.url_val = QLabel(f"http://{self.local_ip}:{self.port}/")
         self.url_val.setFont(QFont("Courier New", 12))
         self.url_val.setAlignment(Qt.AlignCenter)
         self.url_val.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -189,7 +191,7 @@ class DesignerSharingDialog(QDialog):
         
         def _copy_url(event):
             proto = "https" if self.https_checkbox.isChecked() else "http"
-            actual_url = f"{proto}://{self.local_ip}:8080/"
+            actual_url = f"{proto}://{self.local_ip}:{self.port}/"
             QApplication.clipboard().setText(actual_url)
             self.url_val.setText("Copied URL!")
             QTimer.singleShot(1500, lambda: self.url_val.setText(actual_url))
@@ -266,7 +268,7 @@ class DesignerSharingDialog(QDialog):
             
             proto = "https" if use_https else "http"
             self.pin_val.setText(self.generated_pin)
-            self.url_val.setText(f"{proto}://{self.local_ip}:8080/")
+            self.url_val.setText(f"{proto}://{self.local_ip}:{self.port}/")
             self.detail_frame.setVisible(True)
             self.btn_action.setEnabled(True)
             
@@ -331,7 +333,7 @@ class DesignerSharingDialog(QDialog):
                 self.active_host = "0.0.0.0"
                 self.active_use_https = use_https
                 proto = "https" if use_https else "http"
-                QMessageBox.information(self, "Sharing Enabled", f"Visual workspace is now shared on local network!\n\nAccess URL: {proto}://{self.local_ip}:8080/\nPIN Code: {self.generated_pin}")
+                QMessageBox.information(self, "Sharing Enabled", f"Visual workspace is now shared on local network!\n\nAccess URL: {proto}://{self.local_ip}:{self.port}/\nPIN Code: {self.generated_pin}")
         else:
             # Revert from shared to local only
             self.main_window.start_designer_server(host="127.0.0.1", shared=False, use_https=False)
@@ -345,6 +347,6 @@ class DesignerSharingDialog(QDialog):
 
     def _on_launch_clicked(self):
         proto = "https" if (self.active_shared and self.active_use_https) else "http"
-        url_str = f"{proto}://{self.local_ip if self.active_shared else '127.0.0.1'}:8080/"
+        url_str = f"{proto}://{self.local_ip if self.active_shared else '127.0.0.1'}:{self.port}/"
         QDesktopServices.openUrl(QUrl(url_str))
         self.accept()

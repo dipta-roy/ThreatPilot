@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.2.0] - 2026-07-02
+
+This release introduces dynamic workspace port configuration.
+
+### Added
+- **Configurable Workspace Port**: Added a "Workspace Settings" dialog under the Intelligence menu. Users can now easily configure the local and shared workspace server port instead of being restricted to port 8080.
+- **Port Backward Compatibility**: Smoothly handles older configuration files by safely defaulting to 8080 when the setting is not present.
+
+### Fixed
+- **Authentication Resilience**: Fixed an issue where authentication failed if stale session cookies from different ports but the same IP were present. The server now intelligently scans all provided session cookies.
+- **Sharing Details**: Re-wired the architecture workspace and sharing dialogs to dynamically reflect the newly configured port instead of hardcoded defaults.
+
 ## [2.1.0] - 2026-07-01
 
 This release brings significant enhancements to Workspace Sharing security, auditability features for risk assessments, and quality-of-life improvements to the UI.
