@@ -4,6 +4,15 @@ ThreatPilot is an advanced AI-driven threat modeling application designed to hel
 
 ---
 
+## Table of Contents
+- [High-Level System Architecture](#high-level-system-architecture)
+- [Core Layers and Components](#core-layers-and-components)
+- [Technology Stack](#technology-stack)
+- [Core Workflows](#core-workflows)
+- [Web Designer REST API Endpoints](#web-designer-rest-api-endpoints)
+
+---
+
 ## High-Level System Architecture
 
 The application follows a modular, layered architecture that separates presentation (UI) from core logic and AI integration.
@@ -26,25 +35,25 @@ graph TD
         US[Undo System] --> MW
         DFD[DFD Converter]
         DS[Designer Server] --> PM
+        CG[Core Graph & Traversal Engine] --> TM
     end
 
     subgraph "AI Analysis Engine"
-        TA[Threat Analyzer] --> PB[Prompt Builder]
-        TA --> AP[AI Providers]
-        TA --> RP[Response Parser]
+        MA[Multi-Agent Orchestrator] --> PB[Prompt Builder]
+        MA --> AP[LLM Client / Providers]
+        MA --> RP[JSON Validators]
     end
 
-    subgraph "Data & Security"
-        JSON[(Project JSON)]
-        ENV[config.env]
-        CRY[Crypto Utils]
-        CON[Constants & Paths]
+    subgraph "CI/CD & Automation"
+        CLI[Command Line Interface] --> CG
+        API[FastAPI Server] --> CG
     end
 
     DC <--> PM
     WD <--> DS
     PM <--> JSON
-    MW <--> TA
+    MW <--> MA
+    CG <--> MA
     AP <--> ENV
     ENV <--> CRY
     MW <--> CON
@@ -65,9 +74,11 @@ The UI is built using Python and PySide6, providing a desktop-native experience 
 ### 2. Core Engine
 Handles the underlying logic of threat modeling and state management.
 - **Domain Models**: Pydantic-based schemas for architectural elements (Entity, Process, Data Store, Flow).
-- **Threat Model**: Implements both **STRIDE** (Security) and **LINDDUN** (Privacy) categorization, CVSS 3.1 scoring, and **MITRE ATT&CK** technique mapping. Now includes dedicated tracking for **CVSS Modification Rationales**.
-- **Vulnerability Register**: A global repository of identified security flaws. Decouples technical vulnerabilities from high-level threats for standardized remediation tracking.
-- **Project Manager**: Orchestrates project lifecycles using a **Multi-File Persistence** strategy (partitioning data into specialized JSON sidecars).
+- **Tri-Graph Architecture (`engine/graph.py`)**: Models systems as interconnected nodes and edges representing components, data flows, and trust boundaries.
+- **Deterministic Traversal Engine (`engine/traversal.py`)**: Analyzes the graph deterministically before AI inference, evaluating base risk mathematically based on trust boundary crossings and data sensitivity.
+- **Threat Model**: Implements both **STRIDE** (Security) and **LINDDUN** (Privacy) categorization, CVSS 3.1 scoring, and **MITRE ATT&CK** technique mapping. Features explicit segregation of **Evidence-based** observations versus **Assumptions** to eliminate hallucinations, and scores findings with a `confidence` rating alongside a precise `evidence_traversal_path`.
+- **Vulnerability Register**: A global repository of identified security flaws. Decouples technical vulnerabilities from high-level threats for standardized remediation tracking, utilizing strict `weakness_type` categorization (e.g., Design vs Configuration).
+- **Project Manager**: Orchestrates project lifecycles using a **Multi-File Persistence** strategy.
 - **Undo System**: Uses `QUndoStack` for multi-action undo/redo capabilities.
 
 ### 3. Web Architecture Designer Layer
@@ -79,18 +90,18 @@ An alternative interactive workspace built as a React Single Page Application (S
 - **Network Sharing & Advanced Security**: 
   - Allows toggling "Host Architecture Workspace" between local-only and shared modes. 
   - **Shared Mode**: The server binds to `0.0.0.0` and enforces strict authentication via a generated **8-Digit PIN**. Access requires validation through a `/auth` portal which issues a cryptographically secure (`HttpOnly`, `SameSite=Strict`) `threatpilot_session` cookie. 
-  - **TLS Encrytpion**: Traffic can optionally be secured via self-signed TLS certificates directly from the UI.
+  - **TLS Encryption**: Traffic can optionally be secured via self-signed TLS certificates directly from the UI.
   - **Session Revocation**: The SPA actively polls for connectivity. If sharing is stopped (or restarted), the backend flushes sessions, and the frontend instantly forces a page reload upon receiving `401 Unauthorized` or network errors, locking the screen and wiping lingering memory.
 - **Manual Data Entry & Modeling Control**: Comprehensive modals (Add Threat, Add Risk, Add Vulnerability, Add Mitigation) allow full manual overrides, including CVSS scoring rationale justification, with real-time CVSS calculators inside the browser.
 
 ### 4. AI Analysis Engine
 A sophisticated pipeline transforming architectural diagrams into structured security insights.
-- **Threat Analyzer**: The primary orchestrator that segments large architectures to fit within LLM context windows. Integrates the **XAI Reasoning engine** across all tables (Threats, Vulnerabilities, and Mitigation Requirements).
+- **Multi-Agent Orchestrator**: Replaces the monolithic analyzer with a 5-Agent pipeline (ThreatAgent, MitigationAgent, EvidenceAgent, ComplianceAgent, ReportingAgent) for modular and highly accurate inference.
+- **RAG Knowledge Base**: A robust **ChromaDB Vector Database** (`ai/knowledge.py`) that uses the `BAAI/bge-base-en-v1.5` semantic embedding model to intelligently inject relevant corporate policies and historical contexts directly into the AI context window.
 - **Vulnerability & Mitigation XAI**: Implements dynamic prompt construction and async analysis. Reports are parsed and rendered via a dedicated client-side markdown formatter.
-- **Vulnerability Registry Fallbacks**: If a vulnerability has no description, it dynamically falls back to its parent threat's mitigation description.
 - **Asset Mapping & Deduplication**: Risk Assessment tables dynamically inspect DFD edges (data flows) to map carried assets back to components.
-- **AI Providers**: Pluggable interfaces for Google Gemini and Ollama.
-- **Prompt Builder & Parser**: Multi-shot, instructional prompts paired with resilient partial-JSON recovery parsing.
+- **LLM Client (`ai/v2_orchestrator.py`)**: Pluggable interfaces for Google Gemini and Ollama with a custom, ultra-light HTTP architecture.
+- **Prompt Builder & Parser**: Multi-shot, instructional prompts paired with resilient partial-JSON recovery parsing (`JSONValidator`).
 
 ### 5. Security & Data
 - **Project Files**: Projects are stored as structured JSON files, separating threats, vulnerabilities, mitigations, and layouts.
@@ -106,8 +117,9 @@ A sophisticated pipeline transforming architectural diagrams into structured sec
 | **Language** | Python 3.11+ |
 | **GUI Framework** | PySide6 (Qt 6) |
 | **Data Validation** | Pydantic v2 |
-| **AI Integration** | Custom HTTPX-based providers (Gemini, Ollama) |
+| **AI Integration** | Custom HTTPX-based LLMClient (Gemini, Ollama) |
 | **Encryption** | Cryptography.io (Fernet, PBKDF2) |
+| **API Framework** | FastAPI |
 | **Export Formats** | Excel (OpenPyXL), Markdown, Diagram Images |
 
 ---
@@ -115,10 +127,10 @@ A sophisticated pipeline transforming architectural diagrams into structured sec
 ## Core Workflows
 
 ### AI Analysis Pipeline
-1. **Extraction**: `DFDConverter` scans the Diagram Canvas and converts visual nodes/edges into a textual DFD representation.
-2. **Segmentation**: If the architecture is complex, `ThreatAnalyzer` splits it into logical clusters.
-3. **Execution**: The `PromptBuilder` sends the system context and DFD data to the configured `AIProvider`.
-4. **Normalization**: `ResponseParser` cleans the raw AI text and maps it to the `Threat` model.
+1. **Algorithmic Traversal**: The `TraversalEngine` analyzes the `ArchitectureGraph` to deterministically calculate baseline risk before AI is ever invoked.
+2. **Knowledge Retrieval**: The `RAGService` queries the local `KnowledgeBase` for relevant security policies matching the components using ChromaDB and PyTorch sentence embeddings. The vector database can also be fully reset via the UI.
+3. **Multi-Agent Execution**: The 5-Agent orchestrator runs sequentially: identifying threats, producing mitigations, establishing evidence trails, and mapping compliance frameworks.
+4. **Normalization**: `JSONValidator` cleans the raw AI text and enforces strict Pydantic schemas.
 5. **Sync**: The `MainWindow` updates the `Threat Register` and refreshes the UI.
 
 ### Project Persistence
@@ -160,3 +172,8 @@ The local visual designer interacts with the desktop application backend through
 *   **`GET /api/export/excel`**: Generates and downloads the standard 7-tab Excel GRC workbook.
 *   **`GET /api/export/checklist`**: Retrieves mitigation requirements formatted as a raw markdown checklist.
 *   **`GET /api/export/checklist_excel`**: Renders and downloads a consolidated Excel workbook specifically focused on security mitigation checklists.
+
+### 5. Integrations
+*   **`GET /api/jira/config`**: Retrieves the current Jira integration settings and credentials.
+*   **`POST /api/jira/config`**: Updates Jira integration settings and automatically verifies the connection.
+*   **`POST /api/jira/sync`**: Syncs mitigation requirements to Jira as user stories. Accepts an optional `req_id` to sync a single requirement, otherwise syncs all unsynced requirements.

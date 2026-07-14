@@ -87,3 +87,5 @@ class MitigationRequirement(BaseModel):
     short_description: str = ""
     test_case: str = ""
     reasoning: str = ""
+    jira_issue_key: str = ""
+    jira_issue_url: str = ""

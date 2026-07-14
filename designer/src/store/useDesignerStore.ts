@@ -48,6 +48,8 @@ export interface MitigationRequirement {
   short_description: string;
   test_case: string;
   reasoning?: string;
+  jira_issue_key?: string;
+  jira_issue_url?: string;
 }
 
 export interface ComponentData {
@@ -100,6 +102,7 @@ interface DesignerState {
   edges: Edge[];
   assets: Asset[];
   customComponentTypes: string[];
+  complianceStandards: string[];
   
   // Selection
   selectedElementId: string | null;
@@ -116,14 +119,19 @@ interface DesignerState {
   hasUnsavedChanges: boolean;
   isDarkMode: boolean;
   showRiskInCanvas: boolean;
+  analyzingNodeIds: string[];
+  analyzingEdgeIds: string[];
   
   // History for undo/redo
   history: { nodes: Node[]; edges: Edge[]; assets: Asset[]; boundaries: BoundaryData[] }[];
   historyIndex: number;
 
   // Actions
+  setComplianceStandards: (standards: string[]) => void;
+  setAnalyzingElements: (nodeIds: string[], edgeIds: string[]) => void;
   toggleRiskInCanvas: () => void;
   fetchProject: () => Promise<void>;
+  fetchThreatLedger: () => Promise<void>;
   saveProject: (isAutosave?: boolean) => Promise<void>;
   
   // React Flow handlers
@@ -244,6 +252,7 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
   edges: [],
   assets: [],
   customComponentTypes: [],
+  complianceStandards: [],
   selectedElementId: null,
   selectedElementType: null,
   threats: [],
@@ -255,6 +264,8 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
   hasUnsavedChanges: false,
   isDarkMode: false,
   showRiskInCanvas: true,
+  analyzingNodeIds: [],
+  analyzingEdgeIds: [],
   history: [],
   historyIndex: -1,
   toggleTheme: () => set((state) => {
@@ -268,6 +279,9 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
   }),
 
   toggleRiskInCanvas: () => set((state) => ({ showRiskInCanvas: !state.showRiskInCanvas })),
+
+  setAnalyzingElements: (nodeIds, edgeIds) => set({ analyzingNodeIds: nodeIds, analyzingEdgeIds: edgeIds }),
+  setComplianceStandards: (standards) => set({ complianceStandards: standards }),
 
   fetchProject: async () => {
     set({ isLoading: true, saveError: null });
@@ -287,6 +301,7 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
 
       const assets: Asset[] = data.assets || [];
       const customComponentTypes: string[] = data.custom_component_types || [];
+      const complianceStandards: string[] = data.compliance_standards || [];
 
       // Convert Components to React Flow nodes
       const componentNodes: Node[] = (data.components || []).map((c: any) => ({
@@ -369,6 +384,7 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
         edges,
         assets,
         customComponentTypes,
+        complianceStandards,
         threats: mappedThreats,
         vulnerabilities: mappedVulns,
         mitigationRequirements: data.mitigation_requirements || [],
@@ -382,8 +398,51 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
     }
   },
 
+  fetchThreatLedger: async () => {
+    try {
+      const ts = new Date().getTime();
+      const res = await fetch(`/api/project?t=${ts}`, { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      
+      const seenThreatIds = new Set<string>();
+      const mappedThreats = (data.threats || []).map((t: any) => {
+        let tid = t.threat_id;
+        if (!tid || seenThreatIds.has(tid)) {
+          tid = `threat_${generateId()}`;
+        }
+        seenThreatIds.add(tid);
+        return {
+          ...t,
+          threat_id: tid
+        };
+      });
+
+      const seenVulnIds = new Set<string>();
+      const mappedVulns = (data.vulnerabilities || []).map((v: any) => {
+        let vid = v.vulnerability_id;
+        if (!vid || seenVulnIds.has(vid)) {
+          vid = `vuln_${generateId()}`;
+        }
+        seenVulnIds.add(vid);
+        return {
+          ...v,
+          vulnerability_id: vid
+        };
+      });
+
+      set({
+        threats: mappedThreats,
+        vulnerabilities: mappedVulns,
+        mitigationRequirements: data.mitigation_requirements || [],
+      });
+    } catch (e) {
+      console.error(e);
+    }
+  },
+
   saveProject: async (isAutosave = false) => {
-    const { nodes, edges, assets, customComponentTypes, threats, vulnerabilities, mitigationRequirements } = get();
+    const { nodes, edges, assets, customComponentTypes, complianceStandards, threats, vulnerabilities, mitigationRequirements } = get();
     if (!isAutosave) {
       set({ isSaving: true });
     }
@@ -447,6 +506,7 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
         flows,
         assets,
         custom_component_types: customComponentTypes,
+        compliance_standards: complianceStandards,
         threats,
         vulnerabilities,
         mitigation_requirements: mitigationRequirements,

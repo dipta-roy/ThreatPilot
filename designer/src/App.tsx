@@ -4,6 +4,7 @@ import Canvas from './components/Canvas';
 import PropertiesPanel from './components/PropertiesPanel';
 import ValidationPanel from './components/ValidationPanel';
 import ExportOutputPanel from './components/ExportOutputPanel';
+import JiraSettingsModal from './components/JiraSettingsModal';
 import AddThreatModal from './components/AddThreatModal';
 import AddRiskModal from './components/AddRiskModal';
 import AddVulnerabilityModal from './components/AddVulnerabilityModal';
@@ -81,6 +82,7 @@ export default function App() {
   const {
     projectName,
     fetchProject,
+    fetchThreatLedger,
     saveProject,
     hasUnsavedChanges,
     isSaving,
@@ -129,6 +131,9 @@ export default function App() {
   const [isAddingRisk, setIsAddingRisk] = React.useState(false);
   const [isAddingVuln, setIsAddingVuln] = React.useState(false);
   const [isAddingMitigation, setIsAddingMitigation] = React.useState(false);
+  const [isJiraSettingsOpen, setIsJiraSettingsOpen] = React.useState(false);
+  const [isSyncingAll, setIsSyncingAll] = React.useState(false);
+  const [syncingReqId, setSyncingReqId] = React.useState<string | null>(null);
 
   const [promptConfig, setPromptConfig] = React.useState({
     risk_preference: 'Medium',
@@ -138,6 +143,10 @@ export default function App() {
     business_context_policy: '',
     custom_prompt: ''
   });
+
+  const [isNarrativeModalOpen, setIsNarrativeModalOpen] = React.useState(false);
+  const [narrativeText, setNarrativeText] = React.useState<string | null>(null);
+  const [isGeneratingNarrative, setIsGeneratingNarrative] = React.useState(false);
 
   const getSelectedCount = () => {
     switch (ledgerTab) {
@@ -215,6 +224,7 @@ export default function App() {
   const runThreatAIAnalysis = async (threatId: string) => {
     setGeneratingReasoningThreatId(threatId);
     try {
+      await useDesignerStore.getState().saveProject(true);
       const res = await fetch('/api/ai/reason', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -240,6 +250,7 @@ export default function App() {
   const runVulnerabilityAIAnalysis = async (vulnId: string) => {
     setGeneratingReasoningVulnId(vulnId);
     try {
+      await useDesignerStore.getState().saveProject(true);
       const res = await fetch('/api/ai/reason', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -265,6 +276,7 @@ export default function App() {
   const runMitigationAIAnalysis = async (reqId: string) => {
     setGeneratingReasoningMitId(reqId);
     try {
+      await useDesignerStore.getState().saveProject(true);
       const res = await fetch('/api/ai/reason', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -328,6 +340,26 @@ export default function App() {
 
   const [analysisMode, setAnalysisMode] = React.useState('STRIDE');
   const [iterations, setIterations] = React.useState(1);
+
+  const handleSyncJira = async (reqId?: string) => {
+    if (reqId) setSyncingReqId(reqId);
+    else setIsSyncingAll(true);
+    try {
+      const res = await fetch('/api/jira/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(reqId ? { req_id: reqId } : {})
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Sync failed');
+      await fetchProject();
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      if (reqId) setSyncingReqId(null);
+      else setIsSyncingAll(false);
+    }
+  };
 
   const [analysisState, setAnalysisState] = React.useState<{
     status: string;
@@ -438,6 +470,7 @@ export default function App() {
         setIsAnalysisModalOpen(false);
         setShowCompletionMessage(false);
         setAnalysisState(prev => ({ ...prev, status: 'running', error: null }));
+        useDesignerStore.getState().setAnalyzingElements([], []);
       } else {
         const errData = await res.json();
         alert(errData.error || 'Failed to start AI analysis');
@@ -449,10 +482,15 @@ export default function App() {
 
   useEffect(() => {
     fetchAIConfig();
+
+    const handleStartGlobalAI = () => setAnalysisState(prev => ({ ...prev, status: 'running', error: null }));
+    window.addEventListener('start-ai-analysis', handleStartGlobalAI);
+    return () => window.removeEventListener('start-ai-analysis', handleStartGlobalAI);
   }, []);
 
   useEffect(() => {
     let intervalId: any = null;
+    let currentNewThreats = 0;
     if (analysisState.status === 'running') {
       intervalId = setInterval(async () => {
         try {
@@ -460,12 +498,19 @@ export default function App() {
           if (res.ok) {
             const data = await res.json();
             setAnalysisState(data);
+            useDesignerStore.getState().setAnalyzingElements(data.analyzing_node_ids || [], data.analyzing_edge_ids || []);
+            if (data.new_threats > currentNewThreats) {
+              currentNewThreats = data.new_threats;
+              fetchThreatLedger();
+            }
             if (data.status === 'completed') {
               clearInterval(intervalId);
+              useDesignerStore.getState().setAnalyzingElements([], []);
               setShowCompletionMessage(true);
               fetchProject();
             } else if (data.status === 'failed') {
               clearInterval(intervalId);
+              useDesignerStore.getState().setAnalyzingElements([], []);
             }
           }
         } catch (e) {
@@ -476,7 +521,7 @@ export default function App() {
     return () => {
       if (intervalId) clearInterval(intervalId);
     };
-  }, [analysisState.status, fetchProject]);
+  }, [analysisState.status, fetchProject, fetchThreatLedger]);
 
   useEffect(() => {
     let intervalId: any;
@@ -521,6 +566,44 @@ export default function App() {
     }
   };
 
+  const handleGenerateNarrative = async () => {
+    setIsGeneratingNarrative(true);
+    setNarrativeText(null);
+    setIsNarrativeModalOpen(true);
+    try {
+      const res = await fetch('/api/ai/narrative', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          components: nodes.filter(n => n.type === 'componentNode').map(n => n.data),
+          boundaries: nodes.filter(n => n.type === 'boundaryNode').map(n => n.data),
+          flows: useDesignerStore.getState().edges.map(e => ({
+            id: e.id,
+            source_id: e.source,
+            target_id: e.target,
+            name: e.label || 'Flow',
+            protocol: e.data?.protocol || 'HTTPS',
+            is_bidirectional: e.data?.isBidirectional || false
+          })),
+          assets: useDesignerStore.getState().assets || []
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setNarrativeText(data.narrative);
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Failed to generate narrative');
+        setIsNarrativeModalOpen(false);
+      }
+    } catch (e) {
+      console.error(e);
+      alert('Error connecting to backend');
+      setIsNarrativeModalOpen(false);
+    } finally {
+      setIsGeneratingNarrative(false);
+    }
+  };
 
   // Load project on mount
   useEffect(() => {
@@ -693,6 +776,15 @@ export default function App() {
           </button>
 
           <button
+            onClick={handleGenerateNarrative}
+            className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg shadow-md transition disabled:opacity-50"
+            disabled={isGeneratingNarrative}
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5" />
+            Generate Narrative
+          </button>
+
+          <button
             onClick={toggleRiskInCanvas}
             className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-800 border border-slate-200 dark:border-border rounded-lg text-slate-700 dark:text-slate-300 text-xs font-semibold transition"
             title={showRiskInCanvas ? "Hide risk badges on components" : "Show risk badges on components"}
@@ -711,6 +803,18 @@ export default function App() {
           </button>
         </div>
       </header>
+
+      {/* Global AI Progress Indicator */}
+      {analysisState.status === 'running' && (
+        <div className="absolute top-20 left-1/2 transform -translate-x-1/2 z-50 bg-indigo-600 text-white px-5 py-2.5 rounded-full shadow-xl flex items-center gap-3 font-semibold text-xs border border-indigo-500/50 backdrop-blur-sm shadow-indigo-500/20">
+          <RefreshCw className="w-4 h-4 animate-spin text-indigo-200" />
+          <span className="flex-1 tracking-wide">
+            {analysisState.total_segments > 0 
+              ? `Analyzing Segment ${analysisState.current_segment} of ${analysisState.total_segments}...` 
+              : 'Analyzing Threat Model...'}
+          </span>
+        </div>
+      )}
 
       {/* Main Panel Body */}
       {isLoading ? (
@@ -886,13 +990,30 @@ export default function App() {
                       </button>
                     )}
                     {ledgerTab === 'mitigations' && (
-                      <button
-                        onClick={() => setIsAddingMitigation(true)}
-                        className="flex items-center gap-1.5 px-3 py-2 bg-primary-600 hover:bg-primary-500 text-white text-xs font-semibold rounded-lg shadow-md transition mr-2"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        Add Mitigation
-                      </button>
+                      <div className="flex gap-2 mr-2">
+                        <button
+                          onClick={() => setIsAddingMitigation(true)}
+                          className="flex items-center gap-1.5 px-3 py-2 bg-primary-600 hover:bg-primary-500 text-white text-xs font-semibold rounded-lg shadow-md transition"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          Add Mitigation
+                        </button>
+                        <button
+                          onClick={() => setIsJiraSettingsOpen(true)}
+                          className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-border text-xs font-semibold rounded-lg shadow-sm transition"
+                        >
+                          <svg className="w-3.5 h-3.5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"></path></svg>
+                          Jira Settings
+                        </button>
+                        <button
+                          onClick={() => handleSyncJira()}
+                          disabled={isSyncingAll}
+                          className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-border text-xs font-semibold rounded-lg shadow-sm transition disabled:opacity-50"
+                        >
+                          <RefreshCw className={`w-3.5 h-3.5 ${isSyncingAll ? 'animate-spin' : ''}`} />
+                          Sync All to Jira
+                        </button>
+                      </div>
                     )}
 
                     <div className="relative w-64">
@@ -1440,6 +1561,7 @@ export default function App() {
                           <th className="px-6 py-4">Security Requirement (Mitigation)</th>
                           <th className="px-6 py-4">Affected Components</th>
                           <th className="px-6 py-4">Validation Test Case</th>
+                          <th className="px-6 py-4 text-center w-24">Jira</th>
                           <th className="px-6 py-4 text-right">Actions</th>
                         </tr>
                       </thead>
@@ -1544,6 +1666,21 @@ export default function App() {
                                     />
                                   ) : (
                                     r.test_case
+                                  )}
+                                </td>
+                                <td className="px-6 py-4 text-center">
+                                  {r.jira_issue_key ? (
+                                    <a href={r.jira_issue_url} target="_blank" rel="noreferrer" className="text-[10px] font-bold text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline">
+                                      {r.jira_issue_key}
+                                    </a>
+                                  ) : (
+                                    <button
+                                      onClick={() => handleSyncJira(r.req_id)}
+                                      disabled={syncingReqId === r.req_id || isSyncingAll}
+                                      className="px-2 py-1 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-border text-[10px] font-bold text-slate-600 dark:text-slate-400 rounded transition disabled:opacity-50"
+                                    >
+                                      {syncingReqId === r.req_id ? 'Syncing...' : 'Sync'}
+                                    </button>
                                   )}
                                 </td>
                                 <td className="px-6 py-4 text-right">
@@ -2702,7 +2839,63 @@ export default function App() {
       {isAddingThreat && <AddThreatModal onClose={() => setIsAddingThreat(false)} />}
       {isAddingRisk && <AddRiskModal onClose={() => setIsAddingRisk(false)} />}
       {isAddingVuln && <AddVulnerabilityModal onClose={() => setIsAddingVuln(false)} />}
-      {isAddingMitigation && <AddMitigationModal onClose={() => setIsAddingMitigation(false)} />}
+      {isAddingMitigation && (
+        <AddMitigationModal onClose={() => setIsAddingMitigation(false)} />
+      )}
+      {isJiraSettingsOpen && (
+        <JiraSettingsModal onClose={() => setIsJiraSettingsOpen(false)} />
+      )}
+      
+      {/* Narrative Modal */}
+      {isNarrativeModalOpen && (
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-50 flex items-center justify-center p-6">
+          <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-3xl flex flex-col max-h-[85vh] border border-slate-200 dark:border-border">
+            <div className="flex justify-between items-center p-5 border-b border-slate-200 dark:border-border bg-slate-50 dark:bg-slate-950/50 rounded-t-xl shrink-0">
+              <h2 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <FileSpreadsheet className="w-5 h-5 text-indigo-500" />
+                Architecture Narrative
+              </h2>
+              <div className="flex items-center gap-2">
+                {narrativeText && (
+                  <button 
+                    onClick={() => {
+                      navigator.clipboard.writeText(narrativeText);
+                      alert('Copied to clipboard');
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/20 text-xs font-semibold rounded-lg hover:bg-indigo-100 dark:hover:bg-indigo-500/20 transition"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    Copy
+                  </button>
+                )}
+                <button
+                  onClick={() => setIsNarrativeModalOpen(false)}
+                  className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg text-slate-500 transition"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+            
+            <div className="p-6 overflow-y-auto flex-1 bg-slate-50 dark:bg-slate-950/20">
+              {isGeneratingNarrative ? (
+                <div className="flex flex-col items-center justify-center h-48 space-y-4">
+                  <RefreshCw className="w-8 h-8 text-indigo-500 animate-spin" />
+                  <p className="text-sm font-medium text-slate-600 dark:text-slate-400">
+                    Generating technical story from architecture...
+                  </p>
+                </div>
+              ) : narrativeText ? (
+                <div className="prose dark:prose-invert max-w-none text-sm text-slate-700 dark:text-slate-300">
+                  {renderMarkdown(narrativeText)}
+                </div>
+              ) : (
+                <p className="text-center text-slate-500">No narrative generated.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

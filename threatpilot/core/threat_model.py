@@ -3,7 +3,7 @@
 from __future__ import annotations
 import uuid
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Any
 from pydantic import BaseModel, Field
 
 class STRIDECategory(str, Enum):
@@ -40,6 +40,7 @@ class Vulnerability(BaseModel):
     mitigation: str = ""
     status: str = "Open"
     reasoning: str = ""
+    weakness_type: str = "Design weakness"
 
 class Threat(BaseModel):
     """A single identified security threat or privacy risk."""
@@ -63,7 +64,13 @@ class Threat(BaseModel):
     mitre_attack_id: str = ""
     mitre_attack_technique: str = ""
     reasoning: str = ""
+    finding_type: str = "Evidence-based"  # Evidence-based or Assumption
+    confidence: str = "High"
     source_dfd_node: Optional[str] = None
+    # Threat Reasoning Graph fields (Item 19)
+    evidence_traversal_path: List[str] = Field(default_factory=list)
+    missing_controls: List[str] = Field(default_factory=list)
+    verification_method: str = ""
 
     def resolve_affected_elements(self, project: Any) -> tuple[str, str]:
         """Resolves element and asset names from the project context."""

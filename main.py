@@ -6,6 +6,12 @@ Usage:
 
 from __future__ import annotations
 import sys
+import os
+try:
+    import torch
+except ImportError:
+    pass
+
 from pathlib import Path
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication

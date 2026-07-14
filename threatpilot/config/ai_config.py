@@ -30,6 +30,7 @@ class AIConfig(BaseModel):
     analysis_mode: str = "STRIDE"
     application_mode: str = "Production"
     workspace_port: int = 8080
+    offline_embedding_model_path: str = ""
 
     model_config = ConfigDict(extra="ignore", protected_namespaces=())
 
@@ -70,6 +71,7 @@ class AIConfig(BaseModel):
             gemini_api_key=SecretStr(scrub(decrypt_api_key(get_val("GEMINI_API_KEY", "")))),
             max_vision_resolution=int(get_val("AI_MAX_VISION_RESOLUTION", "2048")),
             workspace_port=int(get_val("WORKSPACE_PORT", "8080")),
+            offline_embedding_model_path=get_val("AI_OFFLINE_EMBEDDING_MODEL_PATH", ""),
         )
         add_secret_to_redaction(config.gemini_api_key)
         return config
@@ -89,7 +91,8 @@ class AIConfig(BaseModel):
             "AI_ANALYSIS_MODE": self.analysis_mode,
             "AI_APPLICATION_MODE": self.application_mode,
             "AI_MAX_VISION_RESOLUTION": str(self.max_vision_resolution),
-            "WORKSPACE_PORT": str(self.workspace_port)
+            "WORKSPACE_PORT": str(self.workspace_port),
+            "AI_OFFLINE_EMBEDDING_MODEL_PATH": self.offline_embedding_model_path
         }
         try:
             for k, v in fields.items(): dotenv.set_key(path, k, v)

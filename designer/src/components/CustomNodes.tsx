@@ -4,11 +4,13 @@ import { Server, Database, Box, ShieldAlert, EyeOff } from 'lucide-react';
 import { useDesignerStore } from '../store/useDesignerStore';
 
 // Custom Component Node
-export const ComponentNode = memo(({ data, selected }: NodeProps) => {
+export const ComponentNode = memo(({ id, data, selected }: NodeProps) => {
   const isOutOfScope = data.is_out_of_scope;
   const elementType = data.element_type;
   const threats = useDesignerStore((state) => state.threats || []);
   const showRiskInCanvas = useDesignerStore((state) => state.showRiskInCanvas);
+  const analyzingNodeIds = useDesignerStore((state) => state.analyzingNodeIds || []);
+  const isAnalyzing = analyzingNodeIds.includes(id);
 
   const compName = (data.name || '').trim().toLowerCase();
   const componentThreatsCount = compName 
@@ -48,7 +50,7 @@ export const ComponentNode = memo(({ data, selected }: NodeProps) => {
         isOutOfScope 
           ? 'border-dashed border-slate-600 bg-slate-800/40 opacity-60' 
           : getTypeColor()
-      } ${selected ? 'ring-2 ring-primary-500 ring-offset-2 ring-offset-background scale-105' : ''}`}
+      } ${selected ? 'ring-2 ring-primary-500 ring-offset-2 ring-offset-background scale-105' : ''} ${isAnalyzing ? 'ring-4 ring-indigo-500 ring-opacity-75 animate-pulse shadow-indigo-500/50 shadow-xl' : ''}`}
     >
       {/* Handles (8 points: corners and sides) */}
       {[
@@ -108,7 +110,10 @@ export const ComponentNode = memo(({ data, selected }: NodeProps) => {
 });
 
 // Custom Trust Boundary Container Node
-export const BoundaryNode = memo(({ data, selected }: NodeProps) => {
+export const BoundaryNode = memo(({ id, data, selected }: NodeProps) => {
+  const analyzingNodeIds = useDesignerStore((state) => state.analyzingNodeIds || []);
+  const isAnalyzing = analyzingNodeIds.includes(id);
+
   return (
     <div className="w-full h-full relative group">
       {/* NodeResizer component from React Flow handles boundary resizing */}
@@ -126,7 +131,7 @@ export const BoundaryNode = memo(({ data, selected }: NodeProps) => {
           selected
             ? 'border-primary-500 bg-primary-500/[0.03] dark:bg-primary-950/10 shadow-lg shadow-primary-500/5'
             : 'border-red-400/40 dark:border-red-500/30 bg-red-500/[0.01] dark:bg-red-950/5'
-        }`}
+        } ${isAnalyzing ? 'ring-4 ring-indigo-500 ring-opacity-75 animate-pulse shadow-indigo-500/50 shadow-xl' : ''}`}
       >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-red-500/15 pb-1.5 mb-2 select-none">

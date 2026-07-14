@@ -65,6 +65,10 @@
   stroke-width: 3;
 }
 
+.react-flow__edge.animate-reverse .react-flow__edge-path {
+  animation-direction: reverse !important;
+}
+
 @keyframes dash {
   from {
     stroke-dashoffset: 10;

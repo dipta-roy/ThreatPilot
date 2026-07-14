@@ -49,7 +49,7 @@ build_exe_options = {
         "pydantic", "pydantic_core", "httpx", "cryptography", "keyring", "ssl",
         "keyring.backends", "keyring.backends.Windows",
         "shiboken6",
-        "dotenv", "openpyxl", "certifi", "anyio", "idna", "sniffio", "httpcore",
+        "dotenv", "openpyxl", "certifi",
         "PIL", "PySide6.QtCore", "PySide6.QtGui", "PySide6.QtWidgets", 
         "PySide6.QtNetwork", "PySide6.QtPrintSupport", "PySide6.QtXml", "PySide6.QtSvg"
     ],
@@ -58,9 +58,10 @@ build_exe_options = {
         ("designer/dist", "designer/dist"),
     ],
     "excludes": [
-        "tkinter", "unittest", "cv2", "numpy", 
+        "torch", "torchvision", "torchaudio", "sentence_transformers",
+        "tkinter", "unittest", "cv2", 
         "pandas", "pyarrow", "matplotlib", 
-        "scipy", "notebook", "email",
+        "notebook", "email",
         "xmlrpc", "PySide6.QtWebEngine", "PySide6.QtWebEngineCore",
         "PySide6.QtQuick", "PySide6.QtQuickWidgets", "PySide6.Qt3D",
         "PySide6.QtRemoteObjects", "PySide6.QtCharts", "PySide6.QtSql",

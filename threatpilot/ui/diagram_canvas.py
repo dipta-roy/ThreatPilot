@@ -63,10 +63,41 @@ class DiagramCanvas(QGraphicsView):
             Carries the item or ``None`` when the selection is cleared.
         zoom_changed: Emitted when the zoom level changes.
             Carries the current zoom factor as a float.
+        context_action_triggered: Emitted when a right-click menu action is selected.
+            Carries the action name and the target element ID.
     """
 
     item_selected: Signal = Signal(object)
     zoom_changed: Signal = Signal(float)
+    context_action_triggered: Signal = Signal(str, str)
+
+    def contextMenuEvent(self, event) -> None:
+        pos = event.pos()
+        scene_pos = self.mapToScene(pos)
+        items = self._scene.items(scene_pos)
+        
+        element_id = None
+        for item in items:
+            if item.data(0):
+                element_id = item.data(0)
+                break
+                
+        if not element_id:
+            return
+            
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+        
+        action_threats = menu.addAction("Generate Threats")
+        action_abuse = menu.addAction("Generate Abuse Cases")
+        action_mitigations = menu.addAction("Generate Mitigations")
+        menu.addSeparator()
+        action_reqs = menu.addAction("Generate Security Requirements")
+        action_pentest = menu.addAction("Generate Pentest Checklist")
+        
+        selected_action = menu.exec(event.globalPos())
+        if selected_action:
+            self.context_action_triggered.emit(selected_action.text(), element_id)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         self._scene = QGraphicsScene(parent)

@@ -29,7 +29,18 @@ if [ $? -ne 0 ]; then
 fi
 echo "[+] Dependencies are up to date."
 
-echo "[3/3] Launching ThreatPilot..."
+echo "[3/4] Building Web Designer Interface..."
+cd designer || exit 1
+npm install --legacy-peer-deps
+npm run build
+if [ $? -ne 0 ]; then
+    echo "[ERROR] Failed to build the web designer interface. Please ensure Node.js is installed."
+    exit 1
+fi
+cd ..
+echo "[+] Web Designer Interface built successfully."
+
+echo "[4/4] Launching ThreatPilot..."
 echo "[!] Starting GUI in background..."
 python3 main.py &
 

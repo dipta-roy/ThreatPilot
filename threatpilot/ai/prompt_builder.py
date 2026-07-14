@@ -37,11 +37,14 @@ class PromptBuilder:
             f"You are 'ThreatPilot', an expert {role}. "
             f"Perform a detailed {methodology} analysis on the provided Data Flow Diagram (DFD).\n\n"
             "STRICT QUALITY GUIDELINES:\n"
-            "1. DESCRIPTIVE TITLES: The 'title' field MUST be a unique, descriptive name (e.g., 'Bypass of Authentication on Login API'). "
-            "It MUST NOT be the same as the threat category.\n"
-            "2. ENGLISH ONLY: All descriptions, titles, and mitigations must be in plain English.\n"
-            "3. CVSS VERSION: You MUST use CVSS version 3.1 for all vectors. DO NOT use version 2.0 or 4.0.\n"
-            "4. ARCHITECTURAL FOCUS: Focus on data flows crossing Trust Boundaries.\n\n"
+            "1. DESCRIPTIVE TITLES: The 'title' field MUST describe specific ATTACKER BEHAVIOR (e.g., 'Forged JWT Accepted by Backend', 'API Resource Exhaustion'), NOT missing controls (e.g., DO NOT use 'Missing Rate Limiting').\n"
+            "2. EVIDENCE vs ASSUMPTION: 'Evidence-based' MUST ONLY be used when the DFD explicitly shows the weakness (e.g., Protocol=HTTP). If you are inferring a missing control (like missing HSTS, WAF, mTLS, or internal validation) that is not explicitly in the DFD, you MUST classify finding_type as 'Assumption'.\n"
+            "3. THREAT vs VULNERABILITY: First identify the observed weakness/assumption, then the Threat (attacker behavior), then the vulnerability and mitigation.\n"
+            "4. DETERMINISTIC CANDIDATES: You will be provided a list of CANDIDATE THREAT CATEGORIES. You MUST ONLY evaluate and explain these specific candidates for the provided architecture segment. DO NOT invent new threat categories.\n"
+            "5. MITRE ATT&CK: Use specific, non-generic MITRE ATT&CK techniques based on the exact attack pattern (avoid generic T1068 where possible).\n"
+            "6. ENGLISH ONLY: All descriptions, titles, and mitigations must be in plain English.\n"
+            "7. CVSS VERSION: You MUST use CVSS version 3.1 for all vectors. DO NOT use version 2.0 or 4.0.\n"
+            "8. ARCHITECTURAL FOCUS: Focus on data flows crossing Trust Boundaries.\n\n"
             "DEFINITIONS:\n"
             f"1. THREAT: A technical weakness in the system architecture (following {methodology} principles).\n"
             "2. VULNERABILITY: A description of HOW an exploit can be used on the identified threat/weakness to perform an attack.\n"
@@ -90,21 +93,45 @@ class PromptBuilder:
         prompt += business_context
 
         prompt += (
-            "OUTPUT FORMAT: Return a JSON list of threats with the following fields (ALL STRINGS MUST BE IN ENGLISH):\n"
-            f"- threat_id, category ({methodology}), title (Unique descriptive name in English, NOT the category name), description (English),\n"
-            "- vulnerabilities (list of objects with 'title' and 'description' in English), impact (English), likelihood (1-5), recommended_mitigation (English),\n"
+            "OUTPUT FORMAT: Return a JSON object where the keys are EXACTLY the Threat Categories listed above. "
+            "For each category, provide an array of threat objects. If a category is not applicable, provide an empty array [].\n"
+            "Each threat object in the array must contain the following fields (ALL STRINGS MUST BE IN ENGLISH):\n"
+            f"- threat_id, title (Unique descriptive name of attacker behavior, NOT missing control), description (English),\n"
+            "- vulnerabilities (list of objects with 'title', 'description', and 'weakness_type' (e.g., Configuration weakness, Design weakness, Authorization weakness)), impact (English), likelihood (1-5), recommended_mitigation (English),\n"
             "- affected_components (EXACT NAME), affected_element_type, affected_asset_type,\n"
-            "- cvss_score (float), cvss_vector (CVSS 3.1), mitre_attack_id\n\n"
+            "- cvss_score (float), cvss_vector (CVSS 3.1), mitre_attack_id,\n"
+            "- reasoning (Explain the logic behind the finding, including evidence, attack preconditions, and specific architectural references),\n"
+            "- finding_type ('Evidence-based' or 'Assumption'), confidence ('High', 'Medium', 'Low'),\n"
+            "- source_dfd_node (string, the name or ID of the origin node or flow),\n"
+            "- evidence_traversal_path (list of strings showing the flow of the threat from boundary to target)\n\n"
+            "ZERO TRUST & COMPLIANCE MANDATES:\n"
+            "1. Evaluate all flows explicitly against Zero Trust principles: identity verification, strict authorization, continuous verification, and least privilege.\n"
+            "2. If a flow crosses a Trust Boundary, explicitly state how it verifies identity and authorizes access.\n\n"
             "CVSS GUIDELINE: Always provide a CVSS 3.1 vector string (e.g., CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H) and its corresponding base score.\n"
-            "COMPREHENSIVENESS: Explore all relevant categories for each element; cross-boundary flows are high risk. REMEMBER: ENGLISH ONLY."
+            f"SYSTEMATIC ENUMERATION: You MUST systematically populate the array for EVERY {methodology} category. Do not skip any category. "
+            "If a data flow is bidirectional, analyze the Request path and Response path separately and note the direction in the title.\n"
+            "REMEMBER: ENGLISH ONLY."
         )
         return prompt
 
-    def build_user_prompt(self, dfd: DFDModel, system_name: str = "Target System") -> str:
+    def build_user_prompt(self, dfd: DFDModel, system_name: str = "Target System", rag_context: str = "", candidates: Optional[list[str]] = None, narrative: str = "") -> str:
         """Serializes the architectural model into a detailed natural language description."""
         prompt = "LANGUAGE DIRECTIVE: You MUST respond exclusively in English.\n\n"
-        prompt += f"Analyze the following architectural DFD for {system_name}:\n\n<architecture_context>\n"
-        prompt += "\n--- ASSETS ---\n"
+        
+        if candidates:
+            prompt += "--- CANDIDATE THREAT CATEGORIES TO EVALUATE ---\n"
+            for c in candidates:
+                prompt += f"- {c}\n"
+            prompt += "\nEvaluate each of the above candidate categories for the given context. If a category does not apply, simply omit it from the JSON response.\n\n"
+            
+        if rag_context.strip():
+            prompt += f"{rag_context}\n\n"
+            
+        if narrative.strip():
+            prompt += f"--- ARCHITECTURE NARRATIVE ---\n{narrative}\n\n"
+            
+        prompt += f"Analyze the following architectural Tri-Graph for {system_name}:\n\n<architecture_context>\n"
+        prompt += "\n--- DIMENSION 1: DATA GRAPH (ASSETS) ---\n"
         if dfd.assets:
             for a in dfd.assets:
                 prompt += f"- {a.name} | Type: {a.type} | Criticality: {a.criticality} | Scope: {'Out' if a.is_out_of_scope else 'In'}\n"
@@ -113,7 +140,7 @@ class PromptBuilder:
                 if a.is_out_of_scope and a.out_of_scope_justification: prompt += f"  Justification: {a.out_of_scope_justification}\n"
         else: prompt += "- No assets defined.\n"
         
-        prompt += "\n--- TRUST BOUNDARIES ---\n"
+        prompt += "\n--- DIMENSION 2: TRUST GRAPH (BOUNDARIES) ---\n"
         if getattr(dfd, "boundaries", []):
             for b in dfd.boundaries:
                 parent_info = f" (Nested in {b.parent_boundary})" if b.parent_boundary else ""
@@ -123,14 +150,14 @@ class PromptBuilder:
         else:
             prompt += "- No trust boundaries defined.\n"
 
-        prompt += "\n--- DFD NODES ---\n"
+        prompt += "\n--- DIMENSION 3: COMPONENT GRAPH (TOPOLOGY NODES) ---\n"
         for node in dfd.nodes:
             tb = node.trust_boundary or "None"
             if node.parent_trust_boundary: tb = f"{tb} (Nested in {node.parent_trust_boundary})"
             prompt += f"- Element: {self._sanitize(node.name)}\n  Properties: Type: {self._sanitize(node.type)} | Class: {node.element_type} | Asset: {node.asset_type} | Boundary: {tb}\n"
             if node.description: prompt += f"  Description: {self._sanitize(node.description)}\n"
 
-        prompt += "\n--- DFD EDGES ---\n"
+        prompt += "\n--- DIMENSION 3: COMPONENT GRAPH (TOPOLOGY EDGES) ---\n"
         for edge in dfd.edges:
             src = next((n.name for n in dfd.nodes if n.id == edge.source_id), "(Unknown)")
             dst = next((n.name for n in dfd.nodes if n.id == edge.target_id), "(Unknown)")
@@ -206,3 +233,40 @@ class PromptBuilder:
             "Provide a detailed technical explanation of the security control, why it is necessary, how to implement it securely, "
             "and how to validate it (test strategy). Output the report in markdown format."
         )
+
+    def build_narrative_prompt(self, dfd: DFDModel, system_name: str = "Target System") -> str:
+        """Constructs a prompt for generating a plain-text Architecture Narrative story."""
+        prompt = (
+            "LANGUAGE DIRECTIVE: You MUST respond exclusively in English.\n\n"
+            f"You are a Cybersecurity Architect describing the data flows of '{system_name}' in plain text.\n"
+            "Based on the following architecture graph, tell a technical story about how data flows through the system, "
+            "what trust boundaries are crossed, and what assets traverse the system.\n\n"
+            "FORMAT REQUIREMENTS:\n"
+            "You MUST format your output exactly with these sections (using Markdown):\n"
+            "──────────────────────────────────────────\n"
+            " Architecture Narrative\n"
+            "──────────────────────────────────────────\n\n"
+            "Request Flow\n"
+            "1. [Step 1]\n"
+            "2. [Step 2]\n\n"
+            "Trust Boundary Crossings\n"
+            "• [Source] -> [Target]\n\n"
+            "Assets Traversing the System\n"
+            "• [Asset Name]\n\n"
+            "Technical Story: [A cohesive paragraph explaining the flow end-to-end]\n\n"
+        )
+        
+        prompt += "<architecture_context>\n"
+        for node in dfd.nodes:
+            tb = node.trust_boundary or "None"
+            prompt += f"- Component: {self._sanitize(node.name)} | Type: {self._sanitize(node.type)} | Boundary: {tb}\n"
+
+        for edge in dfd.edges:
+            src = next((n.name for n in dfd.nodes if n.id == edge.source_id), "(Unknown)")
+            dst = next((n.name for n in dfd.nodes if n.id == edge.target_id), "(Unknown)")
+            prompt += f"- Flow: {self._sanitize(edge.name)} ({self._sanitize(src)} -> {self._sanitize(dst)}) | Protocol: {self._sanitize(edge.protocol)}\n"
+
+        for a in dfd.assets:
+            prompt += f"- Asset: {a.name} | Type: {a.type}\n"
+        prompt += "</architecture_context>\n"
+        return prompt

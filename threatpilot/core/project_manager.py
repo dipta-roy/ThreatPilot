@@ -34,6 +34,7 @@ class Project(BaseModel):
     custom_component_types: list[str] = Field(default_factory=list)
     mitigation_requirements: list[MitigationRequirement] = Field(default_factory=list)
     mitigation_excel_path: str | None = ""
+    compliance_standards: list[str] = Field(default_factory=list)
     project_path: str = Field(default="", exclude=True)
 
     def to_dict(self) -> dict[str, Any]:
@@ -131,8 +132,17 @@ def _atomic_write_json(file_path: Path, data: dict[str, Any]) -> None:
             json.dump(data, fh, indent=2, ensure_ascii=False)
             fh.flush()
             os.fsync(fh.fileno())
-        # Atomic replacement
-        os.replace(temp_path, file_path)
+        # Atomic replacement with retry for Windows locking (WinError 5)
+        import time
+        for attempt in range(10):
+            try:
+                os.replace(temp_path, file_path)
+                break
+            except PermissionError:
+                if attempt < 9:
+                    time.sleep(0.05)
+                else:
+                    raise
     except Exception:
         if os.path.exists(temp_path):
             os.remove(temp_path)

@@ -12,13 +12,23 @@
 
 ---
 
+## Table of Contents
+- [Core Capabilities](#core-capabilities)
+- [Key Features](#key-features)
+- [Getting Started](#getting-started)
+- [Security & Privacy](#security--privacy)
+- [Architecture Stack](#architecture-stack)
+- [Trust & Verification](#trust--verification)
+
+---
+
 ## Core Capabilities
 
 - **AI Vision Analysis:** Identifies architectural components, trust boundaries, and communication flows directly from images.
-- **Multimodal Risk Assessment:** Supports both traditional security threat modeling (STRIDE) and advanced privacy threat modeling (LINDDUN).
-- **Explainable AI (XAI):** Generates deep technical reasoning—from attack vectors to verification procedures—for identified threats.
-- **Seamless Integrations:** Out-of-the-box support for both local privacy-first models (Ollama) and high-performance cloud endpoints (Google Gemini).
-- **Real-Time Web Designer:** Drag-and-drop React Flow architecture designer with instant sync to your desktop client.
+- **Deterministic Math Engine:** Resolves risk scores deterministically using an algorithmic Tri-Graph traversal before AI inference.
+- **Multi-Agent Orchestrator:** Implements a strict 5-agent pipeline (Threat, Mitigation, Evidence, Compliance, Reporting) for resilient JSON extraction.
+- **CI/CD Automation:** First-class CLI and FastAPI backend for executing headless threat models in deployment pipelines.
+- **Real-Time Web Designer:** Drag-and-drop architecture designer with instant sync to your desktop client.
 
 ---
 
@@ -30,8 +40,14 @@
 - **Segmented Analysis**: Intelligently segments large architectures into batches to respect model token limits without losing structural context.
 
 ### Streamlined AI Threat Analysis
-- **Context-Aware Prompts**: Generates structured, industry-contextualized prompts for LLMs.
-- **MITRE ATT&CK® Mapping**: Automatically maps identified threats to specific MITRE ATT&CK techniques, aligning risk with defensive operations.
+- **Attacker-Centric True Threat Modeling**: Evaluates systems purely on attacker behaviors rather than raw missing controls, enforcing canonical threat profiles.
+- **Evidence vs. Assumption Engine**: Eliminates AI hallucinations by strictly segregating findings supported by architectural evidence from speculative assumptions.
+- **Deterministic Traceability**: Provides a full `evidence_traversal_path` and `confidence` score for every finding to make AI outputs fully auditable.
+- **Incremental Traversal Engine**: ThreatPilot selectively analyzes downstream architectural changes instead of the entire topology, drastically reducing generation time for large architectures.
+- **Contextual UI Generation**: Right-click components in either the Desktop or Web interface to trigger localized generation of Threats, Mitigations, or Abuse Cases.
+- **Node Analysis States**: Native integration of analysis states tracks component lifecycles to guarantee accurate diffs and compliance checks.
+- **Context-Aware Prompts:** Generates structured, industry-contextualized prompts for LLMs.
+- **MITRE ATT&CK® Mapping:** Automatically maps identified threats to specific MITRE ATT&CK techniques, aligning risk with defensive operations.
 - **Map-Reduce Batch Processing**: Implements recursive background batching to deduplicate and consolidate hundreds of mitigation requirements seamlessly.
 
 ### Risk Assessment & Controls
@@ -45,6 +61,35 @@
 - **Lightweight Excel Exports**: Custom-built, bloat-free Excel generation (`openpyxl`) for 7-tab GRC workbooks.
 - **AI-Reviewed Mitigation Requirements**: Automatically reviews and deduplicates mitigations, mapping them to affected components and generating testing criteria.
 - **Git-Optimized Storage**: Project data is partitioned into clean JSON sidecars (`architecture.json`, `threats.json`, etc.) enabling human-readable diffs in version control.
+
+---
+
+## Getting Started
+
+### Prerequisites
+- **Python 3.11+**
+- **Local LLM** (Ollama recommended) or a **Google Gemini API Key**.
+- **Recommended Models**: `qwen2.5-vl` (Ollama) or `gemini-3.1-flash-lite` (Google).
+
+### Installation
+```bash
+# Clone the repository
+git clone https://github.com/dipta-roy/ThreatPilot.git
+cd ThreatPilot
+
+# Install lightweight dependencies
+pip install -r requirements.txt
+```
+
+### Running the Desktop Application
+
+**Using Python / Scripts:**
+- On **Windows**, you can double-click or run `run_threatpilot.bat`.
+- On **Linux/macOS**, you can run `./run_threatpilot.sh`.
+- Alternatively, you can start it manually with `python main.py`.
+
+**Using the Windows Installer (No Python Required):**
+For a completely standalone experience on Windows, download the pre-packaged `.msi` installer from the [Releases](https://github.com/dipta-roy/ThreatPilot/releases) page. Install it, and run ThreatPilot directly from your Start Menu without installing Python.
 
 ---
 
@@ -66,30 +111,6 @@ ThreatPilot allows you to host the web-based visual designer locally or share it
 - **Local Analysis Support**: Using **Ollama** ensures your architecture diagrams and threat models never leave your local machine.
 - **Injection Protection**: XML-style delimiters and metadata sanitization prevent prompt-injection attacks.
 - **Masked Logs**: Application logs and error traces automatically redact identified API keys and sensitive credentials.
-
----
-
-## Getting Started
-
-### Prerequisites
-- **Python 3.11+**
-- **Local LLM** (Ollama recommended) or a **Google Gemini API Key**.
-- **Recommended Models**: `qwen2.5-vl` (Ollama) or `gemini-3.1-flash-lite` (Google).
-
-### Installation
-```bash
-# Clone the repository
-git clone https://github.com/dipta-roy/ThreatPilot.git
-cd ThreatPilot
-
-# Install lightweight dependencies
-pip install -r requirements.txt
-```
-
-### Running the Application
-```bash
-python main.py
-```
 
 ---
 
@@ -118,7 +139,7 @@ Download the Code Verification Certificate: [Dipta Roy - Code Verification Certi
 6. Click **Next** → **Finish**.
 
 **Verify Application Authenticity:**
-1. Right-click on `ThreatPilot-2.2.0-win64.msi` and select **Properties**.
+1. Right-click on the installer (e.g. `ThreatPilot-3.0.0-win64.msi`) and select **Properties**.
 2. Go to the **Digital Signatures** tab.
 3. Select "Signed_By_Dipta" from the Embedded Signatures list, then click **Details**.
 4. In the General tab, you should see the message: *"This digital signature is OK."*

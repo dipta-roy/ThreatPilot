@@ -17,13 +17,16 @@ echo Activating virtual environment...
 call %VENV_DIR%\Scripts\activate
 
 echo Updating versions in source files...
-python update_version.py %~1
+%VENV_DIR%\Scripts\python.exe update_version.py %~1
 
 echo Installing Python build dependencies...
-pip install -r requirements.txt cx_Freeze Pillow
+%VENV_DIR%\Scripts\python.exe -m pip install -r requirements.txt cx_Freeze Pillow
+
+echo Installing PyTorch CPU version for packaging...
+%VENV_DIR%\Scripts\python.exe -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu --no-cache-dir
 
 echo Building MSI Package...
-python msi-builder.py bdist_msi
+%VENV_DIR%\Scripts\python.exe msi-builder.py bdist_msi
 
 echo Deactivating virtual environment...
 call deactivate

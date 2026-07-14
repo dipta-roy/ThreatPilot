@@ -87,7 +87,9 @@ export default function PropertiesPanel() {
     updateThreat,
     deleteThreat,
     updateVulnerability,
-    deleteVulnerability
+    deleteVulnerability,
+    complianceStandards,
+    setComplianceStandards
   } = useDesignerStore();
 
   const [editingThreatId, setEditingThreatId] = React.useState<string | null>(null);
@@ -680,6 +682,31 @@ export default function PropertiesPanel() {
           onMouseDown={startResize}
           className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary-500/50 active:bg-primary-600 transition-colors z-50"
         />
+
+        {/* Project Settings */}
+        <div className="border-b border-border pb-6">
+          <h3 className="text-sm font-bold text-text uppercase tracking-wider mb-2 flex items-center gap-1.5">
+            <Globe className="w-4 h-4 text-emerald-500" />
+            Project Settings
+          </h3>
+          <p className="text-[10px] text-slate-400 leading-relaxed mb-3">
+            Explicitly assign compliance frameworks to strictly filter AI knowledge base queries.
+          </p>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Compliance Standards (Comma separated)</label>
+            <input
+              type="text"
+              value={complianceStandards.join(', ')}
+              onChange={(e) => {
+                const vals = e.target.value.split(',').map(s => s.trim()).filter(s => s);
+                setComplianceStandards(vals);
+              }}
+              placeholder="e.g. NIST 800-53, GDPR"
+              className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-border rounded-lg text-xs p-2 text-slate-800 dark:text-text focus:outline-none focus:border-primary-500"
+            />
+          </div>
+        </div>
+
         <div>
           <h3 className="text-sm font-bold text-text uppercase tracking-wider mb-2 flex items-center gap-1.5">
             <KeyRound className="w-4 h-4 text-primary-500" />
@@ -925,13 +952,14 @@ export default function PropertiesPanel() {
         {/* Boundary Type */}
         <div className="flex flex-col gap-1.5">
           <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Boundary Type</label>
-          <input
-            type="text"
+          <select
             value={data.type}
             onChange={(e) => updateBoundary(element.id, { type: e.target.value })}
-            placeholder="e.g. AWS VPC, Internal Network"
             className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-border rounded-lg text-xs p-2 text-slate-800 dark:text-text focus:outline-none focus:border-primary-500"
-          />
+          >
+            <option value="Internal">Internal</option>
+            <option value="External">External</option>
+          </select>
         </div>
 
         {/* Parent Boundary */}

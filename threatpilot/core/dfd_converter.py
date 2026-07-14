@@ -8,7 +8,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import List, Optional
 from pydantic import BaseModel, Field
-from threatpilot.core.domain_models import Component, Flow, TrustBoundary
+from threatpilot.core.domain_models import Component, Flow, TrustBoundary, Asset
 
 class DFDNode(BaseModel):
     """Represents a discrete functional entity within the Data Flow Diagram."""
@@ -63,7 +63,6 @@ def convert_to_dfd(
     assets: List[Asset] = None
 ) -> DFDModel:
     """Transforms domain-specific architectural elements into a standardized DFD structure."""
-    from threatpilot.core.domain_models import Asset
     dfd = DFDModel()
     boundaries = boundaries or []; assets = assets or []
 
@@ -134,3 +133,56 @@ def convert_to_dfd(
         dfd.edges.append(DFDEdge(id=flow.flow_id, name=flow.name, source_id=src_id, target_id=dst_id, protocol=flow.protocol, is_bidirectional=flow.is_bidirectional, trust_boundary=tb_name, flow_id=flow.flow_id))
 
     return dfd
+
+def generate_deterministic_narrative(dfd: DFDModel) -> str:
+    """Generates a deterministic plain-text Architecture Narrative story for the entire model."""
+    lines = []
+    
+    nodes_by_id = {n.id: n for n in dfd.nodes}
+    
+    if not dfd.edges:
+        return "No data flows have been defined for this architecture."
+        
+    for edge in dfd.edges:
+        source = nodes_by_id.get(edge.source_id)
+        target = nodes_by_id.get(edge.target_id)
+        
+        src_name = source.name if source else "Unknown origin"
+        dst_name = target.name if target else "Unknown destination"
+        
+        sentence = f"✓ {src_name} sends data to {dst_name}"
+        if edge.protocol and str(edge.protocol).strip().lower() not in ('none', 'unknown', ''):
+            sentence += f" over {edge.protocol}"
+            
+        if source and target:
+            src_tb = source.trust_boundary or "an external trust boundary"
+            dst_tb = target.trust_boundary or "an external trust boundary"
+            if src_tb != dst_tb:
+                sentence += f", crossing from the {src_tb} into the {dst_tb}"
+            else:
+                sentence += f", remaining within the {src_tb}"
+        
+        sentence += "."
+        lines.append(sentence)
+        
+        if edge.is_bidirectional:
+            ret_sentence = f"✓ {dst_name} returns data to {src_name}"
+            if edge.protocol and str(edge.protocol).strip().lower() not in ('none', 'unknown', ''):
+                ret_sentence += f" over {edge.protocol}"
+            
+            if source and target:
+                if src_tb != dst_tb:
+                    ret_sentence += f", crossing from the {dst_tb} into the {src_tb}"
+                else:
+                    ret_sentence += f", remaining within the {dst_tb}"
+            ret_sentence += "."
+            lines.append(ret_sentence)
+            
+    if dfd.assets:
+        lines.append("\n### Key Assets")
+        for asset in dfd.assets:
+            if asset.is_out_of_scope:
+                continue
+            lines.append(f"- **{asset.name}** ({asset.type}): {asset.description or 'No description provided.'}")
+            
+    return "\n\n".join(lines)

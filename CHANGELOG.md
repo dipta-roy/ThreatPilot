@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Removed
+- **RAG Knowledge Base**: Completely removed the ChromaDB and sentence-transformers based Knowledge Base feature to reduce application overhead, package size, and build complexity.
+
+## [3.0.0] - 2026-07-14
+
+This major release completely overhauls the AI threat generation engine to eliminate hallucinations, enforce strict traceability, and align with true attacker-centric threat modeling.
+
+### Added
+- **Multi-Agent System Pipeline**: Replaced the monolithic LLM architecture with a modular assembly line (Traversal, Threat, Mitigation, Evidence, Compliance, and Reporting agents) to keep prompts hyper-focused and reduce hallucinations.
+- **Context Propagation & Tri-Graph Architecture**: The engine now actively mutates a stateful `ThreatContext` object as it traverses the data flow graph, evaluating threats based on cumulative attack neighborhood contexts instead of isolated components.
+- **AttackMemory Event Log**: Introduced chronological event logging that remembers previous attacker actions across trust boundaries, enabling sophisticated Kill-Chain reasoning.
+- **Dynamic Knowledge Service**: Integrated a dynamic RAG (Retrieval-Augmented Generation) layer that injects precise compliance policies (e.g., NIST, HIPAA) exactly when relevant to the local traversal context.
+- **ChromaDB Vector Store**: Upgraded the RAG Knowledge Base from simple keyword matching to a persistent ChromaDB vector database.
+- **Offline Semantic Search**: Integrated the `BAAI/bge-base-en-v1.5` sentence transformer for true semantic understanding of architectural elements and compliance policies.
+- **Knowledge Base Manager UI**: Added a new user interface dialog under Intelligence -> Manage Knowledge Base for end-users to add, edit, and delete their own corporate standards.
+- **Offline Embedding Models**: End-users can now load pre-downloaded offline embedding models directly from the Knowledge Base UI, keeping the application entirely air-gapped without relying on HuggingFace downloads.
+- **ThreatSession Reproducibility**: Implemented strict session tracking capturing the exact architectural snapshot, LLM version, and agent prompts used during generation.
+- **Traceability & Auditing**: Threats now include an `evidence_traversal_path` and `source_dfd_node` linking them directly back to the exact architectural components and boundaries in the DFD.
+- **Confidence Scores**: AI-generated findings now feature a `confidence` rating (High, Medium, Low) to help prioritize remediation efforts.
+- **Vulnerability Categorization**: Introduced `weakness_type` to Vulnerabilities for structured categorization (e.g., Design weakness, Configuration weakness).
+- **Assumption vs. Evidence Separation**: The engine now explicitly differentiates between findings supported by direct evidence in the architecture diagram and speculative assumptions (e.g., missing controls).
+- **Knowledge Base Reset**: Added a "Clean All" feature and confirmation dialog in the Knowledge Base Manager UI to allow users to completely clear all vector records.
+- **PyTorch Support**: Added PyTorch dependency for advanced local AI processing capabilities.
+- **Type Hinting**: Resolved `NameError` for `Asset` class in DFD conversion logic (`dfd_converter.py`).
+
+### Changed
+- **Neighborhood Analysis Model**: Shifted the generation strategy to smaller, localized graph batches, solving "lost-in-the-middle" context degradation and significantly speeding up Time-To-First-Token (TTFT) for local LLMs.
+- **Data-Driven Severity Escalation**: Added native logic for escalating base risk scores deterministically based on propagated data classification tags (e.g., PII, PHI, Credentials).
+- **Attacker-Centric Titles**: Threat titles have been shifted from mitigation-centric labels ("Missing Rate Limiting") to true attacker behavior models ("API Resource Exhaustion") following strict STRIDE methodology.
+- **Canonical Threats Engine**: Implemented robust prompt safeguards to deduplicate variants of the same threat into single, canonical threat profiles.
+- **MITRE ATT&CK Mapping**: Enforced generation of specific, deterministic MITRE ATT&CK techniques based on the exact attack pattern.
+
+### Fixed
+- **Concurrency File Locking**: Fixed `[WinError 5] Access is denied` crashes caused by race conditions between background UI metadata polling and atomic `project.json` overwrites by implementing a resilient read-retry loop.
+- **Contextual AI Narrative**: Fixed an issue where isolated, single-node AI analysis segments lost overall system data-flow context by deterministically injecting a global architecture narrative into all prompts.
+- **MSI Installer Dependencies**: Fixed missing module errors in the frozen Windows executable by explicitly forcing `cx_Freeze` to bundle `torch`, `pypdf`, and `docx`.
+- **Canvas UI Polish**: Hid the React Flow attribution watermark in the Web Designer for a cleaner, distraction-free modeling workspace.
+
+---
+
 ## [2.2.0] - 2026-07-02
 
 This release introduces dynamic workspace port configuration.

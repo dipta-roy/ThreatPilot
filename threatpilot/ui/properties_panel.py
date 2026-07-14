@@ -8,6 +8,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 from PySide6.QtCore import Qt, Signal, QTimer, QSize
+from PySide6.QtGui import QUndoStack
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -152,7 +153,7 @@ class PropertiesPanel(QWidget):
         elif isinstance(item, TrustBoundary):
             self._header.setText("Trust Boundary Properties")
             self._add_text_row("Name:", "name", item.name)
-            self._add_text_row("Type:", "type", item.type)
+            self._add_combo_row("Type:", "type", item.type, ["Internal", "External"])
             
             parent_options = ["None"]
             for b in self._project.boundaries:

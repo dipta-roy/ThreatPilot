@@ -564,4 +564,74 @@ class MitigationReasoningWorker(QThread):
         finally:
             loop.close()
 
+class JiraSyncWorker(QThread):
+    """Background worker to sync mitigations to Jira."""
+    progress = Signal(int, int) # current, total
+    completed = Signal(int, int) # success_count, fail_count
+    failed = Signal(str)
+    item_synced = Signal(object) # MitigationRequirement
 
+    def __init__(self, mitigations, parent=None):
+        super().__init__(parent)
+        self.mitigations = mitigations
+
+    def run(self):
+        try:
+            from threatpilot.config.jira_config import JiraConfig
+            from threatpilot.core.jira_service import JiraService
+            
+            config = JiraConfig.load()
+            service = JiraService(config)
+            
+            success, message = service.verify_connection()
+            if not success:
+                self.failed.emit(f"Jira Connection failed: {message}")
+                return
+                
+            total = len(self.mitigations)
+            success_count = 0
+            fail_count = 0
+            
+            for i, mitigation in enumerate(self.mitigations):
+                self.progress.emit(i + 1, total)
+                
+                if mitigation.jira_issue_key:
+                    # Already synced
+                    continue
+                    
+                ok, result = service.create_issue(mitigation)
+                if ok:
+                    mitigation.jira_issue_key = result
+                    mitigation.jira_issue_url = f"{config.jira_url.rstrip('/')}/browse/{result}"
+                    self.item_synced.emit(mitigation)
+                    success_count += 1
+                else:
+                    fail_count += 1
+                    logger.error(f"Failed to sync mitigation {mitigation.req_id}: {result}")
+                    
+            self.completed.emit(success_count, fail_count)
+            
+        except Exception as exc:
+            logger.exception(f"JiraSyncWorker failed: {exc}")
+            self.failed.emit(str(exc))
+
+class NarrativeWorker(QThread):
+    """Background worker to generate an architecture narrative."""
+    completed = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, provider, prompt_config, dfd, system_name, parent=None):
+        super().__init__(parent)
+        self.provider = provider
+        self.prompt_config = prompt_config
+        self.dfd = dfd
+        self.system_name = system_name
+
+    def run(self):
+        try:
+            analyzer = ThreatAnalyzer(self.provider, self.prompt_config)
+            narrative_text = analyzer.generate_narrative(self.dfd, self.system_name)
+            self.completed.emit(narrative_text)
+        except Exception as exc:
+            logger.exception(f"NarrativeWorker failed: {exc}")
+            self.failed.emit(str(exc))

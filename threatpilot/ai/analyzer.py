@@ -15,6 +15,7 @@ from threatpilot.ai.response_parser import parse_threat_list
 from threatpilot.core.dfd_converter import DFDModel
 from threatpilot.core.threat_model import Threat, ThreatRegister, STRIDECategory, Vulnerability
 from threatpilot.config.prompt_config import PromptConfig
+from threatpilot.core.candidate_generator import generate_candidates
 
 from threatpilot.core.constants import ANALYSIS_BATCH_THRESHOLD, MIN_ANALYSIS_TOKENS
 
@@ -29,6 +30,8 @@ class ThreatAnalyzer:
         self.provider = provider
         self.prompt_config = prompt_config
         self.builder = PromptBuilder(prompt_config, analysis_mode=provider.config.analysis_mode)
+        
+        # RAG KnowledgeBase has been removed
 
     async def analyze(
         self, 
@@ -37,59 +40,93 @@ class ThreatAnalyzer:
         progress_callback: Optional[Callable] = None,
         result_callback: Optional[Callable[[ThreatRegister], None]] = None,
         prompt_callback: Optional[Callable[[str, str], None]] = None,
-        response_callback: Optional[Callable[[str], None]] = None
+        response_callback: Optional[Callable[[str], None]] = None,
+        compliance_standards: list[str] = None
     ) -> tuple[ThreatRegister, str, TokenUsage]:
-        """Performs a full architectural analysis, segmenting the workload if necessary."""
+        """Performs a tree-traversal architectural analysis, focusing on data flows and trust boundaries."""
         num_nodes = len(dfd.nodes)
-        total_segments = (num_nodes + ANALYSIS_BATCH_THRESHOLD - 1) // ANALYSIS_BATCH_THRESHOLD
-
-        if num_nodes <= ANALYSIS_BATCH_THRESHOLD:
-            reg, raw, usage = await self._analyze_segment(dfd, system_name, prompt_callback=prompt_callback)
-            if response_callback:
-                response_callback(raw)
-            return reg, raw, usage
         
-        if progress_callback:
-            if not await progress_callback(0, total_segments):
-                return ThreatRegister(), "Analysis cancelled by user.", {}
+        from threatpilot.engine.graph import ArchitectureGraph, Node, Edge, AssetMetadata
+        graph = ArchitectureGraph()
+        
+        # Translate UI models to Engine Tri-Graph
+        for c in dfd.nodes:
+            tz = c.trust_boundary if c.trust_boundary else "External"
+            node_id = c.component_id if c.component_id else c.id
+            graph.add_node(Node(id=node_id, name=c.name, type=c.type, trust_zone=tz))
+            
+        for f in dfd.edges:
+            edge_id = f.flow_id if f.flow_id else f.id
+            graph.add_edge(Edge(
+                id=edge_id, source_id=f.source_id, target_id=f.target_id, protocol=f.protocol
+            ), bidirectional=f.is_bidirectional)
+            
+        from threatpilot.core.dfd_converter import generate_deterministic_narrative
+        global_narrative = generate_deterministic_narrative(dfd)
+
+        # Deterministic Object-Centric Traversal: Components then Flows
+        analysis_segments = []
+        
+        for c in dfd.nodes:
+            sub_dfd = DFDModel(nodes=[c], edges=[], assets=dfd.assets, boundaries=dfd.boundaries)
+            analysis_segments.append((sub_dfd, f"Component: {c.name}"))
+            
+        for f in dfd.edges:
+            source = next((n for n in dfd.nodes if n.id == f.source_id or n.component_id == f.source_id), None)
+            target = next((n for n in dfd.nodes if n.id == f.target_id or n.component_id == f.target_id), None)
+            
+            sub_nodes = []
+            if source: sub_nodes.append(source)
+            if target: sub_nodes.append(target)
+            
+            if f.is_bidirectional:
+                sub_dfd_req = DFDModel(nodes=sub_nodes, edges=[f], assets=dfd.assets, boundaries=dfd.boundaries)
+                analysis_segments.append((sub_dfd_req, f"Flow: {source.name if source else 'Unknown'} -> {target.name if target else 'Unknown'} (Request Path)"))
+                f_rev = f.copy(deep=True)
+                f_rev.id = f.id + "_reverse"
+                f_rev.source_id, f_rev.target_id = f.target_id, f.source_id
+                sub_dfd_resp = DFDModel(nodes=sub_nodes, edges=[f_rev], assets=dfd.assets, boundaries=dfd.boundaries)
+                analysis_segments.append((sub_dfd_resp, f"Flow: {target.name if target else 'Unknown'} -> {source.name if source else 'Unknown'} (Response Path)"))
+            else:
+                sub_dfd = DFDModel(nodes=sub_nodes, edges=[f], assets=dfd.assets, boundaries=dfd.boundaries)
+                analysis_segments.append((sub_dfd, f"Flow: {source.name if source else 'Unknown'} -> {target.name if target else 'Unknown'}"))
+                
+        total_segments = len(analysis_segments)
+        if progress_callback and not await progress_callback(0, total_segments):
+            return ThreatRegister(), "Analysis cancelled by user.", {}
 
         all_threats = ThreatRegister()
         full_raw_text = []
         total_input = total_output = 0
-        last_finish_reason = "UNKNOWN"
 
-        for i in range(0, num_nodes, ANALYSIS_BATCH_THRESHOLD):
-            current_segment = i // ANALYSIS_BATCH_THRESHOLD + 1
-            if progress_callback and current_segment > 1:
-                if not await progress_callback(current_segment - 1, total_segments): break
-
-            batch_nodes = dfd.nodes[i : i + ANALYSIS_BATCH_THRESHOLD]
-            node_ids = {n.id for n in batch_nodes}
-            sub_edges = [e for e in dfd.edges if e.source_id in node_ids or e.target_id in node_ids]
-            sub_nodes = [n for n in dfd.nodes if n.id in (node_ids | {e.source_id for e in sub_edges} | {e.target_id for e in sub_edges})]
+        # Run AI analysis sequentially on each object exactly once
+        for i, (sub_dfd, segment_title) in enumerate(analysis_segments):
+            if progress_callback:
+                import inspect
+                sig = inspect.signature(progress_callback)
+                if 'active_node_ids' in sig.parameters:
+                    node_ids = [n.id for n in sub_dfd.nodes]
+                    edge_ids = [e.id for e in sub_dfd.edges]
+                    if not await progress_callback(i, total_segments, active_node_ids=node_ids, active_edge_ids=edge_ids): break
+                else:
+                    if not await progress_callback(i, total_segments): break
             
-            segment_name = f"{system_name} (Segment {current_segment} of {total_segments})"
+            segment_name = f"Object Context: {segment_title} ({i+1}/{total_segments})"
             reg, raw, usage = await self._analyze_segment(
-                DFDModel(nodes=sub_nodes, edges=sub_edges, assets=dfd.assets, boundaries=dfd.boundaries),
-                segment_name,
-                prompt_callback=prompt_callback
+                sub_dfd, segment_name, prompt_callback=prompt_callback, compliance_standards=compliance_standards, global_narrative=global_narrative
             )
-            if response_callback:
-                response_callback(raw)
+            if response_callback: response_callback(raw)
             
             for t in reg.threats: all_threats.add_threat(t)
             if hasattr(reg, "new_vulnerabilities"): all_threats.new_vulnerabilities.extend(reg.new_vulnerabilities)
             if result_callback: result_callback(reg)
             
-            full_raw_text.append(f"--- Segment {current_segment} ---\n{raw}")
+            full_raw_text.append(f"--- {segment_name} ---\n{raw}")
             total_input += usage.prompt_tokens
             total_output += usage.completion_tokens
-            last_finish_reason = "COMPLETED"
 
         aggregated_usage = TokenUsage(
-            prompt_tokens=total_input,
-            completion_tokens=total_output,
-            total_tokens=total_input + total_output
+            prompt_tokens=total_input, completion_tokens=total_output, total_tokens=total_input + total_output
         )
         return all_threats, "\n\n".join(full_raw_text), aggregated_usage
 
@@ -97,11 +134,24 @@ class ThreatAnalyzer:
         self,
         dfd: DFDModel,
         system_name: str,
-        prompt_callback: Optional[Callable[[str, str], None]] = None
+        prompt_callback: Optional[Callable[[str, str], None]] = None,
+        compliance_standards: list[str] = None,
+        global_narrative: str = ""
     ) -> tuple[ThreatRegister, str, TokenUsage]:
         """Executes a single AI analysis pass for a specific architecture segment."""
+        # Build a dynamic query based on the current DFD segment
+        node_types = set([n.type.lower() for n in dfd.nodes if n.type])
+        node_names = set([n.name.lower() for n in dfd.nodes if n.name])
+        query_parts = list(node_types) + list(node_names)
+        query = " ".join(query_parts)
+        
+        rag_context = ""
+        
+        narrative = global_narrative
+        
         sys_p = self.builder.build_system_prompt()
-        usr_p = self.builder.build_user_prompt(dfd, system_name)
+        candidates = generate_candidates(dfd, self.builder.analysis_mode)
+        usr_p = self.builder.build_user_prompt(dfd, system_name, rag_context, candidates=candidates, narrative=narrative)
         if prompt_callback:
             prompt_callback(sys_p, usr_p)
         orig_max = self.provider.config.max_tokens
@@ -115,9 +165,32 @@ class ThreatAnalyzer:
                 
                 threats = parse_threat_list(raw, components=dfd.nodes, flows=dfd.edges, mode=self.provider.config.analysis_mode)
                 if not threats and dfd.nodes and attempt < 2: continue
+                
+                # Run the V2 Multi-Agent Pipeline to enrich the identified threats sequentially
+                from threatpilot.ai.v2_orchestrator import LLMClient, MitigationAgent, EvidenceAgent, ComplianceAgent
+                llm_client = LLMClient(
+                    provider=self.provider.config.provider_type, 
+                    model=self.provider.config.model_name, 
+                    api_key=self.provider.config.api_key
+                )
+                
+                mitigation_agent = MitigationAgent(llm_client)
+                evidence_agent = EvidenceAgent(llm_client)
+                compliance_agent = ComplianceAgent(llm_client)
+                
+                enriched_threats = []
+                for t in threats:
+                    try:
+                        t = await asyncio.to_thread(mitigation_agent.analyze, t)
+                        t = await asyncio.to_thread(evidence_agent.analyze, t)
+                        t = await asyncio.to_thread(compliance_agent.analyze, t)
+                        enriched_threats.append(t)
+                    except Exception as e:
+                        # Fallback to original threat if agent pipeline fails
+                        enriched_threats.append(t)
 
-                reg = ThreatRegister(threats=threats)
-                reg.new_vulnerabilities = [v for t in threats for v in t.vulnerabilities]
+                reg = ThreatRegister(threats=enriched_threats)
+                reg.new_vulnerabilities = [v for t in enriched_threats for v in t.vulnerabilities]
                 self.provider.config.max_tokens = orig_max
                 return reg, raw, usage
             except Exception as exc:
@@ -185,3 +258,38 @@ class ThreatAnalyzer:
             raw_response, _ = await self.provider.chat_complete(prompt=prompt, system_instructions=system_prompt, response_mime_type="text/plain")
             return str(raw_response or "AI returned empty response.")
         except Exception as exc: return f"Mitigation XAI failed: {exc}"
+
+    async def generate_narrative(self, dfd: DFDModel, system_name: str) -> str:
+        """Generates a plain-text Architecture Narrative story for the entire model."""
+        from threatpilot.core.dfd_converter import generate_deterministic_narrative
+        
+        base_narrative = generate_deterministic_narrative(dfd)
+        
+        prompt = (
+            f"Here is a deterministic list of components and data flows for the system '{system_name}':\n\n"
+            f"{base_narrative}\n\n"
+            "Please rewrite this into a cohesive, highly descriptive narrative story. "
+            "Write it in paragraphs (like 'A user interacts with the application...'). "
+            "Explicitly mention how data traverses through components, when it crosses trust boundaries, "
+            "and what sensitive assets are touched. Do not just list the components; tell the story of the data flow."
+        )
+        
+        system_prompt = (
+            "LANGUAGE DIRECTIVE: You MUST respond exclusively in English. "
+            "You are a technical security architect. Output a professional architectural data-flow narrative. "
+            "Use markdown format. Do not identify threats, just describe the architecture and flow."
+        )
+        
+        try:
+            ai_story, _ = await self.provider.chat_complete(prompt=prompt, system_instructions=system_prompt, response_mime_type="text/plain")
+            if not ai_story:
+                ai_story = "AI narrative generation returned empty."
+        except Exception as exc:
+            ai_story = f"AI narrative generation failed: {exc}"
+            
+        narrative = f"# Architecture Narrative: {system_name}\n\n"
+        narrative += str(ai_story) + "\n\n"
+        narrative += "---\n### Deterministic Flow Summary\n"
+        narrative += base_narrative
+        
+        return narrative

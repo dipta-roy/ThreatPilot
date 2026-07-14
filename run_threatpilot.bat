@@ -32,7 +32,19 @@ if errorlevel 1 (
 )
 echo [+] Dependencies are up to date.
 
-echo [3/3] Launching ThreatPilot...
+echo [3/4] Building Web Designer Interface...
+cd designer
+call npm install --legacy-peer-deps
+call npm run build
+if errorlevel 1 (
+    echo [ERROR] Failed to build the web designer interface. Please ensure Node.js is installed.
+    pause
+    exit /b 1
+)
+cd ..
+echo [+] Web Designer Interface built successfully.
+
+echo [4/4] Launching ThreatPilot...
 echo [!] Starting GUI. The background console will now close.
 start "" "%VENV_DIR%\Scripts\pythonw.exe" main.py
 

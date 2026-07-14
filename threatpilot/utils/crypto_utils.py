@@ -116,6 +116,8 @@ def decrypt_api_key(encrypted_key: str) -> str:
         f = Fernet(_get_or_create_master_key().encode("utf-8"))
         return f.decrypt(encrypted_key.encode("utf-8")).decode("utf-8")
     except InvalidToken:
-        log.warning("Decryption failed: invalid token."); return ""
+        log.warning("Decryption failed: invalid token. Assuming plain-text key provided.")
+        return encrypted_key
     except Exception as exc:
-        log.error("Decryption failed: %s", exc); return ""
+        log.error("Decryption failed: %s", exc)
+        return ""

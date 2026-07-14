@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 import asyncio
+import os
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Optional
 from PySide6.QtCore import Qt, QSize, QTimer, QUrl, QThread, Signal, QRectF, QPointF, QBuffer, QIODevice
 from PySide6.QtGui import QAction, QKeySequence, QFont, QPixmap, QImage, QIcon, QUndoStack, QUndoCommand, QDesktopServices
 from PySide6.QtWidgets import (
@@ -37,17 +39,18 @@ from threatpilot.core.project_manager import (
     load_project,
     save_project,
 )
-from threatpilot.core.domain_models import Component, Flow, TrustBoundary
+from threatpilot.core.domain_models import Component, Flow, TrustBoundary, MitigationRequirement
 from threatpilot.core.dfd_converter import convert_to_dfd, DFDModel, DFDNode, DFDEdge
 from threatpilot.detection.image_loader import import_diagram_file
 from threatpilot.ui.diagram_canvas import DiagramCanvas
 from threatpilot.ui.project_explorer import ProjectExplorer
 from threatpilot.ui.ai_settings_dialog import AISettingsDialog
 from threatpilot.ui.workspace_settings_dialog import WorkspaceSettingsDialog
+from threatpilot.ui.jira_settings_dialog import JiraSettingsDialog
 from threatpilot.ui.prompt_settings_dialog import PromptSettingsDialog
 from threatpilot.ui.properties_panel import PropertiesPanel
 from threatpilot.ui.threat_panel import ThreatPanel
-from threatpilot.ui.architecture_dialog import EntitiesDialog, DataFlowDialog
+from threatpilot.ui.architecture_dialog import DataFlowDialog
 from threatpilot.ui.risk_matrix_dialog import RiskMatrixDialog
 from threatpilot.ui.risk_assessment_panel import RiskAssessmentPanel
 from threatpilot.config.ai_config import AIConfig
@@ -66,8 +69,8 @@ from threatpilot.core.constants import (
     APP_NAME, WINDOW_WIDTH_PERCENT, WINDOW_HEIGHT_PERCENT, 
     MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT
 )
-from threatpilot.ui.workers import AnalysisWorker, AIVisionWorker, ReasoningWorker, MitigationRequirementsWorker
-from threatpilot.ui.dialogs import ReasoningDisplayDialog, PlaceholderPanel
+from threatpilot.ui.workers import AnalysisWorker, AIVisionWorker, ReasoningWorker, MitigationRequirementsWorker, NarrativeWorker
+from threatpilot.ui.dialogs import ReasoningDisplayDialog, PlaceholderPanel, NarrativeDisplayDialog
 from threatpilot.ui.worker_manager import WorkerManager
 from threatpilot.ui.menu_manager import MenuManager
 from threatpilot.utils.paths import get_resource_path, get_app_icon_path, get_recent_project_file, PROJECT_ROOT, CONFIG_FILE
@@ -381,8 +384,11 @@ class MainWindow(QMainWindow):
         self._action_fit_diagram.triggered.connect(self._on_fit_diagram)
         self._action_ai_settings.triggered.connect(self._on_ai_settings)
         self._action_workspace_settings.triggered.connect(self._on_workspace_settings)
+        self._action_jira_settings.triggered.connect(self._on_jira_settings)
         self._action_prompt_config.triggered.connect(self._on_prompt_config)
+        # RAG Feature Removed
         self._action_run_analysis.triggered.connect(self._on_run_analysis)
+        self._action_generate_narrative.triggered.connect(self._on_generate_narrative)
         self._action_export_excel.triggered.connect(self._on_export_excel)
         self._action_export_markdown.triggered.connect(self._on_export_markdown)
         self._action_export_html.triggered.connect(self._on_export_html)
@@ -398,6 +404,57 @@ class MainWindow(QMainWindow):
         self._action_toggle_theme.triggered.connect(self._on_toggle_theme)
         self._action_quickstart.triggered.connect(self._on_quick_start)
         self._action_open_logs.triggered.connect(self._on_open_logs)
+        self._canvas.context_action_triggered.connect(self._on_context_action)
+
+    def _run_analysis_for_nodes(self, node_ids: list[str]) -> None:
+        """Initiates a localized AI threat analysis focused on specific nodes."""
+        if not self._project: return
+        from threatpilot.core.dfd_converter import convert_to_dfd
+        full_dfd = convert_to_dfd(self._project.components, self._project.flows, self._project.boundaries, self._project.assets)
+        
+        # Build targeted DFDModel including only the requested nodes and their edges
+        targeted_nodes = [n for n in full_dfd.nodes if n.id in node_ids]
+        if not targeted_nodes:
+            return
+            
+        targeted_edges = [e for e in full_dfd.edges if e.source_id in node_ids or e.target_id in node_ids]
+        from threatpilot.core.dfd_converter import DFDModel
+        targeted_dfd = DFDModel(nodes=targeted_nodes, edges=targeted_edges, boundaries=full_dfd.boundaries, assets=full_dfd.assets)
+        
+        try:
+            from threatpilot.config.ai_config import AIConfig
+            from threatpilot.ai.factory import create_ai_provider
+            config = AIConfig.load()
+            provider = create_ai_provider(config)
+        except Exception as exc:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "AI Error", f"Could not create AI provider:\n{exc}")
+            return
+
+        self._ai_log_dock.show()
+        self._analysis_new_threats = 0
+        from threatpilot.ui.workers import AnalysisWorker
+        self._worker_mgr.start_analysis(
+            AnalysisWorker, "AI Threat Analysis", "Analyzing localized context...",
+            provider, self._project.prompt_config, targeted_dfd, self._project.project_name, iterations=1
+        )
+
+    def _on_context_action(self, action_name: str, element_id: str) -> None:
+        """Handles context menu actions from the architecture diagram."""
+        if not self._project:
+            return
+            
+        self.log_ai_activity("USER_PROMPT", f"Triggered localized action '{action_name}' on element {element_id}")
+        
+        # Route the request to the AI Engine / Worker with localization
+        if "Threats" in action_name:
+            # We trigger the standard analysis but potentially limited to this element's downstream via the new incremental engine
+            self._run_analysis_for_nodes([element_id])
+        elif "Mitigation" in action_name:
+            self._on_export_ai_mitigations()  # Run the mitigation agent
+        else:
+            QMessageBox.information(self, "Context Action", f"Action '{action_name}' on {element_id} queued for processing.")
+
 
     def _on_new_project(self) -> None:
         """Displays a dialog to create a new threat modeling project."""
@@ -673,8 +730,13 @@ class MainWindow(QMainWindow):
             
             self._autosave_timer.setInterval(config.autosave_interval * 60000)
 
+    def _on_jira_settings(self) -> None:
+        """Opens the Jira configuration dialog."""
+        dialog = JiraSettingsDialog(self)
+        dialog.exec()
+
     def _on_workspace_settings(self) -> None:
-        """Edit the workspace port configuration."""
+        """Opens the workspace settings dialog."""
         config = AIConfig.load()
         dialog = WorkspaceSettingsDialog(config.workspace_port, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -857,17 +919,9 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Incremental update: {len(partial_register.threats)} threats added from segment.")
 
     def _on_request_continuation(self, current, total):
-        """Displays a confirmation dialog to proceed with segmented analysis passes."""
-        if current == 0:
-            # Automatically proceed with the first segment without redundant prompting
-            if self._worker_mgr._worker:
-                self._worker_mgr._worker.continue_analysis(True)
-            return
-
-        title, msg = "Segmented Analysis", f"Segment {current}/{total} complete. Proceed to next?"
-        reply = QMessageBox.question(self, title, msg, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.Yes)
+        """Automatically proceeds with segmented analysis passes without user confirmation."""
         if self._worker_mgr._worker:
-            self._worker_mgr._worker.continue_analysis(reply == QMessageBox.StandardButton.Yes)
+            self._worker_mgr._worker.continue_analysis(True)
 
     def _on_iteration_progress(self, current_iter: int, total_iters: int, current_seg: int, total_segs: int) -> None:
         """Updates progress tracking for multi-pass analysis."""
@@ -990,6 +1044,53 @@ class MainWindow(QMainWindow):
         if self._project and self._project.project_path:
             return str(Path(self._project.project_path) / filename)
         return filename
+
+    def _on_generate_narrative(self) -> None:
+        if not self._project:
+            return
+
+        config = AIConfig.load()
+        if not config.provider or config.provider == "None":
+            QMessageBox.warning(self, "AI Not Configured", "Please configure AI settings before generating a narrative.")
+            self._on_ai_settings()
+            return
+
+        try:
+            provider = create_ai_provider(config)
+        except ValueError as e:
+            QMessageBox.critical(self, "Configuration Error", str(e))
+            return
+
+        dfd = convert_to_dfd(self._project)
+        self.show_progress("Generating architecture narrative...", lambda: self._on_cancel_generation())
+
+        self.worker = NarrativeWorker(
+            provider,
+            self._project.prompt_config,
+            dfd,
+            self._project.project_name
+        )
+        self.worker.completed.connect(self._on_narrative_completed)
+        self.worker.failed.connect(self._on_narrative_failed)
+        self.worker.start()
+
+    def _on_cancel_generation(self) -> None:
+        if hasattr(self, 'worker') and self.worker.isRunning():
+            self.worker.terminate()
+            self.hide_progress()
+
+    def _on_narrative_completed(self, narrative: str) -> None:
+        self.hide_progress()
+        dialog = NarrativeDisplayDialog("Architecture Narrative", narrative, self)
+        dialog.exec()
+
+    def _on_narrative_failed(self, error: str) -> None:
+        self.hide_progress()
+        QMessageBox.critical(
+            self,
+            "Generation Failed",
+            f"An error occurred while generating the narrative:\n{error}",
+        )
 
     def _on_export_excel(self) -> None:
         """Export the current threat register to a Microsoft Excel file."""

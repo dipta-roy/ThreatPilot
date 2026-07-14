@@ -14,6 +14,9 @@ from pydantic import SecretStr
 from threatpilot.core.project_manager import save_project
 from threatpilot.core.domain_models import Component, Flow, TrustBoundary, Asset
 from threatpilot.utils.paths import get_designer_dist_path
+from threatpilot.utils.logger import get_logger
+
+logger = get_logger(__name__)
 from threatpilot.config.ai_config import AIConfig
 from threatpilot.ai.factory import create_ai_provider
 from threatpilot.ai.analyzer import ThreatAnalyzer
@@ -144,6 +147,8 @@ class DesignerHandler(BaseHTTPRequestHandler):
             self.handle_export_checklist_excel()
         elif req_path == "/api/ai/ollama/models":
             self.handle_get_ollama_models()
+        elif req_path == "/api/jira/config":
+            self.handle_get_jira_config()
         else:
             self.handle_serve_static()
 
@@ -171,6 +176,12 @@ class DesignerHandler(BaseHTTPRequestHandler):
             self.handle_save_project_image()
         elif req_path == "/api/ai/reason":
             self.handle_generate_reasoning()
+        elif req_path == "/api/ai/narrative":
+            self.handle_generate_narrative()
+        elif req_path == "/api/jira/config":
+            self.handle_save_jira_config()
+        elif req_path == "/api/jira/sync":
+            self.handle_sync_jira()
         else:
             self._set_headers(404)
             self.wfile.write(json.dumps({"error": "Not Found"}).encode("utf-8"))
@@ -193,7 +204,8 @@ class DesignerHandler(BaseHTTPRequestHandler):
             "custom_component_types": project.custom_component_types,
             "threats": [t.model_dump() for t in project.threat_register.threats],
             "vulnerabilities": [v.model_dump() for v in project.vulnerability_register.vulnerabilities],
-            "mitigation_requirements": [req.model_dump() for req in getattr(project, "mitigation_requirements", [])]
+            "mitigation_requirements": [req.model_dump() for req in getattr(project, "mitigation_requirements", [])],
+            "compliance_standards": getattr(project, "compliance_standards", [])
         }
         self._set_headers(200)
         self.wfile.write(json.dumps(arch_data, indent=2).encode("utf-8"))
@@ -292,6 +304,8 @@ class DesignerHandler(BaseHTTPRequestHandler):
             if "mitigation_requirements" in data:
                 from threatpilot.core.domain_models import MitigationRequirement
                 project.mitigation_requirements = [MitigationRequirement.model_validate(req) for req in data["mitigation_requirements"]]
+            if "compliance_standards" in data:
+                project.compliance_standards = data.get("compliance_standards", [])
 
             # Persist back to project directory
             save_project(project)
@@ -390,10 +404,14 @@ class DesignerHandler(BaseHTTPRequestHandler):
         try:
             config = AIConfig.load()
             endpoint = (config.endpoint_url or "http://localhost:11434").rstrip("/")
-            import urllib.request
-            req = urllib.request.Request(f"{endpoint}/api/tags", method="GET")
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
+            import httpx
+            if not endpoint.startswith(('http://', 'https://')):
+                raise ValueError("Invalid endpoint URL scheme. Must be http or https.")
+            
+            with httpx.Client(timeout=5.0) as client:
+                resp = client.get(f"{endpoint}/api/tags")
+                resp.raise_for_status()
+                data = resp.json()
                 models = [m.get("name", "") for m in data.get("models", []) if m.get("name")]
             self._set_headers(200)
             self.wfile.write(json.dumps({"models": models}).encode("utf-8"))
@@ -431,6 +449,13 @@ class DesignerHandler(BaseHTTPRequestHandler):
                 mw._project.boundaries,
                 mw._project.assets
             )
+
+            node_ids = data.get("node_ids", [])
+            if node_ids:
+                from threatpilot.core.dfd_converter import DFDModel
+                targeted_nodes = [n for n in dfd.nodes if n.id in node_ids or n.component_id in node_ids]
+                targeted_edges = [e for e in dfd.edges if e.source_id in node_ids or e.target_id in node_ids]
+                dfd = DFDModel(nodes=targeted_nodes, edges=targeted_edges, boundaries=dfd.boundaries, assets=dfd.assets)
 
             # Reset state
             self.server.web_analysis_state.update({
@@ -572,6 +597,44 @@ class DesignerHandler(BaseHTTPRequestHandler):
 
             self._set_headers(200)
             self.wfile.write(json.dumps({"status": "success", "reasoning": reasoning}).encode("utf-8"))
+        except Exception as e:
+            self._set_headers(500)
+            self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+
+    def handle_generate_narrative(self) -> None:
+        mw = self.server.main_window
+        if not mw or not mw._project:
+            self._set_headers(404)
+            self.wfile.write(json.dumps({"error": "No project loaded"}).encode("utf-8"))
+            return
+
+        content_length = int(self.headers.get("Content-Length", 0))
+        post_data = self.rfile.read(content_length)
+        try:
+            data = json.loads(post_data.decode("utf-8"))
+            project = mw._project
+
+            config = AIConfig.load()
+            provider = create_ai_provider(config)
+            analyzer = ThreatAnalyzer(provider, project.prompt_config)
+
+            # Build a DFDModel from the request data
+            nodes = [Component.model_validate(c) for c in data.get("components", [])]
+            edges = [Flow.model_validate(f) for f in data.get("flows", [])]
+            boundaries = [TrustBoundary.model_validate(b) for b in data.get("boundaries", [])]
+            assets = [Asset.model_validate(a) for a in data.get("assets", [])]
+            
+            dfd_model = convert_to_dfd(nodes, edges, boundaries, assets)
+
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                narrative = loop.run_until_complete(analyzer.generate_narrative(dfd_model, project.project_name))
+            finally:
+                loop.close()
+
+            self._set_headers(200)
+            self.wfile.write(json.dumps({"status": "success", "narrative": narrative}).encode("utf-8"))
         except Exception as e:
             self._set_headers(500)
             self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
@@ -739,11 +802,20 @@ class DesignerHandler(BaseHTTPRequestHandler):
         if not clean_path or clean_path == "":
             clean_path = "index.html"
 
-        target_file = dist_dir / clean_path
+        # Resolve paths to prevent Path Traversal attacks
+        dist_dir_resolved = dist_dir.resolve()
+        target_file = (dist_dir_resolved / clean_path).resolve()
+        
+        try:
+            target_file.relative_to(dist_dir_resolved)
+        except ValueError:
+            self._set_headers(403)
+            self.wfile.write(b"403 Forbidden")
+            return
 
         # Fallback to SPA routing for HTML requests (so client side router works)
         if not target_file.exists() or target_file.is_dir():
-            target_file = dist_dir / "index.html"
+            target_file = dist_dir_resolved / "index.html"
 
         if not target_file.exists():
             # If still not found, return simple UI fallback
@@ -784,22 +856,56 @@ def run_web_analysis(server: DesignerServer, project: Any, provider: Any, prompt
         for iteration in range(1, iterations + 1):
             analyzer = ThreatAnalyzer(provider, prompt_config)
             
-            async def progress_cb_auto(current: int, total: int, _iter: int = iteration) -> bool:
+            async def progress_cb_auto(current: int, total: int, _iter: int = iteration, active_node_ids: list = None, active_edge_ids: list = None) -> bool:
                 server.web_analysis_state.update({
                     "current_iteration": _iter,
                     "current_segment": current,
-                    "total_segments": total
+                    "total_segments": total,
+                    "analyzing_node_ids": active_node_ids or [],
+                    "analyzing_edge_ids": active_edge_ids or []
                 })
                 return True
                 
+            log_file_path = os.path.join(os.path.dirname(project.project_path), "ai_log.md")
+            
+            def log_prompt(sys_p: str, usr_p: str):
+                try:
+                    with open(log_file_path, "a", encoding="utf-8") as f:
+                        f.write(f"\n\n## AI PROMPT (Iteration {iteration})\n\n### System Prompt:\n```\n{sys_p}\n```\n\n### User Prompt:\n```\n{usr_p}\n```\n")
+                except: pass
+            
+            def log_response(response_text: str):
+                try:
+                    with open(log_file_path, "a", encoding="utf-8") as f:
+                        f.write(f"\n\n## AI RESPONSE (Iteration {iteration})\n\n```\n{response_text}\n```\n")
+                except: pass
+                
+            def live_result_cb(partial_register):
+                nonlocal new_threats_count
+                added_any = False
+                for t in partial_register.threats:
+                    if project.threat_register.add_threat(t):
+                        new_threats_count += 1
+                        added_any = True
+                if hasattr(partial_register, "new_vulnerabilities"):
+                    for v in partial_register.new_vulnerabilities:
+                        project.vulnerability_register.add_vulnerability(v)
+                        added_any = True
+                if added_any:
+                    save_project(project)
+                    server.web_analysis_state.update({"new_threats": new_threats_count})
+                    if hasattr(server, "on_save_callback") and server.on_save_callback:
+                        server.on_save_callback()
+                        
             register, raw_resp, usage = loop.run_until_complete(
                 analyzer.analyze(
                     dfd,
                     system_name,
                     progress_callback=progress_cb_auto,
-                    result_callback=None,
-                    prompt_callback=None,
-                    response_callback=None
+                    result_callback=live_result_cb,
+                    prompt_callback=log_prompt,
+                    response_callback=log_response,
+                    compliance_standards=getattr(project, "compliance_standards", [])
                 )
             )
             
@@ -809,32 +915,6 @@ def run_web_analysis(server: DesignerServer, project: Any, provider: Any, prompt
                     "error": "Analysis cancelled"
                 })
                 return
-                
-            if all_register is None:
-                all_register = register
-            else:
-                for t in register.threats:
-                    all_register.add_threat(t)
-                if hasattr(register, "new_vulnerabilities"):
-                    if not hasattr(all_register, "new_vulnerabilities"):
-                        all_register.new_vulnerabilities = []
-                    all_register.new_vulnerabilities.extend(register.new_vulnerabilities)
-
-        # Merge results into the main project
-        if all_register:
-            for t in all_register.threats:
-                if project.threat_register.add_threat(t):
-                    new_threats_count += 1
-            if hasattr(all_register, "new_vulnerabilities"):
-                for v in all_register.new_vulnerabilities:
-                    project.vulnerability_register.add_vulnerability(v)
-            
-            # Save the project
-            save_project(project)
-            
-            # Trigger reload in main window GUI
-            if hasattr(server, "on_save_callback") and server.on_save_callback:
-                server.on_save_callback()
                 
         server.web_analysis_state.update({
             "status": "completed",
@@ -1043,13 +1123,140 @@ def run_web_mitigations_review(server: DesignerServer, project: Any, provider: A
                 "status": "completed",
                 "progress": "Mitigation AI Review complete!"
             })
+        except Exception as e:
+            server.web_mitigations_state.update({
+                "status": "failed",
+                "error": str(e)
+            })
         finally:
             loop.close()
-    except Exception as e:
-        server.web_mitigations_state.update({
-            "status": "failed",
-            "error": str(e)
-        })
+    except Exception as outer_exc:
+        server.web_mitigations_state.update({"status": "failed", "error": str(outer_exc)})
+
+    def handle_get_jira_config(self) -> None:
+        """Returns the current Jira configuration."""
+        from threatpilot.config.jira_config import JiraConfig
+        try:
+            config = JiraConfig.load()
+            data = {
+                "jira_url": config.jira_url,
+                "jira_email": config.jira_email,
+                "jira_project_key": config.jira_project_key,
+                "jira_issue_type": config.jira_issue_type,
+                "has_token": bool(config.api_token)
+            }
+            self._set_headers(200)
+            self.wfile.write(json.dumps(data).encode("utf-8"))
+        except Exception as e:
+            logger.exception("Failed to load Jira config")
+            self._set_headers(500)
+            self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+
+    def handle_save_jira_config(self) -> None:
+        """Saves Jira configuration and tests connection."""
+        from threatpilot.config.jira_config import JiraConfig
+        from threatpilot.core.jira_service import JiraService
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            post_data = self.rfile.read(content_length)
+            data = json.loads(post_data.decode("utf-8"))
+
+            config = JiraConfig.load()
+            if "jira_url" in data: config.jira_url = data["jira_url"]
+            if "jira_email" in data: config.jira_email = data["jira_email"]
+            if "jira_project_key" in data: config.jira_project_key = data["jira_project_key"]
+            if "jira_issue_type" in data: config.jira_issue_type = data["jira_issue_type"]
+            
+            # Only update token if provided and not the placeholder flag
+            if "jira_api_token" in data and data["jira_api_token"] and data["jira_api_token"] != "*****":
+                config.api_token = data["jira_api_token"]
+                
+            service = JiraService(config)
+            success, message = service.verify_connection()
+            if not success:
+                self._set_headers(400)
+                self.wfile.write(json.dumps({"error": f"Connection failed: {message}"}).encode("utf-8"))
+                return
+                
+            config.save()
+            self._set_headers(200)
+            self.wfile.write(json.dumps({"status": "success", "message": "Jira settings saved successfully"}).encode("utf-8"))
+        except Exception as e:
+            logger.exception("Failed to save Jira config")
+            self._set_headers(500)
+            self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+
+    def handle_sync_jira(self) -> None:
+        """Syncs mitigations to Jira."""
+        from threatpilot.config.jira_config import JiraConfig
+        from threatpilot.core.jira_service import JiraService
+        
+        mw = self.server.main_window
+        if not mw or not mw._project:
+            self._set_headers(404)
+            self.wfile.write(json.dumps({"error": "No project loaded"}).encode("utf-8"))
+            return
+            
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            post_data = self.rfile.read(content_length)
+            data = json.loads(post_data.decode("utf-8")) if post_data else {}
+            
+            target_req_id = data.get("req_id")
+            
+            config = JiraConfig.load()
+            service = JiraService(config)
+            
+            # Verify once
+            success, message = service.verify_connection()
+            if not success:
+                self._set_headers(400)
+                self.wfile.write(json.dumps({"error": f"Jira Connection failed: {message}"}).encode("utf-8"))
+                return
+                
+            reqs = getattr(mw._project, "mitigation_requirements", [])
+            synced_count = 0
+            results = []
+            
+            for req in reqs:
+                if target_req_id and req.req_id != target_req_id:
+                    continue
+                if getattr(req, "jira_issue_key", ""):
+                    continue
+                    
+                ok, result = service.create_issue(req)
+                if ok:
+                    req.jira_issue_key = result
+                    req.jira_issue_url = f"{config.jira_url.rstrip('/')}/browse/{result}"
+                    synced_count += 1
+                    results.append({
+                        "req_id": req.req_id,
+                        "jira_issue_key": req.jira_issue_key,
+                        "jira_issue_url": req.jira_issue_url
+                    })
+                else:
+                    self._set_headers(500)
+                    self.wfile.write(json.dumps({"error": f"Failed to sync {req.req_id}: {result}"}).encode("utf-8"))
+                    return
+            
+            # If we synced anything, trigger project save
+            if synced_count > 0:
+                from threatpilot.core.project_manager import save_project
+                save_project(mw._project)
+                if hasattr(self.server, "on_save_callback") and self.server.on_save_callback:
+                    self.server.on_save_callback()
+                mw.designer_saved_signal.emit()
+                
+            self._set_headers(200)
+            self.wfile.write(json.dumps({
+                "status": "success",
+                "synced_count": synced_count,
+                "results": results
+            }).encode("utf-8"))
+        except Exception as e:
+            logger.exception("Failed to sync to Jira")
+            self._set_headers(500)
+            self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
 
 
 class DesignerServer(HTTPServer):

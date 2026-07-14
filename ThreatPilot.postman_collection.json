@@ -385,5 +385,62 @@
         }
       ]
     }
+    },
+    {
+      "name": "6. CI/CD API (FastAPI)",
+      "item": [
+        {
+          "name": "Run Analysis (FastAPI)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nodes\": [],\n  \"edges\": [],\n  \"entry_nodes\": [],\n  \"initial_contexts\": {}\n}"
+            },
+            "url": {
+              "raw": "http://127.0.0.1:8000/analyze",
+              "host": ["127.0.0.1"],
+              "port": "8000",
+              "path": ["analyze"]
+            },
+            "description": "Trigger a full threat modeling run from a JSON architecture definition."
+          }
+        },
+        {
+          "name": "Get All Threats (FastAPI)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://127.0.0.1:8000/threats",
+              "host": ["127.0.0.1"],
+              "port": "8000",
+              "path": ["threats"]
+            },
+            "description": "Retrieve all active threats from the database."
+          }
+        },
+        {
+          "name": "Get Specific Threat (FastAPI)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://127.0.0.1:8000/threats/TP-A4F29B",
+              "host": ["127.0.0.1"],
+              "port": "8000",
+              "path": ["threats", "TP-A4F29B"]
+            },
+            "description": "Retrieve a specific threat by its stable ID."
+          }
+        }
+      ]
+    }
   ]
 }

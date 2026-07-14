@@ -156,9 +156,19 @@ def parse_threat_list(raw_response: str, components: List[Any] = [], flows: List
     obj = extract_json(raw_response); candidates = []
     if isinstance(obj, list): candidates = obj
     elif isinstance(obj, dict):
-        for k in ("threats", "analysis", "results", "findings", "items"):
-            if k in obj and isinstance(obj[k], list): candidates = obj[k]; break
-        else: candidates = [obj]
+        found_lists = False
+        for k, v in obj.items():
+            if isinstance(v, list):
+                for item in v:
+                    if isinstance(item, dict):
+                        if "category" not in item: item["category"] = k
+                        candidates.append(item)
+                found_lists = True
+            elif k in ("threats", "analysis", "results", "findings", "items") and isinstance(v, list):
+                candidates.extend(v)
+                found_lists = True
+        if not found_lists:
+            candidates = [obj]
     
     valid_threats = []
     for item in candidates:
@@ -177,6 +187,15 @@ def parse_threat_list(raw_response: str, components: List[Any] = [], flows: List
 
         item["category"] = map_category(str(item.get("category", "Information Disclosure")), mode=mode)
         item["impact"] = _normalize_impact(item.get("impact", "Medium"))
+        
+        conf = str(item.get("confidence", "High")).capitalize()
+        item["confidence"] = conf if conf in ["High", "Medium", "Low"] else "High"
+        
+        ft = str(item.get("finding_type", "Assumption")).capitalize()
+        if "Evidence" in ft:
+            item["finding_type"] = "Evidence-based"
+        else:
+            item["finding_type"] = "Assumption"
 
         # Programmatic safeguard for descriptive titles
         title = str(item.get("title", "")).strip()
@@ -220,7 +239,30 @@ def parse_threat_list(raw_response: str, components: List[Any] = [], flows: List
                 el, ass = resolve_element_names(haystack, components, flows)
                 if el: item["affected_element_type"], item["affected_asset_type"] = el, ass
 
-        try: valid_threats.append(Threat.model_validate(item))
+        try: 
+            threat = Threat.model_validate(item)
+            
+            # Item 16: Data Classification Severity Escalation
+            sensitive_tags = {"phi", "pii", "credentials"}
+            has_sensitive_data = False
+            ac = str(item.get("affected_components", "")).lower()
+            
+            for f in flows:
+                if f.name and f.name.lower() in ac or f.flow_id and f.flow_id.lower() in ac:
+                    if any(t.lower() in sensitive_tags for t in getattr(f, "data_flow_types", [])):
+                        has_sensitive_data = True
+                        break
+            
+            if has_sensitive_data:
+                # Escalate severity
+                if threat.impact == "Low": threat.impact = "Medium"
+                elif threat.impact == "Medium": threat.impact = "High"
+                elif threat.impact == "High": threat.impact = "Critical"
+                
+                if threat.cvss_score < 7.0:
+                    threat.cvss_score = max(7.5, threat.cvss_score + 2.0)
+                    
+            valid_threats.append(threat)
         except Exception: continue
     return valid_threats
 

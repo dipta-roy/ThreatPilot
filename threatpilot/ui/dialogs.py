@@ -73,3 +73,39 @@ class PlaceholderPanel(QWidget):
         label.setFont(font)
         label.setObjectName("placeholder_label")
         layout.addWidget(label)
+
+
+class NarrativeDisplayDialog(QDialog):
+    """A dedicated dialog for displaying the architecture narrative story.
+    
+    Provides a wider, scrollable view with markdown support.
+    """
+    def __init__(self, title: str, narrative: str, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(850, 700)
+        self.setMinimumWidth(700)
+        
+        layout = QVBoxLayout(self)
+        
+        self.text_area = QTextEdit()
+        self.text_area.setReadOnly(True)
+        self.text_area.setMarkdown(narrative)
+        self.text_area.setStyleSheet("QTextEdit { padding: 15px; background: palette(base); }")
+        layout.addWidget(self.text_area)
+        
+        self.buttons = QHBoxLayout()
+        self.btn_copy = QPushButton("Copy to Clipboard")
+        self.btn_copy.clicked.connect(self._on_copy)
+        self.btn_close = QPushButton("Close")
+        self.btn_close.clicked.connect(self.accept)
+        
+        self.buttons.addStretch()
+        self.buttons.addWidget(self.btn_copy)
+        self.buttons.addWidget(self.btn_close)
+        layout.addLayout(self.buttons)
+
+    def _on_copy(self):
+        from PySide6.QtGui import QGuiApplication
+        clipboard = QGuiApplication.clipboard()
+        clipboard.setText(self.text_area.toPlainText())

@@ -66,12 +66,18 @@ class MenuManager:
         self._mw._action_run_analysis.setShortcut(QKeySequence("Ctrl+R"))
         menu.addAction(self._mw._action_run_analysis)
         
+        self._mw._action_generate_narrative = QAction("Generate Architecture &Narrative...", self._mw)
+        menu.addAction(self._mw._action_generate_narrative)
+        
         menu.addSeparator()
         self._mw._action_ai_settings = QAction("&AI Settings...", self._mw)
         menu.addAction(self._mw._action_ai_settings)
         
         self._mw._action_workspace_settings = QAction("&Workspace Settings...", self._mw)
         menu.addAction(self._mw._action_workspace_settings)
+        
+        self._mw._action_jira_settings = QAction("&Jira Settings...", self._mw)
+        menu.addAction(self._mw._action_jira_settings)
         
         self._mw._action_prompt_config = QAction("&Business Context & Policy...", self._mw)
         menu.addAction(self._mw._action_prompt_config)
