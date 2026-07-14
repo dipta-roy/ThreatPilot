@@ -7,24 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
-
-### Removed
-- **RAG Knowledge Base**: Completely removed the ChromaDB and sentence-transformers based Knowledge Base feature to reduce application overhead, package size, and build complexity.
-
-## [3.0.0] - 2026-07-14
-
+## [3.0.0] - 2026-07-15
 This major release completely overhauls the AI threat generation engine to eliminate hallucinations, enforce strict traceability, and align with true attacker-centric threat modeling.
 
 ### Added
 - **Multi-Agent System Pipeline**: Replaced the monolithic LLM architecture with a modular assembly line (Traversal, Threat, Mitigation, Evidence, Compliance, and Reporting agents) to keep prompts hyper-focused and reduce hallucinations.
 - **Context Propagation & Tri-Graph Architecture**: The engine now actively mutates a stateful `ThreatContext` object as it traverses the data flow graph, evaluating threats based on cumulative attack neighborhood contexts instead of isolated components.
 - **AttackMemory Event Log**: Introduced chronological event logging that remembers previous attacker actions across trust boundaries, enabling sophisticated Kill-Chain reasoning.
-- **Dynamic Knowledge Service**: Integrated a dynamic RAG (Retrieval-Augmented Generation) layer that injects precise compliance policies (e.g., NIST, HIPAA) exactly when relevant to the local traversal context.
-- **ChromaDB Vector Store**: Upgraded the RAG Knowledge Base from simple keyword matching to a persistent ChromaDB vector database.
-- **Offline Semantic Search**: Integrated the `BAAI/bge-base-en-v1.5` sentence transformer for true semantic understanding of architectural elements and compliance policies.
-- **Knowledge Base Manager UI**: Added a new user interface dialog under Intelligence -> Manage Knowledge Base for end-users to add, edit, and delete their own corporate standards.
-- **Offline Embedding Models**: End-users can now load pre-downloaded offline embedding models directly from the Knowledge Base UI, keeping the application entirely air-gapped without relying on HuggingFace downloads.
 - **ThreatSession Reproducibility**: Implemented strict session tracking capturing the exact architectural snapshot, LLM version, and agent prompts used during generation.
 - **Traceability & Auditing**: Threats now include an `evidence_traversal_path` and `source_dfd_node` linking them directly back to the exact architectural components and boundaries in the DFD.
 - **Confidence Scores**: AI-generated findings now feature a `confidence` rating (High, Medium, Low) to help prioritize remediation efforts.
