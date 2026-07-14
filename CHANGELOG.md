@@ -33,7 +33,7 @@ This major release completely overhauls the AI threat generation engine to elimi
 ### Fixed
 - **Concurrency File Locking**: Fixed `[WinError 5] Access is denied` crashes caused by race conditions between background UI metadata polling and atomic `project.json` overwrites by implementing a resilient read-retry loop.
 - **Contextual AI Narrative**: Fixed an issue where isolated, single-node AI analysis segments lost overall system data-flow context by deterministically injecting a global architecture narrative into all prompts.
-- **MSI Installer Dependencies**: Fixed missing module errors in the frozen Windows executable by explicitly forcing `cx_Freeze` to bundle `torch`, `pypdf`, and `docx`.
+- **MSI Installer Dependencies**: Fixed missing module errors in the frozen Windows executable by explicitly forcing `cx_Freeze`.
 - **Canvas UI Polish**: Hid the React Flow attribution watermark in the Web Designer for a cleaner, distraction-free modeling workspace.
 
 ---
