@@ -97,7 +97,6 @@ An alternative interactive workspace built as a React Single Page Application (S
 ### 4. AI Analysis Engine
 A sophisticated pipeline transforming architectural diagrams into structured security insights.
 - **Multi-Agent Orchestrator**: Replaces the monolithic analyzer with a 5-Agent pipeline (ThreatAgent, MitigationAgent, EvidenceAgent, ComplianceAgent, ReportingAgent) for modular and highly accurate inference.
-- **RAG Knowledge Base**: A robust **ChromaDB Vector Database** (`ai/knowledge.py`) that uses the `BAAI/bge-base-en-v1.5` semantic embedding model to intelligently inject relevant corporate policies and historical contexts directly into the AI context window.
 - **Vulnerability & Mitigation XAI**: Implements dynamic prompt construction and async analysis. Reports are parsed and rendered via a dedicated client-side markdown formatter.
 - **Asset Mapping & Deduplication**: Risk Assessment tables dynamically inspect DFD edges (data flows) to map carried assets back to components.
 - **LLM Client (`ai/v2_orchestrator.py`)**: Pluggable interfaces for Google Gemini and Ollama with a custom, ultra-light HTTP architecture.
@@ -128,7 +127,6 @@ A sophisticated pipeline transforming architectural diagrams into structured sec
 
 ### AI Analysis Pipeline
 1. **Algorithmic Traversal**: The `TraversalEngine` analyzes the `ArchitectureGraph` to deterministically calculate baseline risk before AI is ever invoked.
-2. **Knowledge Retrieval**: The `RAGService` queries the local `KnowledgeBase` for relevant security policies matching the components using ChromaDB and PyTorch sentence embeddings. The vector database can also be fully reset via the UI.
 3. **Multi-Agent Execution**: The 5-Agent orchestrator runs sequentially: identifying threats, producing mitigations, establishing evidence trails, and mapping compliance frameworks.
 4. **Normalization**: `JSONValidator` cleans the raw AI text and enforces strict Pydantic schemas.
 5. **Sync**: The `MainWindow` updates the `Threat Register` and refreshes the UI.
