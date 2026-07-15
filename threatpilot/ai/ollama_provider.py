@@ -10,6 +10,7 @@ import json
 from typing import Any, Dict, List, Optional
 import httpx
 from threatpilot.ai.ai_provider_interface import AIProviderInterface, TokenUsage
+from threatpilot.config.ai_config import AIConfig
 from threatpilot.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -91,13 +92,13 @@ class OllamaProvider(AIProviderInterface):
                 
                 is_debug = getattr(self.config, "application_mode", "Production") == "Debug"
                 if is_debug:
-                    logger.info(f"OLLAMA PROMPT:\n{prompt}")
+                    logger.debug(f"OLLAMA PROMPT:\n{prompt}")
                     if system_instructions:
-                        logger.info(f"OLLAMA SYSTEM INSTRUCTIONS:\n{system_instructions}")
-                    logger.info(f"OLLAMA RESPONSE ({len(text)} chars):\n{text}")
+                        logger.debug(f"OLLAMA SYSTEM INSTRUCTIONS:\n{system_instructions}")
+                    logger.debug(f"OLLAMA RESPONSE ({len(text)} chars):\n{text}")
                 else:
-                    logger.info(f"OLLAMA PROMPT: {prompt[:200]}...")
-                    logger.info(f"OLLAMA RESPONSE RECEIVED ({len(text)} chars): {text[:200]}...")
+                    logger.debug(f"OLLAMA PROMPT: {prompt[:200]}...")
+                    logger.debug(f"OLLAMA RESPONSE RECEIVED ({len(text)} chars): {text[:200]}...")
                 
                 usage = TokenUsage(
                     prompt_tokens=data.get("prompt_eval_count", 0),

@@ -17,12 +17,10 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 from threatpilot.utils.paths import THREATPILOT_HOME, KEYSTORE_FILE
+from threatpilot.core.constants import SERVICE_NAME, KEY_ID, SALT
 
 log = logging.getLogger(__name__)
 
-SERVICE_NAME = "ThreatPilot"
-KEY_ID = "MasterEncryptionKey"
-SALT = b"\x89\x1e(\xca\x0c\x84W\x8e\x9c\xd8\x8f\x8e\xe6\xcf\x80\xb0"
 
 # Global cache to avoid repeated file/keyring access
 _MASTER_KEY_CACHE: str | None = None

@@ -91,6 +91,14 @@ pip install -r requirements.txt
 **Using the Windows Installer (No Python Required):**
 For a completely standalone experience on Windows, download the pre-packaged `.msi` installer from the [Releases](https://github.com/dipta-roy/ThreatPilot/releases) page. Install it, and run ThreatPilot directly from your Start Menu without installing Python.
 
+### Troubleshooting Mac/Linux Permissions
+If you encounter permission errors (e.g., Access Denied) while running the scripts on Mac or Linux, **do not use `chmod 777`**. Instead, run these commands in your terminal from the ThreatPilot folder to fix ownership and quarantine flags:
+```bash
+sudo chown -R $USER:staff .
+xattr -dr com.apple.quarantine .
+chmod +x run_threatpilot.sh
+```
+
 ---
 
 ## Security & Privacy
@@ -139,7 +147,7 @@ Download the Code Verification Certificate: [Dipta Roy - Code Verification Certi
 6. Click **Next** → **Finish**.
 
 **Verify Application Authenticity:**
-1. Right-click on the installer (e.g. `ThreatPilot-3.1.0-win64.msi`) and select **Properties**.
+1. Right-click on the installer (e.g. `ThreatPilot-3.2.0-win64.msi`) and select **Properties**.
 2. Go to the **Digital Signatures** tab.
 3. Select "Signed_By_Dipta" from the Embedded Signatures list, then click **Details**.
 4. In the General tab, you should see the message: *"This digital signature is OK."*

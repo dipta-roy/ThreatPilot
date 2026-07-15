@@ -33,7 +33,9 @@ class PromptBuilder:
         methodology = "STRIDE" if self.analysis_mode == "STRIDE" else "LINDDUN"
         
         prompt = (
-            "LANGUAGE DIRECTIVE: You MUST respond exclusively in English. DO NOT use Chinese or any other language for any field.\n\n"
+            "CRITICAL LANGUAGE DIRECTIVE: You MUST respond exclusively in English. "
+            "Under NO circumstances should you output Chinese characters (e.g. 汉字/漢字) or any other language. "
+            "All keys and values in the JSON MUST be in English.\n\n"
             f"You are 'ThreatPilot', an expert {role}. "
             f"Perform a detailed {methodology} analysis on the provided Data Flow Diagram (DFD).\n\n"
             "STRICT QUALITY GUIDELINES:\n"
@@ -100,7 +102,6 @@ class PromptBuilder:
             "- vulnerabilities (list of objects with 'title', 'description', and 'weakness_type' (e.g., Configuration weakness, Design weakness, Authorization weakness)), impact (English), likelihood (1-5), recommended_mitigation (English),\n"
             "- affected_components (EXACT NAME), affected_element_type, affected_asset_type,\n"
             "- cvss_score (float), cvss_vector (CVSS 3.1), mitre_attack_id,\n"
-            "- reasoning (Explain the logic behind the finding, including evidence, attack preconditions, and specific architectural references),\n"
             "- finding_type ('Evidence-based' or 'Assumption'), confidence ('High', 'Medium', 'Low'),\n"
             "- source_dfd_node (string, the name or ID of the origin node or flow),\n"
             "- evidence_traversal_path (list of strings showing the flow of the threat from boundary to target)\n\n"
@@ -110,13 +111,16 @@ class PromptBuilder:
             "CVSS GUIDELINE: Always provide a CVSS 3.1 vector string (e.g., CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H) and its corresponding base score.\n"
             f"SYSTEMATIC ENUMERATION: You MUST systematically populate the array for EVERY {methodology} category. Do not skip any category. "
             "If a data flow is bidirectional, analyze the Request path and Response path separately and note the direction in the title.\n"
-            "REMEMBER: ENGLISH ONLY."
+            "REMEMBER: ALL OUTPUT MUST BE 100% IN ENGLISH. NO EXCEPTIONS. Do not output any Chinese characters."
         )
         return prompt
 
     def build_user_prompt(self, dfd: DFDModel, system_name: str = "Target System", rag_context: str = "", candidates: Optional[list[str]] = None, narrative: str = "") -> str:
         """Serializes the architectural model into a detailed natural language description."""
-        prompt = "LANGUAGE DIRECTIVE: You MUST respond exclusively in English.\n\n"
+        prompt = (
+            "CRITICAL LANGUAGE DIRECTIVE: You MUST respond exclusively in English. "
+            "Do NOT use Chinese or any other language. All JSON values MUST be translated to English.\n\n"
+        )
         
         if candidates:
             prompt += "--- CANDIDATE THREAT CATEGORIES TO EVALUATE ---\n"

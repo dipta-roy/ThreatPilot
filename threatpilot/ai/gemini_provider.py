@@ -10,8 +10,9 @@ import base64
 import httpx
 import json
 import logging
+import os
 import socket
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from threatpilot.ai.ai_provider_interface import AIProviderInterface, TokenUsage
 from threatpilot.config.ai_config import AIConfig
 from threatpilot.utils.logger import get_logger
@@ -53,22 +54,22 @@ class GeminiProvider(AIProviderInterface):
 
         is_debug = getattr(self.config, "application_mode", "Production") == "Debug"
         if is_debug:
-            logger.info(f"GEMINI PROMPT:\n{prompt}")
+            logger.debug(f"GEMINI PROMPT:\n{prompt}")
         else:
-            logger.info(f"GEMINI PROMPT: {prompt[:200]}...")
+            logger.debug(f"GEMINI PROMPT: {prompt[:200]}...")
 
         if system_instructions:
             payload["system_instruction"] = {"parts": [{"text": system_instructions}]}
-            if is_debug:
-                logger.info(f"GEMINI SYSTEM INSTRUCTIONS:\n{system_instructions}")
+            if os.environ.get("DEBUG_AI") == "1":
+                logger.debug(f"GEMINI SYSTEM INSTRUCTIONS:\n{system_instructions}")
             else:
-                logger.info(f"GEMINI SYSTEM INSTRUCTIONS: {system_instructions[:200]}...")
+                logger.debug(f"GEMINI SYSTEM INSTRUCTIONS: {system_instructions[:200]}...")
 
         raw_text, usage = await self._execute_with_fallback(payload)
-        if is_debug:
-            logger.info(f"GEMINI RESPONSE ({len(raw_text)} chars):\n{raw_text}")
+        if os.environ.get("DEBUG_AI") == "1":
+            logger.debug(f"GEMINI RESPONSE ({len(raw_text)} chars):\n{raw_text}")
         else:
-            logger.info(f"GEMINI RESPONSE RECEIVED ({len(raw_text)} chars): {raw_text[:200]}...")
+            logger.debug(f"GEMINI RESPONSE RECEIVED ({len(raw_text)} chars): {raw_text[:200]}...")
         return raw_text, usage
 
     async def vision_complete(

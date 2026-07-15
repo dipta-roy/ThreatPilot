@@ -113,6 +113,16 @@ export const ComponentNode = memo(({ id, data, selected }: NodeProps) => {
 export const BoundaryNode = memo(({ id, data, selected }: NodeProps) => {
   const analyzingNodeIds = useDesignerStore((state) => state.analyzingNodeIds || []);
   const isAnalyzing = analyzingNodeIds.includes(id);
+  const isNested = !!useDesignerStore((state) => state.nodes.find(n => n.id === id)?.parentNode);
+
+  const borderClass = isNested ? 'border-indigo-400/40 dark:border-indigo-500/30' : 'border-red-400/40 dark:border-red-500/30';
+  const bgClass = isNested ? 'bg-indigo-500/[0.03] dark:bg-indigo-950/10 backdrop-blur-sm' : 'bg-red-500/[0.01] dark:bg-red-950/5';
+  
+  const headerTextClass = isNested ? 'text-indigo-800 dark:text-indigo-200/90' : 'text-red-800 dark:text-red-200/90';
+  const headerIconClass = isNested ? 'text-indigo-500/80' : 'text-red-500/80';
+  const borderBottomClass = isNested ? 'border-indigo-500/15' : 'border-red-500/15';
+  const typeTextClass = isNested ? 'text-indigo-600/70 dark:text-indigo-400/60' : 'text-red-600/70 dark:text-red-400/60';
+  const watermarkClass = isNested ? 'text-indigo-500' : 'text-red-500';
 
   return (
     <div className="w-full h-full relative group">
@@ -130,25 +140,25 @@ export const BoundaryNode = memo(({ id, data, selected }: NodeProps) => {
         className={`w-full h-full rounded-xl border-2 border-dashed transition-all duration-200 flex flex-col justify-start p-3 ${
           selected
             ? 'border-primary-500 bg-primary-500/[0.03] dark:bg-primary-950/10 shadow-lg shadow-primary-500/5'
-            : 'border-red-400/40 dark:border-red-500/30 bg-red-500/[0.01] dark:bg-red-950/5'
+            : `${borderClass} ${bgClass}`
         } ${isAnalyzing ? 'ring-4 ring-indigo-500 ring-opacity-75 animate-pulse shadow-indigo-500/50 shadow-xl' : ''}`}
       >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-red-500/15 pb-1.5 mb-2 select-none">
+        <div className={`flex items-center justify-between border-b ${borderBottomClass} pb-1.5 mb-2 select-none`}>
           <div className="flex items-center gap-1.5">
-            <ShieldAlert className="w-4 h-4 text-red-500/80" />
-            <span className="text-xs font-bold text-red-800 dark:text-red-200/90 tracking-wide">
+            <ShieldAlert className={`w-4 h-4 ${headerIconClass}`} />
+            <span className={`text-xs font-bold ${headerTextClass} tracking-wide`}>
               {data.name}
             </span>
           </div>
-          <span className="text-[9px] uppercase font-bold tracking-widest text-red-600/70 dark:text-red-400/60">
+          <span className={`text-[9px] uppercase font-bold tracking-widest ${typeTextClass}`}>
             {data.type || 'Boundary'}
           </span>
         </div>
         
         {/* Background watermark style element */}
         <div className="absolute inset-0 pointer-events-none flex items-center justify-center opacity-[0.02]">
-          <ShieldAlert className="w-32 h-32 text-red-500" />
+          <ShieldAlert className={`w-32 h-32 ${watermarkClass}`} />
         </div>
       </div>
     </div>

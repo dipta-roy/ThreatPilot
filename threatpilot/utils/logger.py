@@ -13,16 +13,11 @@ from pathlib import Path
 from typing import Any
 
 from threatpilot.utils.paths import LOG_DIR, LOG_FILENAME
+from threatpilot.core.constants import SECRET_PATTERNS
 
 _SECRETS_TO_REDACT: list[str] = []
 
-SECRET_PATTERNS = [
-    re.compile(r"API_KEY=[\"']?(?P<secret>[a-zA-Z0-9_\-]{16,})[\"']?", re.IGNORECASE),
-    re.compile(r"Bearer\s+(?P<secret>[a-zA-Z0-9_\-\.]{16,})", re.IGNORECASE),
-    re.compile(r"([?&](?:key|token|auth|secret)=)(?P<secret>[a-zA-Z0-9_\-]{16,})", re.IGNORECASE),
-    re.compile(r"(\"(?:api_key|secret|token|password|key)\":\s*\")(?P<secret>[a-zA-Z0-9_\-\.]{8,})(\")", re.IGNORECASE),
-    re.compile(r"x-goog-api-key\s*:\s*(?P<secret>[a-zA-Z0-9_\-]{16,})", re.IGNORECASE),
-]
+
 
 class RedactingFormatter(logging.Formatter):
     """Intercepts and redacts sensitive patterns from log output."""

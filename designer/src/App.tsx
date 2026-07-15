@@ -9,7 +9,7 @@ import AddThreatModal from './components/AddThreatModal';
 import AddRiskModal from './components/AddRiskModal';
 import AddVulnerabilityModal from './components/AddVulnerabilityModal';
 import AddMitigationModal from './components/AddMitigationModal';
-import { ShieldAlert, Save, RefreshCw, Layers, Sun, Moon, Brain, Settings, X, Info, Download, Search, FileSpreadsheet, FileCode, Edit, Trash2, Sparkles, Shield, Briefcase, Plus } from 'lucide-react';
+import { ShieldAlert, Save, RefreshCw, Layers, Sun, Moon, Brain, Settings, X, Info, Download, Search, FileSpreadsheet, FileCode, Edit, Trash2, Sparkles, Shield, Briefcase, Plus, PanelLeft, PanelRight } from 'lucide-react';
 
 const renderInlineBold = (text: string) => {
   const parts = text.split('**');
@@ -108,6 +108,8 @@ export default function App() {
   const uniqueVulns = Array.from(new Map((vulnerabilities || []).map(v => [v.vulnerability_id, v])).values());
 
   const [currentView, setCurrentView] = React.useState<'canvas' | 'ledger' | 'reports'>('canvas');
+  const [isLeftSidebarOpen, setIsLeftSidebarOpen] = React.useState(true);
+  const [isRightSidebarOpen, setIsRightSidebarOpen] = React.useState(true);
   const [ledgerSearch, setLedgerSearch] = React.useState('');
   const [ledgerTab, setLedgerTab] = React.useState<'threats' | 'vulnerabilities' | 'assessment' | 'mitigations'>('threats');
   const [editingMitId, setEditingMitId] = React.useState<string | null>(null);
@@ -617,12 +619,12 @@ export default function App() {
       try {
         const ts = new Date().getTime();
         const res = await fetch(`/api/project/metadata?t=${ts}`, { cache: 'no-store' });
-        
+
         if (res.status === 401) {
           window.location.reload();
           return;
         }
-        
+
         if (res.ok) {
           errorCount = 0; // reset on success
           const data = await res.json();
@@ -639,7 +641,7 @@ export default function App() {
         // Track network errors (e.g. server stopped)
         errorCount++;
       }
-      
+
       // If we fail 3 times consecutively (9 seconds), forcefully kick out
       if (errorCount >= 3) {
         console.warn('Lost connection to backend or sharing stopped. Reloading to lock workspace.');
@@ -687,7 +689,7 @@ export default function App() {
           </div>
           <div>
             <h1 className="text-sm font-extrabold tracking-wide uppercase font-sans">
-              ThreatPilot Designer
+              ThreatPilot Canvas
             </h1>
             <p className="text-[10px] text-slate-500 dark:text-slate-400 font-mono mt-0.5">
               Project: {projectName}
@@ -696,7 +698,17 @@ export default function App() {
         </div>
 
         {/* View switcher tabs */}
-        <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-border p-1 rounded-lg">
+        <div className="flex items-center gap-2">
+          {currentView === 'canvas' && (
+            <button
+              onClick={() => setIsLeftSidebarOpen(!isLeftSidebarOpen)}
+              className="p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-border"
+              title="Toggle Left Sidebar"
+            >
+              <PanelLeft className="w-4 h-4" />
+            </button>
+          )}
+          <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-border p-1 rounded-lg">
           <button
             onClick={() => setCurrentView('canvas')}
             className={`px-3 py-1.5 text-xs font-semibold rounded-md transition ${currentView === 'canvas' ? 'bg-primary-600 text-white shadow-sm' : 'text-slate-650 dark:text-slate-350 hover:bg-slate-200 dark:hover:bg-slate-800'}`}
@@ -716,9 +728,36 @@ export default function App() {
             Reports & Exports
           </button>
         </div>
+        {currentView === 'canvas' && (
+          <button
+            onClick={() => setIsRightSidebarOpen(!isRightSidebarOpen)}
+            className="p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-border"
+            title="Toggle Right Sidebar"
+          >
+            <PanelRight className="w-4 h-4" />
+          </button>
+        )}
+        </div>
 
         {/* Save & Theme Controls */}
         <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 border-r border-slate-200 dark:border-slate-800 pr-3 mr-1">
+            <button
+              onClick={() => setIsJiraSettingsOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-border text-xs font-semibold rounded-lg shadow-sm transition"
+            >
+              <svg className="w-3.5 h-3.5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"></path></svg>
+              Jira Settings
+            </button>
+            <button
+              onClick={() => handleSyncJira()}
+              disabled={isSyncingAll}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-border text-xs font-semibold rounded-lg shadow-sm transition disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncingAll ? 'animate-spin' : ''}`} />
+              Sync All to Jira
+            </button>
+          </div>
           {saveError && (
             <span className="text-xs text-red-400 font-semibold max-w-[200px] truncate">
               {saveError}
@@ -809,8 +848,8 @@ export default function App() {
         <div className="absolute top-20 left-1/2 transform -translate-x-1/2 z-50 bg-indigo-600 text-white px-5 py-2.5 rounded-full shadow-xl flex items-center gap-3 font-semibold text-xs border border-indigo-500/50 backdrop-blur-sm shadow-indigo-500/20">
           <RefreshCw className="w-4 h-4 animate-spin text-indigo-200" />
           <span className="flex-1 tracking-wide">
-            {analysisState.total_segments > 0 
-              ? `Analyzing Segment ${analysisState.current_segment} of ${analysisState.total_segments}...` 
+            {analysisState.total_segments > 0
+              ? `Analyzing Segment ${analysisState.current_segment} of ${analysisState.total_segments}...`
               : 'Analyzing Threat Model...'}
           </span>
         </div>
@@ -827,7 +866,7 @@ export default function App() {
           {currentView === 'canvas' && (
             <div className="flex-1 flex overflow-hidden">
               {/* Sidebar Left: Palette, Validation, Outputs */}
-              <div className="w-80 border-r border-slate-200 dark:border-border bg-white dark:bg-card flex flex-col overflow-hidden shrink-0">
+              <div className={`transition-all duration-300 border-r border-slate-200 dark:border-border bg-white dark:bg-card flex flex-col overflow-hidden shrink-0 ${isLeftSidebarOpen ? 'w-80 opacity-100' : 'w-0 opacity-0 border-r-0'}`}>
                 {/* Component Palette */}
                 <div className="p-4 border-b border-slate-200 dark:border-border shrink-0">
                   <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-3 flex items-center gap-1.5">
@@ -891,7 +930,7 @@ export default function App() {
               </div>
 
               {/* Sidebar Right: Context Properties */}
-              <PropertiesPanel />
+              <PropertiesPanel isOpen={isRightSidebarOpen} />
             </div>
           )}
 
@@ -943,13 +982,6 @@ export default function App() {
                           <Brain className="w-3.5 h-3.5" />
                           Run Mitigations AI Review
                         </button>
-                        <button
-                          onClick={() => window.open('/api/export/checklist_excel')}
-                          className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-950 dark:hover:bg-slate-800 border border-slate-200 dark:border-border text-slate-700 dark:text-slate-300 text-xs font-semibold rounded-lg shadow-md transition"
-                        >
-                          <Download className="w-3.5 h-3.5" />
-                          Export to Excel
-                        </button>
                       </div>
                     )}
                     {getSelectedCount() > 0 && (
@@ -997,21 +1029,6 @@ export default function App() {
                         >
                           <Plus className="w-3.5 h-3.5" />
                           Add Mitigation
-                        </button>
-                        <button
-                          onClick={() => setIsJiraSettingsOpen(true)}
-                          className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-border text-xs font-semibold rounded-lg shadow-sm transition"
-                        >
-                          <svg className="w-3.5 h-3.5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"></path></svg>
-                          Jira Settings
-                        </button>
-                        <button
-                          onClick={() => handleSyncJira()}
-                          disabled={isSyncingAll}
-                          className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-border text-xs font-semibold rounded-lg shadow-sm transition disabled:opacity-50"
-                        >
-                          <RefreshCw className={`w-3.5 h-3.5 ${isSyncingAll ? 'animate-spin' : ''}`} />
-                          Sync All to Jira
                         </button>
                       </div>
                     )}
@@ -2845,7 +2862,7 @@ export default function App() {
       {isJiraSettingsOpen && (
         <JiraSettingsModal onClose={() => setIsJiraSettingsOpen(false)} />
       )}
-      
+
       {/* Narrative Modal */}
       {isNarrativeModalOpen && (
         <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-50 flex items-center justify-center p-6">
@@ -2857,7 +2874,7 @@ export default function App() {
               </h2>
               <div className="flex items-center gap-2">
                 {narrativeText && (
-                  <button 
+                  <button
                     onClick={() => {
                       navigator.clipboard.writeText(narrativeText);
                       alert('Copied to clipboard');
@@ -2876,7 +2893,7 @@ export default function App() {
                 </button>
               </div>
             </div>
-            
+
             <div className="p-6 overflow-y-auto flex-1 bg-slate-50 dark:bg-slate-950/20">
               {isGeneratingNarrative ? (
                 <div className="flex flex-col items-center justify-center h-48 space-y-4">

@@ -11,10 +11,9 @@ from PySide6.QtCore import Qt, QRectF
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import QGraphicsPixmapItem, QGraphicsScene, QGraphicsView
 from threatpilot.core.diagram_model import Diagram
+from threatpilot.core.constants import MAX_VISION_DIMENSION, MAX_AI_DIMENSION
 
 SUPPORTED_EXTENSIONS: frozenset[str] = frozenset({".png", ".jpg", ".jpeg"})
-MAX_VISION_DIMENSION = 4096  # Maximum dimension for storage and UI display
-MAX_AI_DIMENSION = 1536      # Maximum dimension for AI processing (Ollama/Gemini)
 
 def resize_image_for_ai(image: QImage, max_dim: int = MAX_AI_DIMENSION, force_multiple_of_28: bool = False) -> QImage:
     """Resizes a QImage if it exceeds the maximum allowed dimensions for AI processing."""

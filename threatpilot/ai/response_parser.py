@@ -11,7 +11,7 @@ import re
 from typing import Any, Dict, List, Optional
 from threatpilot.core.domain_models import Component, Flow, TrustBoundary, ElementType, AssetType
 from threatpilot.core.threat_model import Threat, STRIDECategory, Vulnerability
-from threatpilot.core.constants import AI_FIELD_MAPPING, AI_VULN_KEYS
+from threatpilot.core.constants import AI_FIELD_MAPPING, AI_VULN_KEYS, XAI_SECTION_MAP
 from threatpilot.ai.utils import fuzzy_find_component, fuzzy_find_flow, resolve_element_names
 
 def map_element_type(et_str: str) -> ElementType:
@@ -185,7 +185,11 @@ def parse_threat_list(raw_response: str, components: List[Any] = [], flows: List
         rv = []
         for vk in AI_VULN_KEYS:
             if (val := item.get(vk)): rv.extend(val) if isinstance(val, list) else rv.append(val)
-        item["vulnerabilities"] = [Vulnerability.model_validate(v) if isinstance(v, dict) else Vulnerability(description=str(v), mitigation=item.get("mitigation", "")) for v in (rv or [item.get("description", "Potential vulnerability.")])]
+        item["vulnerabilities"] = [
+            Vulnerability.model_validate({**v, "mitigation": v.get("mitigation") or item.get("mitigation", "")}) if isinstance(v, dict) 
+            else Vulnerability(description=str(v), mitigation=item.get("mitigation", "")) 
+            for v in (rv or [item.get("description", "Potential vulnerability.")])
+        ]
         item["vulnerability_ids"] = [v.vulnerability_id for v in item["vulnerabilities"]]
 
         item["category"] = map_category(str(item.get("category", "Information Disclosure")), mode=mode)
@@ -216,14 +220,22 @@ def parse_threat_list(raw_response: str, components: List[Any] = [], flows: List
             else:
                 item[k] = d
 
-        if (cv := item.get("cvss_vector")):
-            try:
-                from threatpilot.risk.cvss_calculator import parse_cvss_vector, calculate_cvss_base_score
-                metrics = parse_cvss_vector(str(cv))
-                # Only recalculate if we actually found some metrics in the vector
-                if any(getattr(metrics, attr) != "None" for attr in ["confidentiality", "integrity", "availability"]):
-                    item["cvss_score"] = calculate_cvss_base_score(metrics)
-            except Exception: pass
+        try:
+            from threatpilot.risk.cvss_calculator import parse_cvss_vector, calculate_cvss_base_score, generate_cvss_vector
+            cv = str(item.get("cvss_vector", "")).strip()
+            if not cv or "CVSS:3" not in cv:
+                cv = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+            
+            metrics = parse_cvss_vector(cv)
+            if all(getattr(metrics, attr) == "None" for attr in ["confidentiality", "integrity", "availability"]):
+                metrics.confidentiality = "High"
+                metrics.integrity = "High"
+                metrics.availability = "High"
+            
+            item["cvss_vector"] = generate_cvss_vector(metrics)
+            item["cvss_score"] = calculate_cvss_base_score(metrics)
+        except Exception: 
+            pass
 
         if not str(item.get("threat_id", "")).strip():
              import uuid; item["threat_id"] = uuid.uuid4().hex
@@ -269,14 +281,7 @@ def parse_threat_list(raw_response: str, components: List[Any] = [], flows: List
         except Exception: continue
     return valid_threats
 
-_XAI_SECTION_MAP = {
-    "attack_path": "### 1. Attack Path",
-    "attack_vector": "### 1. Attack Path", 
-    "privacy_impact_path": "### 1. Privacy Impact Path",
-    "architectural_root_cause": "### 2. Architectural Root Cause", 
-    "risk_rationalization": "### 3. Risk Rationalization", 
-    "framework_alignment": "### 4. Framework Alignment"
-}
+
 
 def convert_reasoning_to_markdown(raw: str, markdown: bool = True) -> str:
     """Transforms raw technical reasoning into a formatted Markdown document."""
@@ -317,7 +322,7 @@ def convert_reasoning_to_markdown(raw: str, markdown: bool = True) -> str:
         return text
     
     res = ""
-    for k, h in _XAI_SECTION_MAP.items():
+    for k, h in XAI_SECTION_MAP.items():
         if k in data:
             v = data[k]
             if not v: continue
@@ -327,7 +332,7 @@ def convert_reasoning_to_markdown(raw: str, markdown: bool = True) -> str:
     
     # Add any fields not in the section map
     for k, v in data.items():
-        if k not in _XAI_SECTION_MAP:
+        if k not in XAI_SECTION_MAP:
             header = k.replace('_', ' ').title()
             res += f"{'### ' if markdown else ''}{header}\n\n{v}\n\n"
     

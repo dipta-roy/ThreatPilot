@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.2.0] - 2026-07-15
+
+This release focuses on UI/UX enhancements and critical fixes to AI parsing logic and performance.
+
+### Added
+- **UI Architecture**: Added collapsible functionality to the sidebars and properties panel in the web interface.
+- **Canvas Navigation**: Significantly increased the zoom-out capabilities of the ThreatPilot Canvas (from 0.1x to 3.0x scale).
+- **Visual Distinction**: Redesigned nested trust boundaries with a light glassy indigo aesthetic for enhanced visibility on the canvas.
+
+### Changed
+- **Branding Update**: Renamed the workspace application title from "ThreatPilot Designer" to "ThreatPilot Canvas".
+- **Jira Integration Repositioning**: Moved Jira configuration settings and the "Sync All to Jira" actions to a dedicated dropdown in the main header panel for improved discoverability, and removed redundant "Export to Excel" controls from the Security Ledger.
+- **Performance Optimization**: Removed the implicit requirement for the AI to generate XAI reasoning during bulk analysis. XAI reasoning is now strictly an on-demand manual trigger, drastically reducing token consumption and accelerating bulk threat generation.
+- **Language Enforcement**: Hardened the system prompt with aggressive English-only directives to prevent hallucinated Chinese translations from models like Qwen.
+
+### Fixed
+- **CVSS Score N/A Bug**: Resolved an issue where AI-generated CVSS base scores displayed as "N/A" by implementing aggressive backend fallbacks and explicitly recalculating the Base Score from the vector metrics before sending data to the UI.
+- **Missing Mitigations Bug**: Fixed a parsing issue where mitigations for AI-generated vulnerabilities incorrectly defaulted to "No Mitigations Configured" by explicitly mapping parent threat-level mitigations to individual vulnerabilities.
+
 ## [3.1.0] - 2026-07-15
 
 This release focuses on significant codebase refactoring, performance optimization, and architectural cleanup.

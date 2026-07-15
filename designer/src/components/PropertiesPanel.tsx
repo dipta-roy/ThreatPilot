@@ -69,7 +69,7 @@ const renderMarkdown = (md: string) => {
   );
 };
 
-export default function PropertiesPanel() {
+export default function PropertiesPanel({ isOpen = true }: { isOpen?: boolean }) {
   const {
     nodes,
     edges,
@@ -98,6 +98,10 @@ export default function PropertiesPanel() {
 
   const [sidebarWidth, setSidebarWidth] = React.useState(350);
   const isResizing = React.useRef(false);
+
+  if (!isOpen) {
+    return <div className="w-0 shrink-0 transition-all duration-300" />;
+  }
 
   const startResize = (e: React.MouseEvent) => {
     e.preventDefault();

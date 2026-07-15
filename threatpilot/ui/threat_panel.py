@@ -24,21 +24,12 @@ from PySide6.QtWidgets import (
 )
 from threatpilot.core.threat_model import STRIDECategory, Threat, ThreatRegister
 from threatpilot.risk.utils import get_risk_label
+from threatpilot.core.constants import STRIDE_CATEGORIES, LINDDUN_CATEGORIES
 
 # ---------------------------------------------------------------------------
 # Category sets
 # ---------------------------------------------------------------------------
-STRIDE_CATEGORIES = {
-    STRIDECategory.SPOOFING, STRIDECategory.TAMPERING,
-    STRIDECategory.REPUDIATION, STRIDECategory.INFORMATION_DISCLOSURE,
-    STRIDECategory.DENIAL_OF_SERVICE, STRIDECategory.ELEVATION_OF_PRIVILEGE,
-}
-LINDDUN_CATEGORIES = {
-    STRIDECategory.LINKABILITY, STRIDECategory.IDENTIFIABILITY,
-    STRIDECategory.NON_REPUDIATION_PRIVACY, STRIDECategory.DETECTABILITY,
-    STRIDECategory.DISCLOSURE_OF_INFORMATION, STRIDECategory.UNAWARENESS,
-    STRIDECategory.NON_COMPLIANCE,
-}
+
 
 
 class ThreatPanel(QWidget):
@@ -372,9 +363,9 @@ class ThreatPanel(QWidget):
         self._cat_filter_combo.clear()
         options = ["All Categories"]
         if self._filter_mode == "STRIDE":
-            options.extend([c.name.title().replace("_", " ") for c in sorted(list(STRIDE_CATEGORIES), key=lambda x: x.name)])
+            options.extend(sorted(list(STRIDE_CATEGORIES)))
         elif self._filter_mode == "LINDDUN":
-            options.extend([c.name.replace("_PRIVACY", "").title().replace("_", " ") for c in sorted(list(LINDDUN_CATEGORIES), key=lambda x: x.name)])
+            options.extend(sorted(list(LINDDUN_CATEGORIES)))
         self._cat_filter_combo.addItems(options)
         self._cat_filter_combo.setCurrentIndex(0)
         self._cat_filter_combo.blockSignals(False)
