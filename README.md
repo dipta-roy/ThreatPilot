@@ -134,7 +134,7 @@ ThreatPilot allows you to host the web-based visual designer locally or share it
 
 ---
 
-## ✅ Trust & Verification
+## Trust & Verification
 
 Download the Code Verification Certificate: [Dipta Roy - Code Verification Certificate](https://github.com/dipta-roy/dipta-roy.github.io/blob/main/downloads/Code%20Verifying%20Certificates.zip).
 
