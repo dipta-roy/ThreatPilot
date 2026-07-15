@@ -99,31 +99,48 @@ class ThreatAnalyzer:
         full_raw_text = []
         total_input = total_output = 0
 
-        # Run AI analysis sequentially on each object exactly once
-        for i, (sub_dfd, segment_title) in enumerate(analysis_segments):
+        # Concurrently run AI analysis on each object with a concurrency limit
+        semaphore = asyncio.Semaphore(3)  # Max concurrent requests
+        completed_tasks = 0
+
+        async def analyze_task(idx, sub_dfd_seg, seg_title):
+            async with semaphore:
+                seg_name = f"Object Context: {seg_title} ({idx+1}/{total_segments})"
+                res_reg, res_raw, res_usage = await self._analyze_segment(
+                    sub_dfd_seg, seg_name, prompt_callback=prompt_callback, compliance_standards=compliance_standards, global_narrative=global_narrative
+                )
+                return idx, sub_dfd_seg, seg_name, res_reg, res_raw, res_usage
+
+        tasks = [
+            asyncio.create_task(analyze_task(idx, sub_dfd_seg, seg_title)) 
+            for idx, (sub_dfd_seg, seg_title) in enumerate(analysis_segments)
+        ]
+
+        for completed in asyncio.as_completed(tasks):
+            idx, sub_dfd_seg, seg_name, res_reg, res_raw, res_usage = await completed
+            completed_tasks += 1
+            
             if progress_callback:
                 import inspect
                 sig = inspect.signature(progress_callback)
                 if 'active_node_ids' in sig.parameters:
-                    node_ids = [n.id for n in sub_dfd.nodes]
-                    edge_ids = [e.id for e in sub_dfd.edges]
-                    if not await progress_callback(i, total_segments, active_node_ids=node_ids, active_edge_ids=edge_ids): break
+                    node_ids = [n.id for n in sub_dfd_seg.nodes]
+                    edge_ids = [e.id for e in sub_dfd_seg.edges]
+                    if not await progress_callback(completed_tasks, total_segments, active_node_ids=node_ids, active_edge_ids=edge_ids):
+                        break
                 else:
-                    if not await progress_callback(i, total_segments): break
+                    if not await progress_callback(completed_tasks, total_segments):
+                        break
             
-            segment_name = f"Object Context: {segment_title} ({i+1}/{total_segments})"
-            reg, raw, usage = await self._analyze_segment(
-                sub_dfd, segment_name, prompt_callback=prompt_callback, compliance_standards=compliance_standards, global_narrative=global_narrative
-            )
-            if response_callback: response_callback(raw)
+            if response_callback: response_callback(res_raw)
             
-            for t in reg.threats: all_threats.add_threat(t)
-            if hasattr(reg, "new_vulnerabilities"): all_threats.new_vulnerabilities.extend(reg.new_vulnerabilities)
-            if result_callback: result_callback(reg)
+            for t in res_reg.threats: all_threats.add_threat(t)
+            if hasattr(res_reg, "new_vulnerabilities"): all_threats.new_vulnerabilities.extend(res_reg.new_vulnerabilities)
+            if result_callback: result_callback(res_reg)
             
-            full_raw_text.append(f"--- {segment_name} ---\n{raw}")
-            total_input += usage.prompt_tokens
-            total_output += usage.completion_tokens
+            full_raw_text.append(f"--- {seg_name} ---\n{res_raw}")
+            total_input += res_usage.prompt_tokens
+            total_output += res_usage.completion_tokens
 
         aggregated_usage = TokenUsage(
             prompt_tokens=total_input, completion_tokens=total_output, total_tokens=total_input + total_output
@@ -166,31 +183,8 @@ class ThreatAnalyzer:
                 threats = parse_threat_list(raw, components=dfd.nodes, flows=dfd.edges, mode=self.provider.config.analysis_mode)
                 if not threats and dfd.nodes and attempt < 2: continue
                 
-                # Run the V2 Multi-Agent Pipeline to enrich the identified threats sequentially
-                from threatpilot.ai.v2_orchestrator import LLMClient, MitigationAgent, EvidenceAgent, ComplianceAgent
-                llm_client = LLMClient(
-                    provider=self.provider.config.provider_type, 
-                    model=self.provider.config.model_name, 
-                    api_key=self.provider.config.api_key
-                )
-                
-                mitigation_agent = MitigationAgent(llm_client)
-                evidence_agent = EvidenceAgent(llm_client)
-                compliance_agent = ComplianceAgent(llm_client)
-                
-                enriched_threats = []
-                for t in threats:
-                    try:
-                        t = await asyncio.to_thread(mitigation_agent.analyze, t)
-                        t = await asyncio.to_thread(evidence_agent.analyze, t)
-                        t = await asyncio.to_thread(compliance_agent.analyze, t)
-                        enriched_threats.append(t)
-                    except Exception as e:
-                        # Fallback to original threat if agent pipeline fails
-                        enriched_threats.append(t)
-
-                reg = ThreatRegister(threats=enriched_threats)
-                reg.new_vulnerabilities = [v for t in enriched_threats for v in t.vulnerabilities]
+                reg = ThreatRegister(threats=threats)
+                reg.new_vulnerabilities = [v for t in threats for v in t.vulnerabilities]
                 self.provider.config.max_tokens = orig_max
                 return reg, raw, usage
             except Exception as exc:

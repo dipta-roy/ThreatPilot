@@ -414,7 +414,8 @@ class ThreatPanel(QWidget):
         if QMessageBox.question(self, "Delete Threats", f"Delete {len(to_del)} selected threat(s)?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
             for t in to_del:
                 self._register.remove_threat(t.threat_id)
-                self.threat_removed.emit(t.threat_id)
+            if to_del:
+                self.threat_removed.emit(to_del[-1].threat_id)
             self.refresh()
             self._select_all.setCheckState(Qt.CheckState.Unchecked)
 

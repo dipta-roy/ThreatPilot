@@ -7,7 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [3.0.0] - 2026-07-15
+## [3.1.0] - 2026-07-15
+
+This release focuses on significant codebase refactoring, performance optimization, and architectural cleanup.
+
+### Added
+- **UI Architecture Decomposition**: Extracted `AutosaveController` and `DockManager` out of the monolithic `main_window.py` into dedicated controller components, utilizing proxy-wrapper methods to preserve PySide6 signal integrity.
+
+### Changed
+- **Performance Optimization**: Decoupled UI rendering from heavy disk I/O by shifting `project_manager.py` save operations to background threads.
+- **Lazy UI Refresh**: Implemented lazy-refresh patterns (`QTimer.singleShot(0, ...)`) for UI components to prevent UI stutter and freezes during background autosaves.
+- **Code Organization**: Extensively refactored `main_window.py` by consolidating over 20 scattered inline imports to the top of the file, significantly improving readability, stability, and PEP 8 compliance.
+
+### Removed
+- **Legacy AI Architecture**: Removed obsolete V2 agent-based orchestration pipelines and legacy models from `analyzer.py`.
+
+## [3.0.0] - 2026-07-14
+
 This major release completely overhauls the AI threat generation engine to eliminate hallucinations, enforce strict traceability, and align with true attacker-centric threat modeling.
 
 ### Added
@@ -19,7 +35,6 @@ This major release completely overhauls the AI threat generation engine to elimi
 - **Confidence Scores**: AI-generated findings now feature a `confidence` rating (High, Medium, Low) to help prioritize remediation efforts.
 - **Vulnerability Categorization**: Introduced `weakness_type` to Vulnerabilities for structured categorization (e.g., Design weakness, Configuration weakness).
 - **Assumption vs. Evidence Separation**: The engine now explicitly differentiates between findings supported by direct evidence in the architecture diagram and speculative assumptions (e.g., missing controls).
-- **Knowledge Base Reset**: Added a "Clean All" feature and confirmation dialog in the Knowledge Base Manager UI to allow users to completely clear all vector records.
 - **PyTorch Support**: Added PyTorch dependency for advanced local AI processing capabilities.
 - **Type Hinting**: Resolved `NameError` for `Asset` class in DFD conversion logic (`dfd_converter.py`).
 
@@ -33,7 +48,7 @@ This major release completely overhauls the AI threat generation engine to elimi
 ### Fixed
 - **Concurrency File Locking**: Fixed `[WinError 5] Access is denied` crashes caused by race conditions between background UI metadata polling and atomic `project.json` overwrites by implementing a resilient read-retry loop.
 - **Contextual AI Narrative**: Fixed an issue where isolated, single-node AI analysis segments lost overall system data-flow context by deterministically injecting a global architecture narrative into all prompts.
-- **MSI Installer Dependencies**: Fixed missing module errors in the frozen Windows executable by explicitly forcing `cx_Freeze`.
+- **MSI Installer Dependencies**: Fixed missing module errors in the frozen Windows executable by explicitly forcing `cx_Freeze` to bundle `torch`, `pypdf`, and `docx`.
 - **Canvas UI Polish**: Hid the React Flow attribution watermark in the Web Designer for a cleaner, distraction-free modeling workspace.
 
 ---

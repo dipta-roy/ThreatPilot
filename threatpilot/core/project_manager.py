@@ -134,15 +134,23 @@ def _atomic_write_json(file_path: Path, data: dict[str, Any]) -> None:
             os.fsync(fh.fileno())
         # Atomic replacement with retry for Windows locking (WinError 5)
         import time
-        for attempt in range(10):
-            try:
-                os.replace(temp_path, file_path)
-                break
-            except PermissionError:
-                if attempt < 9:
-                    time.sleep(0.05)
-                else:
-                    raise
+        import threading
+        
+        def _replace_in_background():
+            for attempt in range(10):
+                try:
+                    os.replace(temp_path, file_path)
+                    break
+                except PermissionError:
+                    if attempt < 9:
+                        time.sleep(0.05)
+                    else:
+                        if os.path.exists(temp_path):
+                            os.remove(temp_path)
+                        raise
+        
+        # Run the replacement loop in a background thread to prevent UI stutter
+        threading.Thread(target=_replace_in_background, daemon=True).start()
     except Exception:
         if os.path.exists(temp_path):
             os.remove(temp_path)

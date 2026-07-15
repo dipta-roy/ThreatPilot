@@ -109,18 +109,22 @@ def convert_to_dfd(
 
         dfd.nodes.append(DFDNode(id=comp.component_id, name=comp.name, type=comp.type, element_type=comp.element_type.value, trust_boundary=tb_name, parent_trust_boundary=parent_tb_name, description=comp.description, component_id=comp.component_id))
 
+    # Pre-calculate component centers to optimize Euclidean distance math (O(F * C))
+    comp_centers = {}
+    for c in components:
+        comp_centers[c.component_id] = (c.x + c.width/2, c.y + c.height/2)
+
     for flow in flows:
         if flow.is_out_of_scope: continue
 
         src_id, dst_id = flow.source_id, flow.target_id
         if not src_id or not dst_id:
             best_src = best_dst = None; min_src_dist = min_dst_dist = 150.0  
-            for c in components:
-                cx, cy = c.x + c.width/2, c.y + c.height/2
+            for c_id, (cx, cy) in comp_centers.items():
                 if not src_id:
-                    if (d := ((cx - flow.start_x)**2 + (cy - flow.start_y)**2)**0.5) < min_src_dist: min_src_dist, best_src = d, c.component_id
+                    if (d := ((cx - flow.start_x)**2 + (cy - flow.start_y)**2)**0.5) < min_src_dist: min_src_dist, best_src = d, c_id
                 if not dst_id:
-                    if (d := ((cx - flow.end_x)**2 + (cy - flow.end_y)**2)**0.5) < min_dst_dist: min_dst_dist, best_dst = d, c.component_id
+                    if (d := ((cx - flow.end_x)**2 + (cy - flow.end_y)**2)**0.5) < min_dst_dist: min_dst_dist, best_dst = d, c_id
             if not src_id: src_id = best_src or ""
             if not dst_id: dst_id = best_dst or ""
 

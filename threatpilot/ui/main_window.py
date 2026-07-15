@@ -3,43 +3,19 @@
 from __future__ import annotations
 import asyncio
 import os
+import re
+import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
-from PySide6.QtCore import Qt, QSize, QTimer, QUrl, QThread, Signal, QRectF, QPointF, QBuffer, QIODevice
+from PySide6.QtCore import Qt, QSize, QTimer, QUrl, QThread, Signal, QRectF, QPointF, QBuffer, QIODevice, QFileSystemWatcher
 from PySide6.QtGui import QAction, QKeySequence, QFont, QPixmap, QImage, QIcon, QUndoStack, QUndoCommand, QDesktopServices
-from PySide6.QtWidgets import (
-    QApplication,
-    QDockWidget,
-    QFileDialog,
-    QInputDialog,
-    QLabel,
-    QMainWindow,
-    QMenuBar,
-    QMessageBox,
-    QStatusBar,
-    QProgressBar,
-    QToolBar,
-    QHBoxLayout,
-    QPushButton,
-    QVBoxLayout,
-    QWidget,
-    QProgressDialog,
-    QWizard,
-    QWizardPage,
-    QDialog,
-    QTabWidget,
-    QTextEdit,
-)
+from PySide6.QtWidgets import (QApplication, QDockWidget, QFileDialog, QInputDialog, QLabel, QMainWindow, QMenuBar, QMessageBox, QStatusBar, QProgressBar, QToolBar, QHBoxLayout,
+    QPushButton, QVBoxLayout, QWidget, QProgressDialog, QWizard, QWizardPage, QDialog, QTabWidget, QTextEdit)
 from threatpilot.core.diagram_model import Diagram
-from threatpilot.core.threat_model import Threat
-from threatpilot.core.project_manager import (
-    Project,
-    create_project,
-    load_project,
-    save_project,
-)
-from threatpilot.core.domain_models import Component, Flow, TrustBoundary, MitigationRequirement
+from threatpilot.core.threat_model import Threat, STRIDECategory, Vulnerability
+from threatpilot.core.project_manager import (Project, create_project, load_project, save_project)
+from threatpilot.core.domain_models import Component, Flow, TrustBoundary, MitigationRequirement, Asset, AssetType
 from threatpilot.core.dfd_converter import convert_to_dfd, DFDModel, DFDNode, DFDEdge
 from threatpilot.detection.image_loader import import_diagram_file
 from threatpilot.ui.diagram_canvas import DiagramCanvas
@@ -50,7 +26,8 @@ from threatpilot.ui.jira_settings_dialog import JiraSettingsDialog
 from threatpilot.ui.prompt_settings_dialog import PromptSettingsDialog
 from threatpilot.ui.properties_panel import PropertiesPanel
 from threatpilot.ui.threat_panel import ThreatPanel
-from threatpilot.ui.architecture_dialog import DataFlowDialog
+from threatpilot.ui.architecture_dialog import DataFlowDialog, ElementsDialog, AssetsDialog, TrustBoundaryDialog
+from threatpilot.ui.vulnerability_panel import VulnerabilityPanel
 from threatpilot.ui.risk_matrix_dialog import RiskMatrixDialog
 from threatpilot.ui.risk_assessment_panel import RiskAssessmentPanel
 from threatpilot.config.ai_config import AIConfig
@@ -61,20 +38,24 @@ from threatpilot.export.markdown_exporter import export_to_markdown
 from threatpilot.export.html_exporter import export_to_html
 from threatpilot.export.mitigation_exporter import export_mitigation_checklist, export_mitigation_checklist_html
 from threatpilot.export.diagram_exporter import export_scene_to_image
+from threatpilot.export.mitigation_review_exporter import generate_mitigation_requirements_excel
 from threatpilot.ai.factory import create_ai_provider
 from threatpilot.ai.prompt_builder import PromptBuilder
 from threatpilot.ai.analyzer import ThreatAnalyzer
-from threatpilot.ai.response_parser import extract_json
-from threatpilot.core.constants import (
-    APP_NAME, WINDOW_WIDTH_PERCENT, WINDOW_HEIGHT_PERCENT, 
-    MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT
-)
-from threatpilot.ui.workers import AnalysisWorker, AIVisionWorker, ReasoningWorker, MitigationRequirementsWorker, NarrativeWorker
+from threatpilot.ai.response_parser import extract_json, convert_mitigation_reasoning_to_markdown, convert_reasoning_to_markdown, map_element_type
+from threatpilot.core.designer_server import DesignerServerThread
+from threatpilot.ui.designer_sharing_dialog import DesignerSharingDialog
+from threatpilot.core.constants import (APP_NAME, WINDOW_WIDTH_PERCENT, WINDOW_HEIGHT_PERCENT, MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+from threatpilot.ui.workers import AnalysisWorker, AIVisionWorker, ReasoningWorker, MitigationRequirementsWorker, NarrativeWorker, MitigationReasoningWorker
 from threatpilot.ui.dialogs import ReasoningDisplayDialog, PlaceholderPanel, NarrativeDisplayDialog
 from threatpilot.ui.worker_manager import WorkerManager
 from threatpilot.ui.menu_manager import MenuManager
+from threatpilot.ui.controllers.autosave_controller import AutosaveController
+from threatpilot.ui.controllers.dock_manager import DockManager
 from threatpilot.utils.paths import get_resource_path, get_app_icon_path, get_recent_project_file, PROJECT_ROOT, CONFIG_FILE
 from threatpilot.utils.logger import setup_logging, LOG_DIR, sanitize_text, get_logger
+from threatpilot.ui.mitigation_requirements_panel import MitigationRequirementsPanel
+
 logger = get_logger(__name__)
 
 class MainWindow(QMainWindow):
@@ -90,33 +71,26 @@ class MainWindow(QMainWindow):
         self._redo_action = self._undo_stack.createRedoAction(self, "&Redo")
         self._undo_action.setShortcut(QKeySequence.StandardKey.Undo)
         self._redo_action.setShortcut(QKeySequence.StandardKey.Redo)
-
         self._worker_mgr = WorkerManager(self)
         self._menu_mgr = MenuManager(self)
+        self.dock_manager = DockManager(self)
         self._designer_server_thread = None
         self.designer_saved_signal.connect(self._on_designer_saved_gui)
-
         self._setup_window()
         self._setup_central_widget()
         self._setup_docks()
         self._menu_mgr.setup_menus()
         self._menu_mgr.setup_toolbar()
         self._setup_status_bar()
+        self.autosave_controller = AutosaveController(self, lambda: self._project, self.statusBar())
         self._connect_actions()
-        
         self._undo_stack.indexChanged.connect(self._on_undo_redo_happened)
         self._is_dark_theme = False
         self._load_stylesheet()
         self._load_recent_project()
-        
-        self._save_debounce_timer = QTimer(self)
-        self._save_debounce_timer.setSingleShot(True)
-        self._save_debounce_timer.setInterval(2000) # Save 2 seconds after the last modification
-        self._save_debounce_timer.timeout.connect(lambda: self._on_save_project(silent=True))
-
         config = AIConfig.load()
         self._autosave_timer = QTimer(self)
-        self._autosave_timer.timeout.connect(self._on_autosave)
+        self._autosave_timer.timeout.connect(self.autosave_controller.on_autosave)
         self._autosave_timer.start(config.autosave_interval * 60000)
         self._analysis_new_threats = 0
 
@@ -175,16 +149,11 @@ class MainWindow(QMainWindow):
         icon_path = get_app_icon_path()
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
-        
-        # Calculate initial size based on screen percentages
         screen = QApplication.primaryScreen().availableGeometry()
         w = int(screen.width() * WINDOW_WIDTH_PERCENT)
         h = int(screen.height() * WINDOW_HEIGHT_PERCENT)
         self.resize(w, h)
-        
-        # Center the window on screen
         self.move(screen.center() - self.rect().center())
-        
         self.setMinimumSize(QSize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT))
         self.setDockNestingEnabled(True)
         self.setDockOptions(
@@ -208,20 +177,15 @@ class MainWindow(QMainWindow):
         self._central_tabs = QTabWidget()
         self._central_tabs.setObjectName("central_tabs_container")
         self._central_tabs.setDocumentMode(True)
-        
         self._canvas = DiagramCanvas(self)
         self._canvas.setMinimumWidth(200)
         self._central_tabs.addTab(self._canvas, "System Architecture")
-        
         self._stride_threat_ledger = ThreatPanel(self, filter_mode="STRIDE")
         self._stride_threat_ledger.setMinimumWidth(200)
         self._central_tabs.addTab(self._stride_threat_ledger, "STRIDE Security")
-        
         self._linddun_threat_ledger = ThreatPanel(self, filter_mode="LINDDUN")
         self._linddun_threat_ledger.setMinimumWidth(200)
         self._central_tabs.addTab(self._linddun_threat_ledger, "LINDDUN Privacy")
-
-        from threatpilot.ui.vulnerability_panel import VulnerabilityPanel
         self._vulnerability_panel = VulnerabilityPanel(self)
         self._vulnerability_panel.setMinimumWidth(200)
         self._vulnerability_panel.vulnerability_changed.connect(self._on_save_project)
@@ -229,19 +193,15 @@ class MainWindow(QMainWindow):
             lambda: self._properties_panel.set_item(self._properties_panel._current_item)
         )
         self._central_tabs.addTab(self._vulnerability_panel, "Vulnerabilities")
-
         self._risk_assessment_panel = RiskAssessmentPanel(self)
         self._risk_assessment_panel.setMinimumWidth(200)
         self._risk_assessment_panel.threat_edited.connect(self._on_save_project)
         self._central_tabs.addTab(self._risk_assessment_panel, "Risk Assessment")
-        
-        from threatpilot.ui.mitigation_requirements_panel import MitigationRequirementsPanel
         self._mitigation_requirements_panel = MitigationRequirementsPanel(self)
         self._mitigation_requirements_panel.setMinimumWidth(200)
         self._mitigation_requirements_panel.analyze_requested.connect(self._on_analyze_mitigations_clicked)
         self._mitigation_requirements_panel.reasoning_requested.connect(self._on_mitigation_reasoning_requested)
         self._central_tabs.addTab(self._mitigation_requirements_panel, "Mitigation Requirements")
-        
         self._central_tabs.currentChanged.connect(self._on_tab_changed)
         self.setCentralWidget(self._central_tabs)
 
@@ -252,27 +212,22 @@ class MainWindow(QMainWindow):
             lambda obj: self._on_project_modified(obj, refresh_properties=False)
         )
         self._properties_panel.reasoning_requested.connect(self._on_reasoning_requested)
-        
         def _sync_labels(obj):
             if isinstance(obj, Threat):
                 QTimer.singleShot(0, self._stride_threat_ledger.refresh)
                 QTimer.singleShot(0, self._linddun_threat_ledger.refresh)
-        
         self._properties_panel.property_changed.connect(_sync_labels)
         self._properties_panel_dock = self._create_dock("Attributes", self._properties_panel, Qt.DockWidgetArea.RightDockWidgetArea, min_width=150)
-
         self._project_explorer = ProjectExplorer(self)
         self._project_explorer.diagram_activated.connect(self._on_diagram_activated)
         self._project_explorer.diagram_deleted.connect(self._on_diagram_deleted)
         self._project_explorer.tool_activated.connect(self._on_explorer_tool_activated)
         self._project_explorer.project_modified.connect(self._on_save_project)
         self._project_explorer_dock = self._create_dock("Project Map", self._project_explorer, Qt.DockWidgetArea.LeftDockWidgetArea, min_width=180)
-
         self._ai_log_view = QTextEdit()
         self._ai_log_view.setReadOnly(True)
         self._ai_log_view.setObjectName("ai_log_view")
         self._ai_log_view.setPlaceholderText("AI transaction logs will appear here during detection or analysis...")
-
         self._stride_threat_ledger.threat_selected.connect(self._properties_panel.set_item)
         self._linddun_threat_ledger.threat_selected.connect(self._properties_panel.set_item)
         self._stride_threat_ledger.reasoning_requested.connect(self._on_reasoning_requested)
@@ -285,78 +240,47 @@ class MainWindow(QMainWindow):
         self._linddun_threat_ledger.threat_added.connect(self._on_save_project)
         self._linddun_threat_ledger.threat_removed.connect(self._on_save_project)
         self._risk_assessment_panel.threat_edited.connect(self._on_save_project)
-        
         self._ai_log_dock = self._create_dock("AI Activity Log", self._ai_log_view, Qt.DockWidgetArea.BottomDockWidgetArea, min_width=400)
         self._ai_log_dock.setVisible(False)
-        
-        # Initialize visibility based on current tab
         self._on_tab_changed(self._central_tabs.currentIndex())
 
     def _on_tab_changed(self, index: int) -> None:
         """Conditionally shows or hides the Attributes dock based on the active workspace tab."""
-        if not hasattr(self, "_properties_panel_dock"):
-            return
-            
-        # Only show Attributes for STRIDE (1) and LINDDUN (2) tabs
-        show_attributes = (index in (1, 2))
-        self._properties_panel_dock.setVisible(show_attributes)
-        
-        # Refresh the newly activated tab dynamically if it supports it
-        current_widget = self._central_tabs.widget(index)
-        if hasattr(current_widget, "refresh"):
-            QTimer.singleShot(0, current_widget.refresh)
+        self.dock_manager.on_tab_changed(index, getattr(self, '_central_tabs', None), getattr(self, '_properties_panel_dock', None))
 
     def _create_dock(self, title: str, widget: QWidget, area: Qt.DockWidgetArea, *, min_width: int = 0, min_height: int = 0) -> QDockWidget:
         """Helper to create and dock a QDockWidget with specified parameters."""
-        dock = QDockWidget(title, self)
-        dock.setObjectName(f"dock_{title.lower().replace(' ', '_')}")
-        dock.setWidget(widget)
-        dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea | Qt.DockWidgetArea.BottomDockWidgetArea)
-        dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetClosable | QDockWidget.DockWidgetFeature.DockWidgetMovable | QDockWidget.DockWidgetFeature.DockWidgetFloatable)
-        if min_width: widget.setMinimumWidth(min_width)
-        if min_height: widget.setMinimumHeight(min_height)
-        self.addDockWidget(area, dock)
-        return dock
-
-
+        return self.dock_manager.create_dock(title, widget, area, min_width=min_width, min_height=min_height)
 
     def _setup_status_bar(self) -> None:
         """Initializes the application status bar."""
         status_bar = QStatusBar(self)
         self.setStatusBar(status_bar)
         status_bar.showMessage("Ready")
-
-        # Create progress container for the status bar
         self._status_progress_widget = QWidget()
         progress_layout = QHBoxLayout(self._status_progress_widget)
         progress_layout.setContentsMargins(5, 0, 5, 0)
         progress_layout.setSpacing(8)
-        
         self._status_progress_label = QLabel("")
         self._status_progress_label.setObjectName("status_progress_label")
-        
         self._status_progress_bar = QProgressBar()
         self._status_progress_bar.setObjectName("status_progress_bar")
-        self._status_progress_bar.setRange(0, 0) # Indeterminate progress
+        self._status_progress_bar.setRange(0, 0)
         self._status_progress_bar.setMaximumWidth(180)
         self._status_progress_bar.setFixedHeight(14)
         self._status_progress_bar.setTextVisible(False)
-        
         self._status_cancel_btn = QPushButton("Cancel")
         self._status_cancel_btn.setObjectName("status_cancel_btn")
         self._status_cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        
         progress_layout.addWidget(self._status_progress_label)
         progress_layout.addWidget(self._status_progress_bar)
         progress_layout.addWidget(self._status_cancel_btn)
-        
         status_bar.addPermanentWidget(self._status_progress_widget)
         self._status_progress_widget.hide()
 
     def show_progress(self, label_text: str, cancel_slot) -> None:
         """Shows the progress widget in the footer status bar."""
         self._status_progress_label.setText(label_text)
-        import warnings
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=RuntimeWarning)
             try:
@@ -386,7 +310,6 @@ class MainWindow(QMainWindow):
         self._action_workspace_settings.triggered.connect(self._on_workspace_settings)
         self._action_jira_settings.triggered.connect(self._on_jira_settings)
         self._action_prompt_config.triggered.connect(self._on_prompt_config)
-        # RAG Feature Removed
         self._action_run_analysis.triggered.connect(self._on_run_analysis)
         self._action_generate_narrative.triggered.connect(self._on_generate_narrative)
         self._action_export_excel.triggered.connect(self._on_export_excel)
@@ -409,31 +332,29 @@ class MainWindow(QMainWindow):
     def _run_analysis_for_nodes(self, node_ids: list[str]) -> None:
         """Initiates a localized AI threat analysis focused on specific nodes."""
         if not self._project: return
-        from threatpilot.core.dfd_converter import convert_to_dfd
+
         full_dfd = convert_to_dfd(self._project.components, self._project.flows, self._project.boundaries, self._project.assets)
-        
-        # Build targeted DFDModel including only the requested nodes and their edges
         targeted_nodes = [n for n in full_dfd.nodes if n.id in node_ids]
         if not targeted_nodes:
             return
             
         targeted_edges = [e for e in full_dfd.edges if e.source_id in node_ids or e.target_id in node_ids]
-        from threatpilot.core.dfd_converter import DFDModel
+
         targeted_dfd = DFDModel(nodes=targeted_nodes, edges=targeted_edges, boundaries=full_dfd.boundaries, assets=full_dfd.assets)
         
         try:
-            from threatpilot.config.ai_config import AIConfig
-            from threatpilot.ai.factory import create_ai_provider
+
+
             config = AIConfig.load()
             provider = create_ai_provider(config)
         except Exception as exc:
-            from PySide6.QtWidgets import QMessageBox
+
             QMessageBox.critical(self, "AI Error", f"Could not create AI provider:\n{exc}")
             return
 
         self._ai_log_dock.show()
         self._analysis_new_threats = 0
-        from threatpilot.ui.workers import AnalysisWorker
+
         self._worker_mgr.start_analysis(
             AnalysisWorker, "AI Threat Analysis", "Analyzing localized context...",
             provider, self._project.prompt_config, targeted_dfd, self._project.project_name, iterations=1
@@ -445,13 +366,10 @@ class MainWindow(QMainWindow):
             return
             
         self.log_ai_activity("USER_PROMPT", f"Triggered localized action '{action_name}' on element {element_id}")
-        
-        # Route the request to the AI Engine / Worker with localization
         if "Threats" in action_name:
-            # We trigger the standard analysis but potentially limited to this element's downstream via the new incremental engine
             self._run_analysis_for_nodes([element_id])
         elif "Mitigation" in action_name:
-            self._on_export_ai_mitigations()  # Run the mitigation agent
+            self._on_export_ai_mitigations()
         else:
             QMessageBox.information(self, "Context Action", f"Action '{action_name}' on {element_id} queued for processing.")
 
@@ -481,7 +399,6 @@ class MainWindow(QMainWindow):
             self._canvas.clear_diagram()
             self._update_title()
             self.statusBar().showMessage(f"Project '{self._project.project_name}' created.")
-            
             recent_file = get_recent_project_file()
             recent_file.write_text(str(self._project.project_path))
                 
@@ -506,7 +423,6 @@ class MainWindow(QMainWindow):
                     w.terminate()
                     w.wait()
 
-        # Clear filesystem watcher
         if hasattr(self, "_file_watcher") and self._file_watcher:
             files = self._file_watcher.files()
             if files:
@@ -524,8 +440,7 @@ class MainWindow(QMainWindow):
         self._canvas.clear_diagram()
         self._undo_stack.clear()
         self._ai_log_view.clear()
-        self._update_title()
-        
+        self._update_title()     
         recent_file = get_recent_project_file()
         if recent_file.exists():
             try: recent_file.unlink()
@@ -538,10 +453,8 @@ class MainWindow(QMainWindow):
         directory = QFileDialog.getExistingDirectory(self, "Open ThreatPilot project")
         if not directory:
             return
-
         if self._project:
             self._on_close_project()
-
         try:
             self._open_project_from_path(directory)
         except (FileNotFoundError, ValueError) as exc:
@@ -566,13 +479,12 @@ class MainWindow(QMainWindow):
 
         self.statusBar().showMessage(f"Project '{self._project.project_name}' loaded.")
         
-        # Setup filesystem watcher
         if hasattr(self, "_file_watcher") and self._file_watcher:
             files = self._file_watcher.files()
             if files:
                 self._file_watcher.removePaths(files)
         else:
-            from PySide6.QtCore import QFileSystemWatcher
+
             self._file_watcher = QFileSystemWatcher(self)
             self._file_watcher.fileChanged.connect(self._on_architecture_file_changed)
             
@@ -585,49 +497,22 @@ class MainWindow(QMainWindow):
 
     def _on_project_modified(self, obj: Any = None, refresh_properties: bool = True) -> None:
         """Refreshes UI components and triggers a debounced save when data changes."""
-        # Only refresh the currently active tab to prevent UI freezes
         current_widget = self._central_tabs.currentWidget()
         if hasattr(current_widget, "refresh"):
             QTimer.singleShot(0, current_widget.refresh)
 
         QTimer.singleShot(0, self._refresh_canvas_overlays)
         self._update_title()
-        
-        # Trigger debounced auto-save
         if self._project:
-            self._save_debounce_timer.start()
+            self.autosave_controller.trigger_debounced_save()
 
     def _on_save_project(self, silent: bool = False) -> None:
         """Save the current project to disk."""
-        if self._project is None:
-            if not silent:
-                QMessageBox.information(self, "Save", "No project is open.")
-            return
-
-        try:
-            save_project(self._project)
-            if hasattr(self, "_risk_assessment_panel"):
-                self._risk_assessment_panel.refresh()
-            if hasattr(self, "_threat_panel"):
-                self._threat_panel.refresh()
-            if hasattr(self, "_stride_threat_ledger"):
-                self._stride_threat_ledger.refresh()
-            if hasattr(self, "_linddun_threat_ledger"):
-                self._linddun_threat_ledger.refresh()
-            if hasattr(self, "_mitigation_requirements_panel"):
-                self._mitigation_requirements_panel.refresh()
-            
-            if not silent:
-                self.statusBar().showMessage("Project saved.")
-        except (ValueError, OSError) as exc:
-            if not silent:
-                QMessageBox.critical(self, "Error", f"Could not save project:\n{exc}")
+        self.autosave_controller.on_save_project(silent=silent, central_tabs=getattr(self, '_central_tabs', None))
 
     def _on_autosave(self) -> None:
         """Automatically save the active project periodically without UX intrusion."""
-        if self._project is not None:
-            self._on_save_project(silent=True)
-            self.statusBar().showMessage("Project auto-saved.", 2000)
+        self.autosave_controller.on_autosave()
 
     def _on_diagram_deleted(self, diagram: Diagram) -> None:
         """Handle the physical removal of a diagram and cleanup the canvas."""
@@ -659,7 +544,6 @@ class MainWindow(QMainWindow):
             self._project.diagrams.append(diagram)
             self._project_explorer.refresh()
             self._current_diagram = diagram
-            
             image_path = Path(self._project.project_path) / diagram.file_path
             image = QImage(str(image_path))
             pixmap = QPixmap.fromImage(image)
@@ -684,7 +568,6 @@ class MainWindow(QMainWindow):
         self._central_tabs.setCurrentIndex(0)
         self._current_diagram = diagram
         image_path = Path(self._project.project_path) / diagram.file_path
-        
         image = QImage(str(image_path))
         pixmap = QPixmap.fromImage(image)
         if not pixmap.isNull():
@@ -700,12 +583,9 @@ class MainWindow(QMainWindow):
             config = dialog.get_config()
             try:
                 config.save()
-                
-                # Verify the save actually persisted the API key
                 reloaded = AIConfig.load()
                 saved_key = reloaded.gemini_api_key.get_secret_value()
                 entered_key = config.gemini_api_key.get_secret_value()
-                
                 if entered_key and not saved_key:
                     QMessageBox.warning(
                         self,
@@ -781,7 +661,7 @@ class MainWindow(QMainWindow):
             self._stride_threat_ledger.clear_filter()
             self._linddun_threat_ledger.clear_filter()
         elif action == "action_view_risk_matrix" and self._project:
-            from threatpilot.ui.risk_matrix_dialog import RiskMatrixDialog
+
             component_names = [c.name for c in self._project.components]
             component_names.extend([f.name for f in self._project.flows])
             dialog = RiskMatrixDialog(self._project.threat_register.threats, component_names=component_names, is_dark=self._is_dark_theme, project=self._project, parent=self)
@@ -821,7 +701,6 @@ class MainWindow(QMainWindow):
         iter_label = f" ({iterations} iterations)" if iterations > 1 else ""
         if hasattr(self._stride_threat_ledger, "_btn_run"): self._stride_threat_ledger._btn_run.setEnabled(False)
         if hasattr(self._linddun_threat_ledger, "_btn_run"): self._linddun_threat_ledger._btn_run.setEnabled(False)
-
         self._ai_log_dock.show()
         self._analysis_new_threats = 0
         self._worker_mgr.start_analysis(
@@ -831,8 +710,7 @@ class MainWindow(QMainWindow):
 
     def _on_reasoning_requested(self, item: Any) -> None:
         """Triggers AI reasoning generation for a specific threat or vulnerability."""
-        if not self._project: return
-        
+        if not self._project: return   
         existing_reasoning = getattr(item, "reasoning", "")
         if existing_reasoning and existing_reasoning.strip():
             dialog = ReasoningDisplayDialog("AI Technical Reasoning", existing_reasoning, parent=self, show_regenerate=True)
@@ -843,9 +721,6 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Generating technical reasoning...")
         try:
             config = AIConfig.load()
-            
-            # Determine correct mode based on the item's category
-            from threatpilot.core.threat_model import Threat, STRIDECategory
             mode = config.analysis_mode
             if isinstance(item, Threat):
                 if item.category.value in STRIDECategory.get_linddun_values():
@@ -863,21 +738,17 @@ class MainWindow(QMainWindow):
 
     def _on_reasoning_finished(self, reasoning: str, item: Any) -> None:
         """Updates the workspace with generated AI reasoning."""
-        from threatpilot.ai.response_parser import convert_reasoning_to_markdown
+
         logger.info(f"MainWindow: Reasoning finished. item_id={getattr(item, 'threat_id', 'N/A')}, raw_len={len(reasoning)}")
         formatted_reasoning = convert_reasoning_to_markdown(reasoning)
         logger.info(f"MainWindow: Formatted reasoning length: {len(formatted_reasoning)}")
-        
         item.reasoning = formatted_reasoning
         if self._project:
             save_project(self._project)
 
-        from threatpilot.core.threat_model import Threat, Vulnerability
         if isinstance(item, Threat):
             self._stride_threat_ledger.refresh()
             self._linddun_threat_ledger.refresh()
-            
-            # Explicitly refresh properties panel if this item (or one with same ID) is currently selected
             current_item = getattr(self._properties_panel, "_current_item", None)
             is_selected = False
             if current_item:
@@ -939,7 +810,6 @@ class MainWindow(QMainWindow):
         if not self._project or (origin_project and self._project is not origin_project):
             return
 
-        # Merge any remaining threats (most already handled via partial results)
         for t in new_register.threats:
             if self._project.threat_register.add_threat(t):
                 self._analysis_new_threats += 1
@@ -952,7 +822,6 @@ class MainWindow(QMainWindow):
         self._linddun_threat_ledger.refresh()
         self._risk_assessment_panel.refresh()
         self._vulnerability_panel.refresh()
-
         save_project(self._project)
         QMessageBox.information(self, "Analysis Complete", f"{self._analysis_new_threats} new threats identified.")
 
@@ -970,7 +839,6 @@ class MainWindow(QMainWindow):
         """Displays categorized, user-friendly error messages for AI/API failures."""
         config = AIConfig.load()
         msg = str(error_msg).lower()
-        
         if "timeout" in msg or "deadline" in msg:
             explanation = "🕒 **Request Timeout**: Try increasing the 'Request Timeout' in AI Settings."
         elif "connection" in msg or "connect_error" in msg:
@@ -1033,14 +901,10 @@ class MainWindow(QMainWindow):
         Format: PROJECT-NAME-REPORT TYPE-DATE.FILE FORMAT
         Date format: DD-MM-YYYY HH-mm (colon is replaced with a dash as it is illegal in Windows filenames).
         """
-        import re
         proj_name = self._project.project_name if self._project else "Project"
-        # Sanitize project name to remove characters invalid in Windows filenames: \ / : * ? " < > |
         safe_proj_name = re.sub(r'[\\/*?:"<>|]', '_', proj_name)
-        
         now_str = datetime.now().strftime("%d-%m-%Y %H-%M")
         filename = f"{safe_proj_name}-{report_type}-{now_str}.{extension}"
-        
         if self._project and self._project.project_path:
             return str(Path(self._project.project_path) / filename)
         return filename
@@ -1138,7 +1002,7 @@ class MainWindow(QMainWindow):
             "vl" in model_name or 
             "vision" in model_name or 
             "paligemma" in model_name or 
-            "gemma" in model_name or      # User indicated gemma4 supports vision
+            "gemma" in model_name or
             "moondream" in model_name or
             "minicpm" in model_name or
             "pixtral" in model_name or
@@ -1191,8 +1055,6 @@ class MainWindow(QMainWindow):
         """Gracefully terminates the running vision detection background task."""
         if hasattr(self, "_worker_ai_vision") and self._worker_ai_vision.isRunning():
             self._worker_ai_vision.terminate()
-            # Do NOT wait() here to prevent blocking/freezing the GUI thread.
-            # QThread.finished signal will automatically call _on_vision_worker_finished.
             self.statusBar().showMessage("AI Detection cancelled.")
 
     def _on_ai_detection_finished(self, data: Any, origin_project: Project | None = None) -> None:
@@ -1206,7 +1068,6 @@ class MainWindow(QMainWindow):
                 data = {"c": data, "f": [], "tb": [], "a": []}
             else: return
 
-        # Overwrite vs Merge choice
         has_existing = bool(self._project.components or self._project.flows or self._project.boundaries or self._project.assets)
         overwrite = True
         if has_existing:
@@ -1240,7 +1101,6 @@ class MainWindow(QMainWindow):
             if not pix.isNull():
                 img_w, img_h = pix.width(), pix.height()
 
-        # 1. Process Trust Boundaries
         for dtb in tb_list:
             bbox = dtb.get("b", dtb.get("bounding_box"))
             if isinstance(bbox, list) and len(bbox) >= 4:
@@ -1254,7 +1114,6 @@ class MainWindow(QMainWindow):
             
             tb_name = str(dtb.get("n", dtb.get("name", "Trust Boundary")) or "Trust Boundary")
             
-            # Check for duplicates during merge
             existing_tb = None
             if not overwrite:
                 existing_tb = next((b for b in self._project.boundaries if b.name.strip().lower() == tb_name.strip().lower()), None)
@@ -1268,19 +1127,14 @@ class MainWindow(QMainWindow):
                 b = TrustBoundary(name=tb_name, x=final_x, y=final_y, width=final_w, height=final_h)
                 self._project.boundaries.append(b)
 
-        # 2. Process Assets
-        from threatpilot.core.domain_models import Asset, AssetType
         for ad in asset_list:
              a_name = str(ad.get("n", ad.get("name", "Unknown Asset")) or "Unknown Asset")
              a_type_raw = str(ad.get("t", ad.get("type", "Informational")) or "Informational")
              a_type = AssetType.PHYSICAL if "phys" in a_type_raw.lower() else AssetType.INFORMATIONAL
              a_desc = str(ad.get("d", ad.get("description", "")) or "")
-             
-             # Check duplicate
              if not any(a.name.strip().lower() == a_name.strip().lower() for a in self._project.assets):
                  self._project.assets.append(Asset(name=a_name, type=a_type, description=a_desc))
 
-        # 3. Process Components
         comp_count = 0
         for dc in comp_list:
             bbox = dc.get("b", dc.get("bounding_box"))
@@ -1299,22 +1153,19 @@ class MainWindow(QMainWindow):
             comp_type = str(dc.get("t", dc.get("type", "Service")) or "Service")
             name = str(dc.get("n", dc.get("name", "Unknown Item")) or "Unknown Item")
 
-            from threatpilot.ai.response_parser import map_element_type
+
             et_raw = str(dc.get("et", dc.get("element_type", "Process")) or "Process")
             et = map_element_type(et_raw)
 
-            # Keep/Create asset for physical components
             if not any(a.name.strip().lower() == name.strip().lower() for a in self._project.assets):
                 self._project.assets.append(Asset(name=name, type=AssetType.PHYSICAL, description=f"Identified component ({comp_type})"))
 
-            # Resolve trust boundary mapping by name
             tb_id = None
             tb_name = dc.get("tb", dc.get("trust_boundary"))
             if tb_name:
                 tb_match = next((b for b in self._project.boundaries if b.name.strip().lower() == str(tb_name).strip().lower()), None)
                 if tb_match: tb_id = tb_match.boundary_id
 
-            # Containment check fallback
             if not tb_id:
                 comp_rect = QRectF(final_x, final_y, final_w, final_h)
                 comp_center = comp_rect.center()
@@ -1323,7 +1174,6 @@ class MainWindow(QMainWindow):
                         tb_id = b.boundary_id
                         break
 
-            # Add or update
             existing_comp = None
             if not overwrite:
                 existing_comp = next((c for c in self._project.components if c.name.strip().lower() == name.strip().lower()), None)
@@ -1343,15 +1193,12 @@ class MainWindow(QMainWindow):
                         trust_boundary_id=tb_id, x=final_x, y=final_y, width=final_w, height=final_h
                     ))
                 except Exception as exc:
-                    from threatpilot.utils.logger import get_logger
+
                     get_logger(__name__).error(f"Failed to create component {name}: {exc}")
 
-        # 4. Process Flows
         for df in flow_list:
             try:
                 bbox = df.get("b", df.get("bounding_box", [0, 0, 10, 10]))
-                
-                # Flow coordinates ys, xs, ye, xe
                 if isinstance(bbox, list) and len(bbox) >= 4:
                     ys, xs, ye, xe = float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])
                     start_x = (xs / 1000.0) * img_w
@@ -1364,7 +1211,6 @@ class MainWindow(QMainWindow):
                 src_name = str(df.get("s", df.get("source", ""))).strip().lower()
                 dst_name = str(df.get("d", df.get("target", ""))).strip().lower()
 
-                # Name match resolver
                 def _find_id_by_name(sn: str) -> str:
                     if not sn: return ""
                     for c in self._project.components:
@@ -1372,29 +1218,24 @@ class MainWindow(QMainWindow):
                         if cn == sn or sn in cn or cn in sn: return c.component_id
                     return ""
 
-                # Spatial proximity resolver fallback
                 def _find_id_by_proximity(px: float, py: float) -> str:
                     closest_id = ""
                     min_dist = float("inf")
                     for c in self._project.components:
-                        # center of component box
                         ccx = c.x + c.width / 2.0
                         ccy = c.y + c.height / 2.0
                         dist = ((ccx - px)**2 + (ccy - py)**2)**0.5
                         if dist < min_dist:
                             min_dist = dist
                             closest_id = c.component_id
-                    # must be within a reasonable matching radius (e.g. 35% of diagram dimension)
                     if min_dist < (img_w**2 + img_h**2)**0.5 * 0.35:
                         return closest_id
                     return ""
 
                 source_id = _find_id_by_name(src_name) or _find_id_by_proximity(start_x, start_y)
                 target_id = _find_id_by_name(dst_name) or _find_id_by_proximity(end_x, end_y)
-
                 flow_name = str(df.get("n", df.get("name", "Data Flow")) or "Data Flow")
                 protocol = str(df.get("p", df.get("protocol", "HTTPS")) or "HTTPS")
-
                 existing_flow = None
                 if not overwrite:
                     existing_flow = next((f for f in self._project.flows if f.name.strip().lower() == flow_name.strip().lower() and f.source_id == source_id and f.target_id == target_id), None)
@@ -1414,7 +1255,7 @@ class MainWindow(QMainWindow):
                         end_x=end_x, end_y=end_y
                     ))
             except Exception as exc:
-                from threatpilot.utils.logger import get_logger
+
                 get_logger(__name__).error(f"Failed to create flow: {exc}")
 
         self._refresh_canvas_overlays()
@@ -1437,7 +1278,7 @@ class MainWindow(QMainWindow):
     def _on_edit_elements(self) -> None:
         """Opens the management dialog for architectural components."""
         if not self._project: return
-        from threatpilot.ui.architecture_dialog import ElementsDialog
+
         dialog = ElementsDialog(self._project, self._undo_stack, self)
         dialog.project_modified.connect(self._refresh_canvas_overlays)
         dialog.project_modified.connect(self._on_project_modified)
@@ -1448,7 +1289,7 @@ class MainWindow(QMainWindow):
     def _on_edit_assets(self) -> None:
         """Opens the management dialog for system assets."""
         if not self._project: return
-        from threatpilot.ui.architecture_dialog import AssetsDialog
+
         dialog = AssetsDialog(self._project, self._undo_stack, self)
         dialog.project_modified.connect(self._on_project_modified)
         dialog.exec()
@@ -1457,7 +1298,7 @@ class MainWindow(QMainWindow):
     def _on_edit_boundaries(self) -> None:
         """Opens the management dialog for trust boundaries."""
         if not self._project: return
-        from threatpilot.ui.architecture_dialog import TrustBoundaryDialog
+
         dialog = TrustBoundaryDialog(self._project, self._undo_stack, self)
         dialog.project_modified.connect(self._refresh_canvas_overlays)
         dialog.project_modified.connect(self._on_project_modified)
@@ -1468,7 +1309,7 @@ class MainWindow(QMainWindow):
     def _on_edit_flows(self) -> None:
         """Opens the management dialog for data flows."""
         if not self._project: return
-        from threatpilot.ui.architecture_dialog import DataFlowDialog
+
         dialog = DataFlowDialog(self._project, self._undo_stack, self)
         dialog.project_modified.connect(self._on_project_modified)
         dialog.exec()
@@ -1575,7 +1416,7 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            from threatpilot.export.mitigation_review_exporter import generate_mitigation_requirements_excel
+
             req_dicts = [req.model_dump() for req in requirements]
             generate_mitigation_requirements_excel(self._project, req_dicts, file_path)
             self._project.mitigation_excel_path = file_path
@@ -1651,13 +1492,11 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("AI mitigation review completed.")
         
         if self._project:
-            from threatpilot.core.domain_models import MitigationRequirement
+
             req_objects = []
             for req in requirements:
-                # Preserve existing reasoning if present
                 existing_req = next((r for r in self._project.mitigation_requirements if r.req_id == req.get("req_id", "")), None)
                 existing_reasoning = existing_req.reasoning if existing_req else ""
-
                 req_objects.append(MitigationRequirement(
                     req_id=req.get("req_id", ""),
                     title=req.get("title", ""),
@@ -1687,7 +1526,7 @@ class MainWindow(QMainWindow):
         
         existing_reasoning = getattr(requirement, "reasoning", "")
         if existing_reasoning and existing_reasoning.strip():
-            from threatpilot.ui.dialogs import ReasoningDisplayDialog
+
             dialog = ReasoningDisplayDialog(
                 f"XAI Reasoning - {requirement.req_id}", existing_reasoning, parent=self
             )
@@ -1707,7 +1546,6 @@ class MainWindow(QMainWindow):
                     return
 
             provider = create_ai_provider(config)
-            
             is_mitigations_running = hasattr(self, "_worker_ai_mitigations") and self._worker_ai_mitigations is not None and self._worker_ai_mitigations.isRunning()
             is_analysis_running = self._worker_mgr._worker and self._worker_mgr._worker.isRunning()
             if is_mitigations_running or is_analysis_running:
@@ -1718,7 +1556,6 @@ class MainWindow(QMainWindow):
             self._ai_log_dock.raise_()
             self.show_progress("Generating XAI reasoning...", self._cancel_ai_mitigations)
 
-            from threatpilot.ui.workers import MitigationReasoningWorker
             self._worker_ai_mitigations = MitigationReasoningWorker(
                 provider, requirement, parent=self
             )
@@ -1733,7 +1570,6 @@ class MainWindow(QMainWindow):
         """Callback when mitigation reasoning completes successfully."""
         self.statusBar().showMessage("AI mitigation reasoning generated.")
         
-        from threatpilot.ai.response_parser import convert_mitigation_reasoning_to_markdown
         formatted_reasoning = convert_mitigation_reasoning_to_markdown(reasoning)
         
         requirement.reasoning = formatted_reasoning
@@ -1742,7 +1578,6 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_mitigation_requirements_panel"):
             self._mitigation_requirements_panel.refresh()
 
-        from threatpilot.ui.dialogs import ReasoningDisplayDialog
         dialog = ReasoningDisplayDialog(
             f"XAI Reasoning - {requirement.req_id}", formatted_reasoning, parent=self
         )
@@ -1795,7 +1630,6 @@ class MainWindow(QMainWindow):
         time_str = datetime.now().strftime("%H:%M:%S")
         is_dark = getattr(self, "_is_dark_theme", True)
         
-        # Color formatting based on category
         if "PROMPT" in category:
             color = "#58a6ff" if is_dark else "#0969da"
         elif "RESPONSE" in category:
@@ -1812,9 +1646,7 @@ class MainWindow(QMainWindow):
         self._ai_log_view.verticalScrollBar().setValue(self._ai_log_view.verticalScrollBar().maximum())
 
     def start_designer_server(self, host: str = "127.0.0.1", shared: bool = False, pin: str = "", use_https: bool = False) -> None:
-        from threatpilot.core.designer_server import DesignerServerThread
         self.stop_designer_server()
-        
         self.statusBar().showMessage(f"Starting Architecture Designer server on {host}...")
         self._designer_server_thread = DesignerServerThread(
             main_window=self,
@@ -1837,12 +1669,9 @@ class MainWindow(QMainWindow):
         if not self._project:
             QMessageBox.warning(self, "No Project", "Please open or create a project first before opening the Architecture Designer.")
             return
-
-        # Make sure server is running locally by default if not already initialized
         if not hasattr(self, "_designer_server_thread") or self._designer_server_thread is None:
             self.start_designer_server(host="127.0.0.1", shared=False)
             
-        from threatpilot.ui.designer_sharing_dialog import DesignerSharingDialog
         dialog = DesignerSharingDialog(self, parent=self, is_dark=self._is_dark_theme)
         dialog.exec()
 
@@ -1854,17 +1683,13 @@ class MainWindow(QMainWindow):
         """Reloads the project from disk when the designer saves, ensuring UI sync."""
         if not self._project:
             return
-        
         try:
-            # Reblock watching to avoid recursive loops during internal updates
             if hasattr(self, "_file_watcher") and self._file_watcher:
                 files = self._file_watcher.files()
                 if files:
                     self._file_watcher.removePaths(files)
 
             reloaded = load_project(self._project.project_path)
-            
-            # Update current project references in UI components
             self._project = reloaded
             self._project_explorer.set_project(self._project)
             self._stride_threat_ledger.set_register(self._project.threat_register)
@@ -1873,20 +1698,15 @@ class MainWindow(QMainWindow):
             self._vulnerability_panel.set_project(self._project)
             self._properties_panel.set_project(self._project)
             self._mitigation_requirements_panel.set_project(self._project)
-            
-            # Redraw canvas
             self._canvas.clear_diagram()
             if self._project.diagrams:
                 self._on_diagram_activated(self._project.diagrams[0])
             else:
                 self._on_project_modified(refresh_properties=True)
-                
-            # Re-register file watch
             if hasattr(self, "_file_watcher") and self._file_watcher:
                 arch_path = Path(self._project.project_path) / "architecture.json"
                 if arch_path.exists():
                     self._file_watcher.addPath(str(arch_path))
-
             self.statusBar().showMessage("Architecture Designer edits synced successfully.")
         except Exception as e:
             logger.error(f"Failed to sync designer edits: {e}")
@@ -1894,7 +1714,6 @@ class MainWindow(QMainWindow):
 
     def _on_architecture_file_changed(self, path: str) -> None:
         """Triggered when architecture.json is modified outside the UI (e.g. by designer)."""
-        # Trigger reload thread-safely via custom signal
         self.designer_saved_signal.emit()
 
     def closeEvent(self, event) -> None:

@@ -139,7 +139,7 @@ Download the Code Verification Certificate: [Dipta Roy - Code Verification Certi
 6. Click **Next** → **Finish**.
 
 **Verify Application Authenticity:**
-1. Right-click on the installer (e.g. `ThreatPilot-3.0.0-win64.msi`) and select **Properties**.
+1. Right-click on the installer (e.g. `ThreatPilot-3.1.0-win64.msi`) and select **Properties**.
 2. Go to the **Digital Signatures** tab.
 3. Select "Signed_By_Dipta" from the Embedded Signatures list, then click **Details**.
 4. In the General tab, you should see the message: *"This digital signature is OK."*

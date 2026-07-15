@@ -53,7 +53,10 @@ def extract_json(text: str) -> Optional[Any]:
             try: return method(clean)
             except Exception: continue
 
-        # Advanced repair loop
+        # Advanced repair loop (abort if too large to prevent CPU stalling)
+        if len(clean) > 50000:
+            continue
+            
         stack = []; in_str = False; q_char = None; escaped = False
         for char in clean:
             if escaped: escaped = False; continue

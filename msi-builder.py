@@ -59,6 +59,7 @@ build_exe_options = {
     ],
     "excludes": [
         "torch", "torchvision", "torchaudio", "sentence_transformers",
+        "chromadb", "pypdf", "docx",
         "tkinter", "unittest", "cv2", 
         "pandas", "pyarrow", "matplotlib", 
         "notebook", "email",
